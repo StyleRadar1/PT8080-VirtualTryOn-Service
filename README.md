@@ -621,22 +621,8 @@ flowchart LR
    - Verifica la construcción exitosa de la imagen OCI multi-stage a partir del `Dockerfile` sin publicar a registros externos.
 
 <div align="center">
-  <table width="100%" style="margin: 18px 0; border: 2px dashed #5600EF; border-radius: 8px; background-color: #FBFBFE;">
-    <tr>
-      <td align="center" style="padding: 22px;">
-        <p>
-          <img src="https://img.shields.io/badge/ESPACIO_DE_CAPTURA-EVIDENCIA_04-5600EF?style=for-the-badge" alt="Evidencia 04" /><br />
-          <strong><font color="#5600EF" size="3">EJECUCIÓN DEL PIPELINE CI EN GITHUB ACTIONS</font></strong>
-        </p>
-        <p>
-          <sub>Captura del workflow de GitHub Actions completado exitosamente en verde en las ramas <code>main</code> y <code>develop</code> verificando compilación, suite de pruebas y Quality Gate JaCoCo ≥ 85%.</sub>
-        </p>
-        <p>
-          <code>[ Espacio reservado para captura Pipeline CI/CD · docs/images/pipeline-ci-cd.png ]</code>
-        </p>
-      </td>
-    </tr>
-  </table>
+  <img src="docs/images/pipeline-ci-cd.png" alt="Evidencia 04 - Pipeline CI/CD en GitHub Actions" width="100%" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+  <p><sub><b>Figura 10.1:</b> Ejecución exitosa del pipeline automatizado de CI en GitHub Actions para el Pull Request hacia <code>develop</code> (#1), verificando compilación con JDK 21 Temurin, suite completa de 14 pruebas unitarias/integración, Quality Gate JaCoCo al 90% y construcción de la imagen OCI multi-stage en Docker.</sub></p>
 </div>
 
 ---
