@@ -1,0 +1,42 @@
+# ===================================================================
+# StyleRadar - PT8080-VirtualTryOn-Service (ms-probador-virtual)
+# Squad Portal8080 (DOSW 2026)
+# ===================================================================
+
+server:
+  port: ${SERVER_PORT:8092}
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: PT8080-VirtualTryOn-Service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
+  # Configuración de Jackson para JSON estándar
+  jackson:
+    serialization:
+      indent-output: true
+      write-dates-as-timestamps: false
+
+# Documentación interactiva OpenAPI 3.0 / Swagger UI
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui/index.html
+    enabled: true
+    operationsSorter: method
+    tagsSorter: alpha
+
+# Endpoints de monitoreo y health checks OCI
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always

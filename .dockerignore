@@ -1,0 +1,26 @@
+# Directorios de compilación y temporales
+target/
+*.class
+
+# Entornos y credenciales
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Git y documentación de diseño
+.git/
+.gitignore
+docs/
+*.md
+
+# IDEs y configuración local
+.idea/
+*.iml
+.vscode/
+*.log
+logs/
+.DS_Store
+Thumbs.db
+
