@@ -122,8 +122,6 @@ Este microservicio encapsula exclusivamente la lógica de negocio correspondient
 
 Este microservicio da vida al arquetipo **Aura (Futuro)**, la embajadora de innovación tecnológica, vanguardia y probador virtual asistido por IA dentro del ecosistema StyleRadar.
 
-<div align="center">
-
 ---
 
 <a id="2-equipo-y-responsables"></a>
