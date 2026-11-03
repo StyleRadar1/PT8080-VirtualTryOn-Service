@@ -1,0 +1,125 @@
+version: '3.8'
+
+# ===================================================================
+# Docker Compose para PT8080-VirtualTryOn-Service
+# Squad Portal8080 · Proyecto StyleRadar (DOSW 2026)
+# ===================================================================
+
+services:
+  # -----------------------------------------------------------------
+  # 1. Microservicio PT8080-VirtualTryOn-Service (Java 21 · Spring Boot)
+  # -----------------------------------------------------------------
+  virtual-tryon-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sr-probador-virtual
+    ports:
+      - "${SERVER_PORT:-8092}:8092"
+    environment:
+      SERVER_PORT: 8092
+      SPRING_PROFILES_ACTIVE: dev
+      DB_URL: jdbc:postgresql://probador-postgres:5432/probador_db
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      REDIS_HOST: probador-redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: probador-rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      TRYON_AI_PROVIDER: ${TRYON_AI_PROVIDER:-mock}
+      FASHN_API_URL: ${FASHN_API_URL:-https://api.fashn.ai/v1}
+      FASHN_API_KEY: ${FASHN_API_KEY:-}
+    depends_on:
+      probador-postgres:
+        condition: service_healthy
+      probador-redis:
+        condition: service_healthy
+      probador-rabbitmq:
+        condition: service_healthy
+    networks:
+      - styleradar-net
+    restart: unless-stopped
+
+  # -----------------------------------------------------------------
+  # 2. Base de Datos Relacional PostgreSQL 16 (probador_db)
+  # -----------------------------------------------------------------
+  probador-postgres:
+    image: postgres:16-alpine
+    container_name: sr-probador-postgres
+    ports:
+      - "${DB_PORT_EXTERNAL:-5442}:5432"
+    environment:
+      POSTGRES_DB: probador_db
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - probador_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d probador_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - styleradar-net
+    restart: unless-stopped
+
+  # -----------------------------------------------------------------
+  # 3. Base de Datos en Memoria Redis 7 (Caché & Rate Limiting)
+  # -----------------------------------------------------------------
+  probador-redis:
+    image: redis:7-alpine
+    container_name: sr-probador-redis
+    ports:
+      - "${REDIS_PORT_EXTERNAL:-6389}:6379"
+    volumes:
+      - probador_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - styleradar-net
+    restart: unless-stopped
+
+  # -----------------------------------------------------------------
+  # 4. Message Broker RabbitMQ 3.13 con Management UI
+  # -----------------------------------------------------------------
+  probador-rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: sr-probador-rabbitmq
+    ports:
+      - "${RABBITMQ_PORT_EXTERNAL:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT_EXTERNAL:-15672}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    volumes:
+      - probador_rabbitmqdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - styleradar-net
+    restart: unless-stopped
+
+# -------------------------------------------------------------------
+# Redes Virtuales y Volúmenes Persistentes
+# -------------------------------------------------------------------
+networks:
+  styleradar-net:
+    name: styleradar-net
+    driver: bridge
+
+volumes:
+  probador_pgdata:
+    name: probador_pgdata
+  probador_redisdata:
+    name: probador_redisdata
+  probador_rabbitmqdata:
+    name: probador_rabbitmqdata
+
