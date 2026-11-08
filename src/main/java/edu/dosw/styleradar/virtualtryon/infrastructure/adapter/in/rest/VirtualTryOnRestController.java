@@ -6,6 +6,7 @@ import edu.dosw.styleradar.virtualtryon.application.dto.response.TryOnJobRespons
 import edu.dosw.styleradar.virtualtryon.application.dto.response.UserQuotaResponse;
 import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMapper;
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
+import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
@@ -15,6 +16,7 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.doc.VirtualTryOnOpenApiDoc;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.AuthenticatedUser;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -41,7 +43,7 @@ import java.util.UUID;
 /**
  * Adaptador primario (Driving) REST para el microservicio de Probador Virtual.
  * Implementa la interfaz de documentación OpenAPI VirtualTryOnOpenApiDoc y delega
- * la creación de trabajos en CreateTryOnJobService y las consultas en QueryTryOnJobsService (SR-RF-24 y SR-RF-25).
+ * en CreateTryOnJobService, QueryTryOnJobsService y DeleteBiometricDataService (SR-RF-24 a SR-RF-27).
  */
 @RestController
 @RequestMapping("/api/v1/try-on")
@@ -61,16 +63,28 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     private final CreateTryOnJobService createTryOnJobService;
     private final QueryTryOnJobsService queryTryOnJobsService;
+    private final DeleteBiometricDataService deleteBiometricDataService;
     private final VirtualTryOnDtoMapper dtoMapper;
+
+    @Autowired
+    public VirtualTryOnRestController(
+            CreateTryOnJobService createTryOnJobService,
+            QueryTryOnJobsService queryTryOnJobsService,
+            DeleteBiometricDataService deleteBiometricDataService,
+            VirtualTryOnDtoMapper dtoMapper
+    ) {
+        this.createTryOnJobService = createTryOnJobService;
+        this.queryTryOnJobsService = queryTryOnJobsService;
+        this.deleteBiometricDataService = deleteBiometricDataService;
+        this.dtoMapper = dtoMapper;
+    }
 
     public VirtualTryOnRestController(
             CreateTryOnJobService createTryOnJobService,
             QueryTryOnJobsService queryTryOnJobsService,
             VirtualTryOnDtoMapper dtoMapper
     ) {
-        this.createTryOnJobService = createTryOnJobService;
-        this.queryTryOnJobsService = queryTryOnJobsService;
-        this.dtoMapper = dtoMapper;
+        this(createTryOnJobService, queryTryOnJobsService, null, dtoMapper);
     }
 
     @Override
@@ -138,6 +152,11 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @DeleteMapping("/personal-photos/{jobId}")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<Void> deleteBiometricPhoto(@PathVariable UUID jobId) {
+        UUID callerUserId = resolveAndVerifyCallerUserId(null);
+        boolean callerIsAdmin = isCallerAdmin();
+        if (deleteBiometricDataService != null) {
+            deleteBiometricDataService.deleteBiometricPhoto(jobId, UserId.of(callerUserId), callerIsAdmin);
+        }
         return ResponseEntity.noContent().build();
     }
 
