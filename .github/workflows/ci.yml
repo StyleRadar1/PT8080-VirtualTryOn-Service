@@ -10,13 +10,17 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
-    name: Build, Test & JaCoCo Coverage
+  build-test-and-quality:
+    name: Build, Test, JaCoCo (>= 85%) & SonarQube Gate
     runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 21 (Temurin)
         uses: actions/setup-java@v4
@@ -28,8 +32,15 @@ jobs:
       - name: Grant execute permission for Maven Wrapper
         run: chmod +x mvnw
 
-      - name: Execute Maven Clean Verify (Tests & JaCoCo >= 85%)
+      - name: Execute Maven Clean Verify (72 Tests & JaCoCo >= 85% Line / >= 80% Branch)
         run: ./mvnw clean verify -B
+
+      - name: Run SonarQube / SonarCloud Static Analysis (Quality Gate A)
+        if: env.SONAR_TOKEN != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: ./mvnw sonar:sonar -B -Dsonar.qualitygate.wait=true
 
       - name: Upload JaCoCo Coverage Report
         uses: actions/upload-artifact@v4
@@ -41,7 +52,7 @@ jobs:
 
   docker-build-check:
     name: Verify Docker Container Build
-    needs: build-and-test
+    needs: build-test-and-quality
     runs-on: ubuntu-latest
 
     steps:
@@ -58,4 +69,3 @@ jobs:
           file: ./Dockerfile
           push: false
           tags: styleradar/pt8080-virtualtryon-service:ci-test
-
