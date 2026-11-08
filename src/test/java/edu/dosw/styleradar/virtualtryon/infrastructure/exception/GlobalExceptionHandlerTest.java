@@ -11,6 +11,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import java.util.UUID;
 
@@ -135,5 +137,21 @@ class GlobalExceptionHandlerTest {
         assertThat(pd.getStatus()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR.value());
         assertThat(pd.getTitle()).isEqualTo("Error Interno del Servidor");
         assertThat(pd.getProperties().get("errorCode")).isEqualTo("INTERNAL_SERVER_ERROR");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23: Dada la ausencia de la parte multipart 'photo' o exceso de tamaño (> 5MB), Cuando se capturan las excepciones, Entonces retorna 400 y 413 ProblemDetail")
+    void testMissingPartAndMaxUploadSize() {
+        ProblemDetail missingPartPd = handler.handleMissingMultipartOrParamException(
+                new MissingServletRequestPartException("photo")
+        );
+        assertThat(missingPartPd.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(missingPartPd.getProperties().get("errorCode")).isEqualTo("MISSING_REQUEST_PART");
+
+        ProblemDetail payloadTooLargePd = handler.handleMaxUploadSizeExceededException(
+                new MaxUploadSizeExceededException(5L * 1024 * 1024)
+        );
+        assertThat(payloadTooLargePd.getStatus()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE.value());
+        assertThat(payloadTooLargePd.getProperties().get("errorCode")).isEqualTo("PAYLOAD_TOO_LARGE");
     }
 }
