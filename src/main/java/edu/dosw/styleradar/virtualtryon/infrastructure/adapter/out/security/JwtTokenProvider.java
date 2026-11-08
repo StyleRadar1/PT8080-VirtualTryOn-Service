@@ -32,16 +32,19 @@ public class JwtTokenProvider {
 
     @Autowired
     public JwtTokenProvider(
-            @Value("${styleradar.security.jwt.secret-base64:U3R5bGVSYWRhclZpcnR1YWxUcnlPblNlY3JldEtleTIwMjZQb3J0YWw4MDgwU2Vj}") String secretBase64,
+            @Value("${styleradar.security.jwt.secret-base64}") String secretBase64,
             @Value("${styleradar.security.jwt.duration:PT60M}") Duration duration
     ) {
         this(secretBase64, duration, Clock.systemUTC());
     }
 
     public JwtTokenProvider(String secretBase64, Duration duration, Clock clock) {
+        if (secretBase64 == null || secretBase64.isBlank()) {
+            throw new IllegalStateException("JWT_SECRET_BASE64 es requerida y debe configurarse mediante variables de entorno");
+        }
         byte[] decoded;
         try {
-            decoded = Base64.getDecoder().decode(secretBase64);
+            decoded = Base64.getDecoder().decode(secretBase64.trim());
         } catch (IllegalArgumentException ex) {
             throw new IllegalStateException("JWT_SECRET_BASE64 debe contener una clave Base64 válida", ex);
         }

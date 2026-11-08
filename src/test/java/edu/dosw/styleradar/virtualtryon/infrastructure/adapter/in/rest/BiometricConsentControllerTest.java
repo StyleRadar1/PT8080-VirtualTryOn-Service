@@ -344,6 +344,10 @@ class BiometricConsentControllerTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         String validSecret = "U3R5bGVSYWRhclZpcnR1YWxUcnlPblNlY3JldEtleTIwMjZQb3J0YWw4MDgwU2Vj";
+        assertThatThrownBy(() -> new JwtTokenProvider(null, Duration.ofMinutes(10), Clock.systemUTC()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new JwtTokenProvider("   ", Duration.ofMinutes(10), Clock.systemUTC()))
+                .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> new JwtTokenProvider("@@@not-base64@@@", Duration.ofMinutes(10), Clock.systemUTC()))
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> new JwtTokenProvider("c2hvcnQ=", Duration.ofMinutes(10), Clock.systemUTC()))

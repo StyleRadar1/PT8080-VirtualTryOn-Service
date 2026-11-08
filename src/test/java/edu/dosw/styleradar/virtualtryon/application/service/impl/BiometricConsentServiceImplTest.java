@@ -163,14 +163,20 @@ class BiometricConsentServiceImplTest {
 
         assertThat(uploaded.getWidth()).isEqualTo(400);
         assertThat(uploaded.getHeight()).isEqualTo(600);
-        assertThat(uploaded.getPhotoUrl().value()).contains(CONTAINER).contains("sv=2024-11-04");
+        assertThat(uploaded.getPhotoUrl().value())
+                .contains(CONTAINER)
+                .contains("sv=2024-11-04")
+                .contains("sr=b")
+                .contains("sp=r")
+                .contains("spr=https")
+                .doesNotContain("sp=racwd");
 
         BiometricPhoto retrieved = consentService.getPhotoByUserId(USER_ID);
         assertThat(retrieved.getPhotoId()).isEqualTo(uploaded.getPhotoId());
         mockAzureServer.verify();
         mockAzureServer.reset();
 
-        // 2. Expect GET Blob desde Azure Blob Storage
+        // 2. Expect GET Blob desde Azure Blob Storage usando la URL de solo lectura (sp=r)
         mockAzureServer.expect(requestTo(uploaded.getPhotoUrl().value()))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header(AzureBlobStorageAdapter.HEADER_MS_VERSION, "2024-11-04"))
@@ -182,8 +188,10 @@ class BiometricConsentServiceImplTest {
         mockAzureServer.verify();
         mockAzureServer.reset();
 
-        // 3. Al subir una segunda foto, elimina la anterior en Azure (DELETE) y sube la nueva (PUT)
-        mockAzureServer.expect(requestTo(uploaded.getPhotoUrl().value()))
+        // 3. Al subir una segunda foto, elimina la anterior en Azure (DELETE con sasToken interno) y sube la nueva (PUT)
+        int queryIdx = uploaded.getPhotoUrl().value().indexOf('?');
+        String expectedDeleteUrl = uploaded.getPhotoUrl().value().substring(0, queryIdx) + "?sv=2024-11-04&sr=b&sp=racwd";
+        mockAzureServer.expect(requestTo(expectedDeleteUrl))
                 .andExpect(method(HttpMethod.DELETE))
                 .andExpect(header(AzureBlobStorageAdapter.HEADER_DELETE_SNAPSHOTS, "include"))
                 .andRespond(withNoContent());
@@ -267,21 +275,30 @@ class BiometricConsentServiceImplTest {
         mockAzureServer.reset();
 
         // Error 500 en DELETE no propaga excepción no controlada
-        mockAzureServer.expect(requestTo(sampleUrl.value()))
+        mockAzureServer.expect(requestTo(sampleUrl.value() + "?sv=2024-11-04&sr=b&sp=racwd"))
                 .andExpect(method(HttpMethod.DELETE))
                 .andRespond(withServerError());
 
         blobStorageAdapter.deleteBlob(sampleUrl);
         mockAzureServer.verify();
 
-        // Verificar constructor @Autowired de Spring
+        // Verificar constructor @Autowired de Spring y validación de AZURE_STORAGE_BASE_URL
         AzureBlobStorageAdapter springConstructed = new AzureBlobStorageAdapter(
                 AZURE_BASE_URL,
                 CONTAINER,
                 "",
+                "sv=2024-11-04&ss=b&srt=sco&sp=rwdlacx",
                 "2024-11-04"
         );
         assertThat(springConstructed).isNotNull();
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(
+                "  ",
+                CONTAINER,
+                "",
+                "",
+                "2024-11-04"
+        )).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_STORAGE_BASE_URL");
     }
 
     @Test

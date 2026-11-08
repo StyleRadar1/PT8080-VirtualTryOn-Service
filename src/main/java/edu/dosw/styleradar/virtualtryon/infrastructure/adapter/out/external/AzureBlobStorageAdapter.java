@@ -36,13 +36,15 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
     private final String storageBaseUrl;
     private final String containerName;
     private final String sasToken;
+    private final String readOnlySasToken;
     private final String apiVersion;
 
     @Autowired
     public AzureBlobStorageAdapter(
-            @Value("${styleradar.tryon.blob-base-url:https://styleradarblob.blob.core.windows.net}") String storageBaseUrl,
+            @Value("${styleradar.tryon.blob-base-url}") String storageBaseUrl,
             @Value("${styleradar.tryon.blob-container:biometric-silhouettes}") String containerName,
             @Value("${styleradar.tryon.blob-sas-token:}") String sasToken,
+            @Value("${styleradar.tryon.blob-read-sas-token:}") String readOnlySasToken,
             @Value("${styleradar.tryon.blob-api-version:2024-11-04}") String apiVersion
     ) {
         this(
@@ -50,6 +52,7 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                 storageBaseUrl,
                 containerName,
                 sasToken,
+                readOnlySasToken,
                 apiVersion
         );
     }
@@ -61,12 +64,32 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
             String sasToken,
             String apiVersion
     ) {
+        this(restClientBuilder, storageBaseUrl, containerName, sasToken, "", apiVersion);
+    }
+
+    public AzureBlobStorageAdapter(
+            RestClient.Builder restClientBuilder,
+            String storageBaseUrl,
+            String containerName,
+            String sasToken,
+            String readOnlySasToken,
+            String apiVersion
+    ) {
+        if (storageBaseUrl == null || storageBaseUrl.isBlank()) {
+            throw new IllegalStateException("AZURE_STORAGE_BASE_URL es obligatoria y debe configurarse por variables de entorno");
+        }
         this.restClient = restClientBuilder.build();
-        this.storageBaseUrl = storageBaseUrl.endsWith("/")
-                ? storageBaseUrl.substring(0, storageBaseUrl.length() - 1)
-                : storageBaseUrl;
+        String trimmedBaseUrl = storageBaseUrl.trim();
+        this.storageBaseUrl = trimmedBaseUrl.endsWith("/")
+                ? trimmedBaseUrl.substring(0, trimmedBaseUrl.length() - 1)
+                : trimmedBaseUrl;
         this.containerName = containerName;
         this.sasToken = normalizeSasToken(sasToken);
+        this.readOnlySasToken = sanitizeToReadOnlySasToken(
+                !normalizeSasToken(readOnlySasToken).isEmpty()
+                        ? normalizeSasToken(readOnlySasToken)
+                        : this.sasToken
+        );
         this.apiVersion = apiVersion;
     }
 
@@ -75,11 +98,12 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         String extension = "image/png".equalsIgnoreCase(contentType) ? "png" : "jpg";
         String resolvedContentType = "png".equals(extension) ? MediaType.IMAGE_PNG_VALUE : MediaType.IMAGE_JPEG_VALUE;
         String blobName = userId.value() + "/silhouette-" + UUID.randomUUID() + "." + extension;
-        String signedUrl = buildSignedBlobUrl(blobName);
+        String writeUrl = buildWriteSignedBlobUrl(blobName);
+        String readOnlyUrl = buildReadOnlySignedBlobUrl(blobName);
 
         try {
             restClient.put()
-                    .uri(URI.create(signedUrl))
+                    .uri(URI.create(writeUrl))
                     .header(HEADER_BLOB_TYPE, BLOCK_BLOB_TYPE)
                     .header(HEADER_MS_VERSION, apiVersion)
                     .contentType(MediaType.parseMediaType(resolvedContentType))
@@ -89,7 +113,7 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
 
             log.info("Fotografía biométrica cargada en Azure Blob Storage (contenedor: {}, usuario: {})",
                     containerName, userId.value());
-            return SasSignedUrl.of(signedUrl);
+            return SasSignedUrl.of(readOnlyUrl);
         } catch (RestClientException ex) {
             log.error("Error al almacenar fotografía biométrica en Azure Blob Storage para usuario {}: {}",
                     userId.value(), ex.getMessage());
@@ -116,8 +140,9 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
     @Override
     public void deleteBlob(SasSignedUrl blobUrl) {
         try {
+            String deleteTargetUrl = buildDeleteTargetUrl(blobUrl.value());
             restClient.delete()
-                    .uri(URI.create(blobUrl.value()))
+                    .uri(URI.create(deleteTargetUrl))
                     .header(HEADER_MS_VERSION, apiVersion)
                     .header(HEADER_DELETE_SNAPSHOTS, "include")
                     .retrieve()
@@ -129,12 +154,77 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         }
     }
 
-    private String buildSignedBlobUrl(String blobName) {
+    private String buildWriteSignedBlobUrl(String blobName) {
         String basePath = String.format("%s/%s/%s", storageBaseUrl, containerName, blobName);
         if (sasToken.isEmpty()) {
             return basePath;
         }
         return basePath + "?" + sasToken;
+    }
+
+    private String buildReadOnlySignedBlobUrl(String blobName) {
+        String basePath = String.format("%s/%s/%s", storageBaseUrl, containerName, blobName);
+        if (readOnlySasToken.isEmpty()) {
+            return basePath;
+        }
+        return basePath + "?" + readOnlySasToken;
+    }
+
+    private String buildDeleteTargetUrl(String rawBlobUrl) {
+        if (sasToken.isEmpty()) {
+            return rawBlobUrl;
+        }
+        int queryIdx = rawBlobUrl.indexOf('?');
+        String basePath = queryIdx >= 0 ? rawBlobUrl.substring(0, queryIdx) : rawBlobUrl;
+        return basePath + "?" + sasToken;
+    }
+
+    /**
+     * Garantiza el principio de mínimo privilegio en URLs SAS expuestas:
+     * restringe el permiso SAS a solo lectura (sp=r), recurso blob (sr=b) y protocolo HTTPS (spr=https),
+     * eliminando permisos administrativos o de escritura/borrado (w, d, c, a, l, x) y alcances de cuenta (ss, srt).
+     */
+    static String sanitizeToReadOnlySasToken(String rawSas) {
+        if (rawSas == null || rawSas.isBlank()) {
+            return "";
+        }
+        StringBuilder sanitized = new StringBuilder();
+        boolean hasSp = false;
+        boolean hasSr = false;
+        boolean hasSpr = false;
+        for (String part : rawSas.split("&")) {
+            if (part.isBlank() || part.startsWith("ss=") || part.startsWith("srt=")) {
+                continue;
+            }
+            if (!sanitized.isEmpty()) {
+                sanitized.append('&');
+            }
+            if (part.startsWith("sp=")) {
+                sanitized.append("sp=r");
+                hasSp = true;
+            } else if (part.startsWith("sr=")) {
+                sanitized.append("sr=b");
+                hasSr = true;
+            } else if (part.startsWith("spr=")) {
+                sanitized.append("spr=https");
+                hasSpr = true;
+            } else {
+                sanitized.append(part);
+            }
+        }
+        if (!hasSr) {
+            if (!sanitized.isEmpty()) {
+                sanitized.append('&');
+            }
+            sanitized.append("sr=b");
+        }
+        if (!hasSp) {
+            sanitized.append("&sp=r");
+        }
+        if (!hasSpr) {
+            sanitized.append("&spr=https");
+        }
+        return sanitized.toString();
     }
 
     private static String normalizeSasToken(String rawSasToken) {

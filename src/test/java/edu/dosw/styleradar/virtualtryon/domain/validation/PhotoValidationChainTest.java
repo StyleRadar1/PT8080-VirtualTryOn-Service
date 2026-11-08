@@ -257,13 +257,19 @@ public class PhotoValidationChainTest {
         UserId parsedUserId = UserId.fromString(RAW_USER_ID.toString());
         assertThat(parsedUserId).isEqualTo(USER_ID);
 
-        SasSignedUrl url = SasSignedUrl.of(" https://styleradarblob.blob.core.windows.net/biometric-silhouettes/pose.png ");
-        assertThat(url.value()).startsWith("https://");
+        SasSignedUrl url = SasSignedUrl.of(" https://styleradarblob.blob.core.windows.net/biometric-silhouettes/pose.png?sv=2024-11-04&sr=b&sp=r ");
+        assertThat(url.value()).startsWith("https://").contains("sp=r");
 
         assertThatThrownBy(() -> SasSignedUrl.of("  "))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> SasSignedUrl.of("ftp://invalid.url"))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/pose.png?sv=2024-11-04&sp=racwd"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("sp=r");
+        assertThatThrownBy(() -> SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/pose.png?sv=2024-11-04&ss=b&srt=sco&sp=r"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("sr=b");
 
         Instant now = Instant.now();
         BiometricConsent consent = new BiometricConsent(

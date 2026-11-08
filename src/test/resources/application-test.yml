@@ -35,5 +35,6 @@ styleradar:
     blob-base-url: https://styleradarblob.blob.core.windows.net
     blob-container: biometric-silhouettes
     blob-sas-token: sv=2024-11-04&sr=b&sp=racwd
+    blob-read-sas-token: sv=2024-11-04&sr=b&sp=r&spr=https
     blob-api-version: 2024-11-04
 
