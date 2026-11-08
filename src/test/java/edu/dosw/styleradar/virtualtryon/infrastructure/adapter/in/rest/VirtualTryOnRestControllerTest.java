@@ -117,8 +117,24 @@ class VirtualTryOnRestControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isAccepted())
                 .andExpect(header().exists("Location"))
+                .andExpect(header().string("X-Content-Type-Options", is("nosniff")))
+                .andExpect(header().string("X-Frame-Options", is("DENY")))
                 .andExpect(jsonPath("$.jobId", is(createdJob.getId().toString())))
                 .andExpect(jsonPath("$.status", is("QUEUED")));
+
+        // Verificar prevención SSRF (OWASP A10): esquema file:// en photoUrl debe ser rechazado con 400 Bad Request
+        StartTryOnRequest ssrfRequest = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "file:///etc/passwd",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(ssrfRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
     }
 
     @Test
