@@ -1,8 +1,8 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.doc;
 
-import edu.dosw.styleradar.virtualtryon.application.dto.request.IniciarTryOnRequest;
-import edu.dosw.styleradar.virtualtryon.application.dto.response.CuotasUsuarioResponse;
+import edu.dosw.styleradar.virtualtryon.application.dto.request.StartTryOnRequest;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.TryOnJobResponse;
+import edu.dosw.styleradar.virtualtryon.application.dto.response.UserQuotaResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -19,7 +19,7 @@ import java.util.UUID;
  * Contrato de documentación OpenAPI 3.0 para el microservicio de Probador Virtual.
  * Separa las anotaciones de documentación de la lógica del controlador REST.
  */
-@Tag(name = "Probador Virtual", description = "Endpoints de orquestación de Virtual Try-On con IA, consulta de estados y privacidad biométrica")
+@Tag(name = "Virtual Try-On", description = "Endpoints de orquestación de Virtual Try-On con IA, consulta de estados y privacidad biométrica")
 public interface VirtualTryOnOpenApiDoc {
 
     @Operation(
@@ -38,7 +38,7 @@ public interface VirtualTryOnOpenApiDoc {
             @ApiResponse(responseCode = "429", description = "Cuota mensual de pruebas virtuales excedida",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
-    ResponseEntity<TryOnJobResponse> iniciarTryOn(IniciarTryOnRequest request);
+    ResponseEntity<TryOnJobResponse> startTryOn(StartTryOnRequest request);
 
     @Operation(
             summary = "Consultar estado o resultado de un trabajo",
@@ -51,7 +51,7 @@ public interface VirtualTryOnOpenApiDoc {
             @ApiResponse(responseCode = "404", description = "Trabajo no encontrado con el identificador proporcionado",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
-    ResponseEntity<TryOnJobResponse> consultarJob(
+    ResponseEntity<TryOnJobResponse> getTryOnJob(
             @Parameter(description = "Identificador único del trabajo (UUID)", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
             UUID jobId
     );
@@ -62,11 +62,11 @@ public interface VirtualTryOnOpenApiDoc {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Saldo de cuotas obtenido exitosamente",
-                    content = @Content(schema = @Schema(implementation = CuotasUsuarioResponse.class))),
+                    content = @Content(schema = @Schema(implementation = UserQuotaResponse.class))),
             @ApiResponse(responseCode = "401", description = "Usuario no autenticado (token JWT requerido)",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
-    ResponseEntity<CuotasUsuarioResponse> consultarCuotas(
+    ResponseEntity<UserQuotaResponse> getUserQuotas(
             @Parameter(description = "Identificador del usuario (UUID)", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
             UUID userId
     );
@@ -81,7 +81,7 @@ public interface VirtualTryOnOpenApiDoc {
             @ApiResponse(responseCode = "404", description = "Fotografía o trabajo no encontrado",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
-    ResponseEntity<Void> borrarFotoBiometrica(
+    ResponseEntity<Void> deleteBiometricPhoto(
             @Parameter(description = "Identificador del trabajo o foto a eliminar", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
             UUID jobId
     );

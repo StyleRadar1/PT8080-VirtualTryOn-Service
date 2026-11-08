@@ -20,7 +20,7 @@ public record TryOnJobResponse(
         @Schema(description = "Identificador de la prenda probada", example = "f8e7d6c5-b4a3-2109-8765-43210fedcba9")
         UUID garmentId,
 
-        @Schema(description = "Estado actual del procesamiento", example = "COMPLETADO", allowableValues = {"PENDIENTE", "PROCESANDO_IA", "COMPLETADO", "FALLIDO"})
+        @Schema(description = "Estado actual del procesamiento", example = "COMPLETED", allowableValues = {"QUEUED", "PROCESSING", "COMPLETED", "FAILED"})
         String status,
 
         @Schema(description = "URL de la imagen generada con la prenda ajustada (disponible al completar)", example = "https://styleradar.blob.core.windows.net/renders/result-3fa85f64.png")

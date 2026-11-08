@@ -9,7 +9,7 @@ import java.util.UUID;
  * DTO de solicitud para iniciar un trabajo asíncrono de probador virtual.
  */
 @Schema(description = "Datos requeridos para despachar una prueba virtual con foto y prenda")
-public record IniciarTryOnRequest(
+public record StartTryOnRequest(
 
         @Schema(description = "Identificador único del usuario comprador", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
         @NotNull(message = "El identificador de usuario es obligatorio")
@@ -28,3 +28,4 @@ public record IniciarTryOnRequest(
         Boolean biometricConsent
 ) {
 }
+

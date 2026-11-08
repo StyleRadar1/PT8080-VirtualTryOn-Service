@@ -1,8 +1,8 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest;
 
-import edu.dosw.styleradar.virtualtryon.application.dto.request.IniciarTryOnRequest;
-import edu.dosw.styleradar.virtualtryon.application.dto.response.CuotasUsuarioResponse;
+import edu.dosw.styleradar.virtualtryon.application.dto.request.StartTryOnRequest;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.TryOnJobResponse;
+import edu.dosw.styleradar.virtualtryon.application.dto.response.UserQuotaResponse;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.doc.VirtualTryOnOpenApiDoc;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -22,39 +22,39 @@ import java.util.UUID;
 /**
  * Adaptador primario (Driving) REST para el microservicio de Probador Virtual.
  * Implementa la interfaz de documentación OpenAPI VirtualTryOnOpenApiDoc.
- * Expone endpoints bajo el prefijo /api/v1/probador con respuestas de contrato para Swagger UI.
+ * Expone endpoints bajo el prefijo /api/v1/try-on con respuestas de contrato para Swagger UI.
  */
 @RestController
-@RequestMapping("/api/v1/probador")
+@RequestMapping("/api/v1/try-on")
 public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     @Override
     @PostMapping("/jobs")
-    public ResponseEntity<TryOnJobResponse> iniciarTryOn(@Valid @RequestBody IniciarTryOnRequest request) {
+    public ResponseEntity<TryOnJobResponse> startTryOn(@Valid @RequestBody StartTryOnRequest request) {
         UUID newJobId = UUID.randomUUID();
         TryOnJobResponse response = new TryOnJobResponse(
                 newJobId,
                 request.userId(),
                 request.garmentId(),
-                "PENDIENTE",
+                "QUEUED",
                 null,
                 null,
                 null,
                 Instant.now(),
                 Instant.now()
         );
-        URI location = URI.create("/api/v1/probador/jobs/" + newJobId);
+        URI location = URI.create("/api/v1/try-on/jobs/" + newJobId);
         return ResponseEntity.accepted().location(location).body(response);
     }
 
     @Override
     @GetMapping("/jobs/{jobId}")
-    public ResponseEntity<TryOnJobResponse> consultarJob(@PathVariable UUID jobId) {
+    public ResponseEntity<TryOnJobResponse> getTryOnJob(@PathVariable UUID jobId) {
         TryOnJobResponse response = new TryOnJobResponse(
                 jobId,
                 UUID.fromString("a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"),
                 UUID.fromString("f8e7d6c5-b4a3-2109-8765-43210fedcba9"),
-                "COMPLETADO",
+                "COMPLETED",
                 "https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png",
                 2100L,
                 null,
@@ -65,10 +65,10 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     }
 
     @Override
-    @GetMapping("/cuotas")
-    public ResponseEntity<CuotasUsuarioResponse> consultarCuotas(@RequestParam(required = false) UUID userId) {
+    @GetMapping("/quotas")
+    public ResponseEntity<UserQuotaResponse> getUserQuotas(@RequestParam(required = false) UUID userId) {
         UUID targetUserId = (userId != null) ? userId : UUID.fromString("a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d");
-        CuotasUsuarioResponse response = new CuotasUsuarioResponse(
+        UserQuotaResponse response = new UserQuotaResponse(
                 targetUserId,
                 10,
                 3,
@@ -80,8 +80,8 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     }
 
     @Override
-    @DeleteMapping("/fotos-personales/{jobId}")
-    public ResponseEntity<Void> borrarFotoBiometrica(@PathVariable UUID jobId) {
+    @DeleteMapping("/personal-photos/{jobId}")
+    public ResponseEntity<Void> deleteBiometricPhoto(@PathVariable UUID jobId) {
         return ResponseEntity.noContent().build();
     }
 }

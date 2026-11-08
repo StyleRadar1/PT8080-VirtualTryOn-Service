@@ -9,7 +9,7 @@ import java.util.UUID;
  * DTO de respuesta con el saldo de cuotas mensuales de prueba virtual.
  */
 @Schema(description = "Saldo y uso de cuotas de prueba virtual del usuario para el período")
-public record CuotasUsuarioResponse(
+public record UserQuotaResponse(
 
         @Schema(description = "Identificador del usuario", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
         UUID userId,
@@ -30,3 +30,4 @@ public record CuotasUsuarioResponse(
         Instant lastCheckedAt
 ) {
 }
+
