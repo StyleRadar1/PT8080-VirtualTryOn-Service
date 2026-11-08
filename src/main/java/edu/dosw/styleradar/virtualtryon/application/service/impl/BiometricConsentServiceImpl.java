@@ -17,6 +17,7 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -28,6 +29,7 @@ import java.util.UUID;
  * Chain of Responsibility (BiometricConsentValidator -> ImageFormatResolutionValidator -> PoseReferenceValidator).
  */
 @Service
+@Transactional
 public class BiometricConsentServiceImpl implements BiometricConsentService {
 
     private static final Logger log = LoggerFactory.getLogger(BiometricConsentServiceImpl.class);
@@ -82,6 +84,7 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public BiometricConsent getConsentByUserId(UserId userId) {
         return biometricDataRepositoryPort.findConsentByUserId(userId)
                 .orElseThrow(() -> new ConsentRequiredException(userId.value()));
@@ -154,6 +157,7 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public BiometricPhoto getPhotoByUserId(UserId userId) {
         return biometricDataRepositoryPort.findPhotoByUserId(userId)
                 .orElseThrow(() -> new JobNotFoundException(userId.value()));
