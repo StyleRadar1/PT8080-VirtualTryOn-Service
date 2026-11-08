@@ -11,24 +11,42 @@ import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.AuthenticatedUser;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtAuthenticationFilter;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtTokenProvider;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.SecurityProblemHandler;
+import edu.dosw.styleradar.virtualtryon.infrastructure.config.SecurityConfig;
 import edu.dosw.styleradar.virtualtryon.infrastructure.exception.GlobalExceptionHandler;
+import io.jsonwebtoken.JwtException;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.User;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -43,14 +61,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Pruebas de contrato REST para BiometricConsentController (SR-RF-23).
+ * Pruebas de contrato REST, autenticación JWT y validación de titularidad/permisos
+ * para BiometricConsentController (SR-RF-23).
  */
 @WebMvcTest(controllers = BiometricConsentController.class)
-@Import({VirtualTryOnDtoMapper.class, GlobalExceptionHandler.class})
+@Import({
+        VirtualTryOnDtoMapper.class,
+        GlobalExceptionHandler.class,
+        SecurityConfig.class,
+        JwtAuthenticationFilter.class,
+        JwtTokenProvider.class,
+        SecurityProblemHandler.class
+})
 @ActiveProfiles("test")
 class BiometricConsentControllerTest {
 
     private static final UUID USER_UUID = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+    private static final UUID OTHER_USER_UUID = UUID.fromString("11111111-2222-3333-4444-555555555555");
 
     @Autowired
     private MockMvc mockMvc;
@@ -58,8 +85,20 @@ class BiometricConsentControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
+
     @MockBean
     private BiometricConsentService biometricConsentService;
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private String bearerToken(UUID userId, String role) {
+        return "Bearer " + jwtTokenProvider.generateToken(userId, role);
+    }
 
     private BiometricConsent sampleConsent(Instant revokedAt) {
         return new BiometricConsent(
@@ -88,7 +127,7 @@ class BiometricConsentControllerTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (POST /api/v1/try-on/consents): Dado un request válido de consentimiento Ley 1581, Cuando se envía, Entonces responde 201 Created")
+    @DisplayName("HU SR-RF-23 (POST /api/v1/try-on/consents): Dado un usuario COMPRADOR autenticado con JWT propio, Cuando otorga consentimiento Ley 1581, Entonces responde 201 Created")
     void shouldGrantBiometricConsent() throws Exception {
         when(biometricConsentService.grantConsent(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(sampleConsent(null));
@@ -102,32 +141,72 @@ class BiometricConsentControllerTest {
         );
 
         mockMvc.perform(post("/api/v1/try-on/consents")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("X-Frame-Options", "DENY"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Content-Security-Policy", "default-src 'self'"))
                 .andExpect(jsonPath("$.userId").value(USER_UUID.toString()))
                 .andExpect(jsonPath("$.validForInference").value(true));
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (GET y DELETE /api/v1/try-on/consents/{userId}): Dado un usuario con consentimiento, Cuando se consulta o revoca, Entonces responde 200 OK")
+    @DisplayName("HU SR-RF-23 (GET y DELETE /api/v1/try-on/consents/{userId}): Dado un usuario autenticado propietario o ADMIN, Cuando consulta o revoca su consentimiento, Entonces responde 200 OK")
     void shouldGetAndRevokeBiometricConsent() throws Exception {
         when(biometricConsentService.getConsentByUserId(eq(UserId.of(USER_UUID))))
                 .thenReturn(sampleConsent(null));
         when(biometricConsentService.revokeConsent(eq(UserId.of(USER_UUID))))
                 .thenReturn(sampleConsent(Instant.parse("2026-11-07T22:10:00Z")));
 
-        mockMvc.perform(get("/api/v1/try-on/consents/{userId}", USER_UUID))
+        mockMvc.perform(get("/api/v1/try-on/consents/{userId}", USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "USER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.validForInference").value(true));
 
-        mockMvc.perform(delete("/api/v1/try-on/consents/{userId}", USER_UUID))
+        mockMvc.perform(delete("/api/v1/try-on/consents/{userId}", USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(OTHER_USER_UUID, "ADMIN_STYLERADAR")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.validForInference").value(false));
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (POST /api/v1/try-on/photos): Dado un archivo multipart vertical válido, Cuando se carga, Entonces responde 201 Created con dimensiones y URL firmada")
+    @DisplayName("HU SR-RF-23 (Seguridad 401 y 403): Cuando se invocan endpoints biométricos sin JWT, con JWT inválido o intentando acceder a otro usuario, Entonces responde 401 Unauthorized o 403 Forbidden")
+    void shouldRejectUnauthenticatedOrUnauthorizedBiometricRequests() throws Exception {
+        // 1. Sin header Authorization -> 401 Unauthorized
+        mockMvc.perform(get("/api/v1/try-on/consents/{userId}", USER_UUID))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("UNAUTHORIZED"));
+
+        // 2. Con header Bearer mal formado -> 401 Unauthorized
+        mockMvc.perform(get("/api/v1/try-on/consents/{userId}", USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("UNAUTHORIZED"));
+
+        // 3. Con token JWT adulterado/inválido -> 401 Unauthorized
+        mockMvc.perform(get("/api/v1/try-on/photos/{userId}", USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer token.invalido.firma"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("UNAUTHORIZED"));
+
+        // 4. Usuario autenticado intentando consultar el consentimiento de OTRO usuario -> 403 Forbidden
+        mockMvc.perform(get("/api/v1/try-on/consents/{userId}", USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(OTHER_USER_UUID, "COMPRADOR")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+
+        // 5. Usuario con rol no permitido (ej. VISITANTE) -> 403 Forbidden
+        mockMvc.perform(get("/api/v1/try-on/consents/{userId}", USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "VISITANTE")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (POST /api/v1/try-on/photos): Dado un archivo multipart vertical válido y JWT del propietario, Cuando se carga, Entonces responde 201 Created")
     void shouldUploadBiometricPhoto() throws Exception {
         when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(true), any(), any()))
                 .thenReturn(samplePhoto());
@@ -142,14 +221,16 @@ class BiometricConsentControllerTest {
         mockMvc.perform(multipart("/api/v1/try-on/photos")
                         .file(file)
                         .param("userId", USER_UUID.toString())
-                        .param("biometricConsent", "true"))
+                        .param("biometricConsent", "true")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.width").value(400))
                 .andExpect(jsonPath("$.height").value(600))
                 .andExpect(jsonPath("$.contentType").value("image/png"));
 
         mockMvc.perform(multipart("/api/v1/try-on/photos")
-                        .param("userId", USER_UUID.toString()))
+                        .param("userId", USER_UUID.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("MISSING_REQUEST_PART"));
     }
@@ -170,7 +251,8 @@ class BiometricConsentControllerTest {
         mockMvc.perform(multipart("/api/v1/try-on/photos")
                         .file(file)
                         .param("userId", USER_UUID.toString())
-                        .param("biometricConsent", "false"))
+                        .param("biometricConsent", "false")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("CONSENT_REQUIRED"));
 
@@ -180,40 +262,107 @@ class BiometricConsentControllerTest {
         mockMvc.perform(multipart("/api/v1/try-on/photos")
                         .file(file)
                         .param("userId", USER_UUID.toString())
-                        .param("biometricConsent", "true"))
+                        .param("biometricConsent", "true")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_PHOTO"));
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (GET /api/v1/try-on/photos/{userId}): Dado un usuario con o sin fotografía, Cuando se consulta, Entonces responde 200 OK o 404 Not Found")
+    @DisplayName("HU SR-RF-23 (GET /api/v1/try-on/photos/{userId}): Dado un usuario autenticado con o sin fotografía, Cuando se consulta, Entonces responde 200 OK o 404 Not Found")
     void shouldGetBiometricPhotoOrReturnNotFound() throws Exception {
         when(biometricConsentService.getPhotoByUserId(eq(UserId.of(USER_UUID))))
                 .thenReturn(samplePhoto())
                 .thenThrow(new JobNotFoundException(USER_UUID));
 
-        mockMvc.perform(get("/api/v1/try-on/photos/{userId}", USER_UUID))
+        mockMvc.perform(get("/api/v1/try-on/photos/{userId}", USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value(USER_UUID.toString()));
 
-        mockMvc.perform(get("/api/v1/try-on/photos/{userId}", USER_UUID))
+        mockMvc.perform(get("/api/v1/try-on/photos/{userId}", USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errorCode").value("JOB_NOT_FOUND"));
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (Manejo IOException en Multipart): Dado un MultipartFile que lanza IOException al leer bytes, Cuando se invoca uploadPhoto, Entonces lanza InvalidPhotoException")
-    void shouldHandleIoExceptionWhenReadingMultipartBytes() throws Exception {
+    @DisplayName("HU SR-RF-23 (Validaciones directas de Controlador y JWT): Valida ramas de IOException, tipos de Principal y validación de JwtTokenProvider/AuthenticatedUser")
+    void shouldValidateDirectControllerOwnershipAndJwtProviderBranches() throws Exception {
         BiometricConsentController controller = new BiometricConsentController(
                 biometricConsentService,
                 new VirtualTryOnDtoMapper()
         );
+
+        // Sin autenticación en SecurityContext -> InsufficientAuthenticationException
+        SecurityContextHolder.clearContext();
+        assertThatThrownBy(() -> controller.getConsent(USER_UUID))
+                .isInstanceOf(InsufficientAuthenticationException.class);
+
+        // Con rol inválido en invocación directa -> AccessDeniedException
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(
+                        new AuthenticatedUser(USER_UUID, "ROLE_GUEST"),
+                        null,
+                        List.of(new SimpleGrantedAuthority("ROLE_GUEST"))
+                )
+        );
+        assertThatThrownBy(() -> controller.getConsent(USER_UUID))
+                .isInstanceOf(AccessDeniedException.class);
+
+        // Con UserDetails cuyo username es UUID coincidente y fallo IOException en MultipartFile
+        User springUser = new User(USER_UUID.toString(), "", List.of(new SimpleGrantedAuthority("ROLE_COMPRADOR")));
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(springUser, null, springUser.getAuthorities())
+        );
         MultipartFile brokenFile = mock(MultipartFile.class);
         when(brokenFile.getBytes()).thenThrow(new IOException("Fallo de lectura"));
-
         assertThatThrownBy(() -> controller.uploadPhoto(USER_UUID, true, brokenFile))
                 .isInstanceOf(InvalidPhotoException.class)
                 .hasMessageContaining("No fue posible procesar los bytes");
+
+        // Con UserDetails cuyo username es otro UUID -> AccessDeniedException
+        assertThatThrownBy(() -> controller.getConsent(OTHER_USER_UUID))
+                .isInstanceOf(AccessDeniedException.class);
+
+        // Con Principal String que no es UUID -> AccessDeniedException
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(
+                        "non-uuid-username",
+                        null,
+                        List.of(new SimpleGrantedAuthority("ROLE_COMPRADOR"))
+                )
+        );
+        assertThatThrownBy(() -> controller.getConsent(USER_UUID))
+                .isInstanceOf(AccessDeniedException.class);
+
+        // Pruebas de invariantes en AuthenticatedUser y JwtTokenProvider
+        AuthenticatedUser adminUser = new AuthenticatedUser(USER_UUID, "ROLE_ADMIN");
+        assertThat(adminUser.canAccessUser(OTHER_USER_UUID)).isTrue();
+        assertThat(adminUser.canAccessUser(null)).isFalse();
+        assertThatThrownBy(() -> new AuthenticatedUser(USER_UUID, "  "))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        String validSecret = "U3R5bGVSYWRhclZpcnR1YWxUcnlPblNlY3JldEtleTIwMjZQb3J0YWw4MDgwU2Vj";
+        assertThatThrownBy(() -> new JwtTokenProvider("@@@not-base64@@@", Duration.ofMinutes(10), Clock.systemUTC()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new JwtTokenProvider("c2hvcnQ=", Duration.ofMinutes(10), Clock.systemUTC()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new JwtTokenProvider(validSecret, Duration.ZERO, Clock.systemUTC()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> jwtTokenProvider.generateToken(null, "COMPRADOR"))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // Token con rol nulo asigna COMPRADOR por defecto
+        String defaultRoleToken = jwtTokenProvider.generateToken(USER_UUID, null);
+        AuthenticatedUser extracted = jwtTokenProvider.validateAndExtractUser(defaultRoleToken);
+        assertThat(extracted.role()).isEqualTo("COMPRADOR");
+
+        // Token expirado lanza JwtException
+        Clock pastClock = Clock.fixed(Instant.parse("2025-01-01T00:00:00Z"), ZoneOffset.UTC);
+        JwtTokenProvider pastProvider = new JwtTokenProvider(validSecret, Duration.ofSeconds(5), pastClock);
+        String expiredToken = pastProvider.generateToken(USER_UUID, "COMPRADOR");
+        assertThatThrownBy(() -> jwtTokenProvider.validateAndExtractUser(expiredToken))
+                .isInstanceOf(JwtException.class);
     }
 }
-

@@ -11,6 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -183,6 +185,34 @@ public class GlobalExceptionHandler {
         problem.setTitle("Archivo Demasiado Grande");
         problem.setType(URI.create(BASE_TYPE_URL + "payload-too-large"));
         problem.setProperty("errorCode", "PAYLOAD_TOO_LARGE");
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    /**
+     * Captura fallos de autenticación (401 Unauthorized) en endpoints protegidos (SR-RF-23)
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public ProblemDetail handleAuthenticationException(AuthenticationException ex) {
+        log.warn("Fallo de autenticación en solicitud: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());
+        problem.setTitle("Autenticación Requerida o Inválida");
+        problem.setType(URI.create(BASE_TYPE_URL + "unauthorized"));
+        problem.setProperty("errorCode", "UNAUTHORIZED");
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    /**
+     * Captura accesos denegados por rol o titularidad de datos biométricos (403 Forbidden) (SR-RF-23)
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ProblemDetail handleAccessDeniedException(AccessDeniedException ex) {
+        log.warn("Acceso denegado a recurso biométrico: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
+        problem.setTitle("Acceso Denegado a Datos Biométricos");
+        problem.setType(URI.create(BASE_TYPE_URL + "forbidden"));
+        problem.setProperty("errorCode", "FORBIDDEN");
         problem.setProperty("timestamp", Instant.now());
         return problem;
     }

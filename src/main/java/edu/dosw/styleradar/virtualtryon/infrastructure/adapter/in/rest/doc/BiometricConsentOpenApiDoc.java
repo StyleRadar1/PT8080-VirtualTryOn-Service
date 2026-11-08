@@ -33,7 +33,7 @@ import java.util.UUID;
  */
 @Tag(
         name = "Biometric Consent & Photos (SR-RF-23)",
-        description = "Operaciones de consentimiento informado de datos biométricos (Ley 1581) y carga validada de fotografía frontal del usuario"
+        description = "Operaciones autenticadas de consentimiento informado de datos biométricos (Ley 1581) y carga validada de fotografía frontal de cuerpo completo"
 )
 @RequestMapping("/api/v1/try-on")
 @SecurityRequirement(name = "bearerAuth")
@@ -41,7 +41,7 @@ public interface BiometricConsentOpenApiDoc {
 
     @Operation(
             summary = "Otorgar consentimiento de tratamiento de datos biométricos (SR-RF-23 / Ley 1581)",
-            description = "Registra la autorización explícita del usuario para el procesamiento de su silueta en el probador virtual."
+            description = "Registra la autorización explícita del usuario autenticado para el procesamiento de su silueta en el probador virtual."
     )
     @ApiResponses(value = {
             @ApiResponse(
@@ -53,6 +53,16 @@ public interface BiometricConsentOpenApiDoc {
                     responseCode = "400",
                     description = "El consentimiento fue rechazado o los datos de entrada son inválidos",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description = "Token Bearer JWT ausente, inválido o expirado",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "Rol sin permisos o intento de registrar consentimiento a nombre de otro usuario",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
     @PostMapping("/consents")
@@ -60,7 +70,7 @@ public interface BiometricConsentOpenApiDoc {
 
     @Operation(
             summary = "Consultar estado del consentimiento biométrico del usuario (SR-RF-23)",
-            description = "Obtiene el registro de consentimiento biométrico más reciente otorgado por el usuario."
+            description = "Obtiene el registro de consentimiento biométrico más reciente otorgado por el usuario autenticado."
     )
     @ApiResponses(value = {
             @ApiResponse(
@@ -72,6 +82,16 @@ public interface BiometricConsentOpenApiDoc {
                     responseCode = "400",
                     description = "El usuario aún no ha otorgado consentimiento biométrico",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description = "Token Bearer JWT ausente, inválido o expirado",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "Acceso denegado: no puede consultar datos biométricos de otro usuario",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
     @GetMapping("/consents/{userId}")
@@ -81,7 +101,7 @@ public interface BiometricConsentOpenApiDoc {
 
     @Operation(
             summary = "Revocar consentimiento de tratamiento de datos biométricos (Ley 1581)",
-            description = "Revoca la autorización de tratamiento de datos biométricos del usuario registrando la fecha de revocación."
+            description = "Revoca la autorización de tratamiento de datos biométricos del usuario autenticado registrando la fecha de revocación."
     )
     @ApiResponses(value = {
             @ApiResponse(
@@ -93,6 +113,16 @@ public interface BiometricConsentOpenApiDoc {
                     responseCode = "400",
                     description = "El usuario no posee un consentimiento registrado para revocar",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description = "Token Bearer JWT ausente, inválido o expirado",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "Acceso denegado: no puede revocar el consentimiento de otro usuario",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
     @DeleteMapping("/consents/{userId}")
@@ -102,7 +132,7 @@ public interface BiometricConsentOpenApiDoc {
 
     @Operation(
             summary = "Cargar fotografía frontal de silueta del usuario (SR-RF-23)",
-            description = "Valida y almacena la fotografía frontal del usuario verificando consentimiento biométrico, formato JPEG o PNG, tamaño máximo de 5 MB, dimensiones mínimas 300x400 px y orientación vertical."
+            description = "Valida y almacena en Azure Blob Storage la fotografía frontal del usuario autenticado verificando consentimiento biométrico, formato JPEG o PNG, tamaño máximo de 5 MB, dimensiones mínimas 300x400 px y postura frontal de cuerpo completo."
     )
     @ApiResponses(value = {
             @ApiResponse(
@@ -116,8 +146,18 @@ public interface BiometricConsentOpenApiDoc {
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
+                    responseCode = "401",
+                    description = "Token Bearer JWT ausente, inválido o expirado",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "Acceso denegado: no puede subir fotografías biométricas para otro usuario",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
                     responseCode = "422",
-                    description = "Formato no soportado, tamaño superior a 5 MB, dimensiones menores a 300x400 px u orientación horizontal",
+                    description = "Formato no soportado, tamaño superior a 5 MB, dimensiones menores a 300x400 px o ausencia de postura frontal de cuerpo completo",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
@@ -127,19 +167,29 @@ public interface BiometricConsentOpenApiDoc {
             @RequestParam("userId") UUID userId,
             @Parameter(description = "Aceptación explícita de tratamiento biométrico (Ley 1581)", required = false)
             @RequestParam(value = "biometricConsent", defaultValue = "true") boolean biometricConsent,
-            @Parameter(description = "Archivo de imagen frontal en formato JPEG o PNG (máx. 5 MB, mín. 300x400 px vertical)", required = true)
+            @Parameter(description = "Archivo de imagen frontal de cuerpo completo en formato JPEG o PNG (máx. 5 MB, mín. 300x400 px)", required = true)
             @RequestPart("photo") MultipartFile photo
     );
 
     @Operation(
             summary = "Consultar fotografía frontal cargada por el usuario (SR-RF-23)",
-            description = "Retorna los metadatos validados (dimensiones, formato, peso y URL SAS) de la fotografía frontal activa del usuario."
+            description = "Retorna los metadatos validados (dimensiones, formato, peso y URL SAS) de la fotografía frontal activa del usuario autenticado."
     )
     @ApiResponses(value = {
             @ApiResponse(
                     responseCode = "200",
                     description = "Metadatos de la fotografía frontal recuperados exitosamente",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = BiometricPhotoResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description = "Token Bearer JWT ausente, inválido o expirado",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "Acceso denegado: no puede consultar la fotografía biométrica de otro usuario",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
                     responseCode = "404",
@@ -152,4 +202,3 @@ public interface BiometricConsentOpenApiDoc {
             @Parameter(description = "UUID del usuario", required = true) @PathVariable("userId") UUID userId
     );
 }
-

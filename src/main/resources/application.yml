@@ -40,3 +40,16 @@ management:
   endpoint:
     health:
       show-details: always
+
+# Configuración transversal de seguridad JWT y almacenamiento Azure Blob Storage
+styleradar:
+  security:
+    jwt:
+      secret-base64: ${JWT_SECRET_BASE64:U3R5bGVSYWRhclZpcnR1YWxUcnlPblNlY3JldEtleTIwMjZQb3J0YWw4MDgwU2Vj}
+      duration: ${JWT_DURATION:PT60M}
+  tryon:
+    blob-base-url: ${AZURE_STORAGE_BASE_URL:https://styleradarblob.blob.core.windows.net}
+    blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes}
+    blob-sas-token: ${AZURE_SAS_TOKEN:sv=2024-11-04&ss=b&srt=sco&sp=rwdlacx&se=2027-12-31T23:59:59Z}
+    blob-api-version: ${AZURE_STORAGE_API_VERSION:2024-11-04}
+

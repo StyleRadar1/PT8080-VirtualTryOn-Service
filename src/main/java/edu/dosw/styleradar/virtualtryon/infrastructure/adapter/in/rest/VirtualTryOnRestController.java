@@ -6,6 +6,7 @@ import edu.dosw.styleradar.virtualtryon.application.dto.response.UserQuotaRespon
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.doc.VirtualTryOnOpenApiDoc;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -81,6 +82,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     @Override
     @DeleteMapping("/personal-photos/{jobId}")
+    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<Void> deleteBiometricPhoto(@PathVariable UUID jobId) {
         return ResponseEntity.noContent().build();
     }

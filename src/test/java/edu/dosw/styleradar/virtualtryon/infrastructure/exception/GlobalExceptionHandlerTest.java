@@ -11,6 +11,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
@@ -153,5 +155,17 @@ class GlobalExceptionHandlerTest {
         );
         assertThat(payloadTooLargePd.getStatus()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE.value());
         assertThat(payloadTooLargePd.getProperties().get("errorCode")).isEqualTo("PAYLOAD_TOO_LARGE");
+
+        ProblemDetail unauthorizedPd = handler.handleAuthenticationException(
+                new BadCredentialsException("Token JWT inválido")
+        );
+        assertThat(unauthorizedPd.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+        assertThat(unauthorizedPd.getProperties().get("errorCode")).isEqualTo("UNAUTHORIZED");
+
+        ProblemDetail forbiddenPd = handler.handleAccessDeniedException(
+                new AccessDeniedException("Sin permisos biométricos")
+        );
+        assertThat(forbiddenPd.getStatus()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(forbiddenPd.getProperties().get("errorCode")).isEqualTo("FORBIDDEN");
     }
 }
