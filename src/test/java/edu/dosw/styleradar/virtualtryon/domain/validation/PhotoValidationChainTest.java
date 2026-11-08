@@ -299,19 +299,20 @@ public class PhotoValidationChainTest {
                 400,
                 600,
                 1024L,
+                "pose.png",
                 url,
                 now
         );
         assertThat(photo.getWidth()).isEqualTo(400);
         assertThat(photo.getHeight()).isEqualTo(600);
 
-        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "", 400, 600, 1024L, url, now))
+        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "", 400, 600, 1024L, "pose.png", url, now))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 0, 600, 1024L, url, now))
+        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 0, 600, 1024L, "pose.png", url, now))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 400, 0, 1024L, url, now))
+        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 400, 0, 1024L, "pose.png", url, now))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 400, 600, 0L, url, now))
+        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 400, 600, 0L, "pose.png", url, now))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

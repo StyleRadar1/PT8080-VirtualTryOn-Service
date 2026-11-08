@@ -12,8 +12,8 @@ public record SasSignedUrl(String value) {
             throw new IllegalArgumentException("La URL firmada (SasSignedUrl) no puede ser nula ni vacía");
         }
         String trimmed = value.trim();
-        if (!trimmed.startsWith("https://") && !trimmed.startsWith("http://")) {
-            throw new IllegalArgumentException("La URL firmada debe utilizar el esquema HTTP o HTTPS");
+        if (!trimmed.startsWith("https://")) {
+            throw new IllegalArgumentException("La URL firmada debe utilizar exclusivamente el esquema seguro HTTPS");
         }
         int queryIndex = trimmed.indexOf('?');
         if (queryIndex >= 0 && queryIndex < trimmed.length() - 1) {
