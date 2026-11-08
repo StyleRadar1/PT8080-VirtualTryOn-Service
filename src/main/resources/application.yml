@@ -42,7 +42,7 @@ management:
       show-details: always
 
 # Configuración transversal de seguridad JWT y almacenamiento Azure Blob Storage
-# Las credenciales (JWT_SECRET_BASE64 y AZURE_SAS_TOKEN) deben inyectarse por variables de entorno o secretos de despliegue
+# Las credenciales (JWT_SECRET_BASE64 y AZURE_STORAGE_ACCOUNT_KEY) deben inyectarse por variables de entorno o secretos de despliegue
 styleradar:
   security:
     jwt:

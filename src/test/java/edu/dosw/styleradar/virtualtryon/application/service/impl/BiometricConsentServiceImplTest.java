@@ -667,17 +667,17 @@ class BiometricConsentServiceImplTest {
         assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "  ", 100, 100, 100, "p", SasSignedUrl.of("https://a.com/b?sp=r"), Instant.now()))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        BiometricPhoto photo = new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 100, 100, 100, SasSignedUrl.of("https://a.com/c/d/photo.png?sp=r"), Instant.now());
+        BiometricPhoto photo = new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 100, 100, 100, "d/photo.png", SasSignedUrl.of("https://a.com/c/d/photo.png?sp=r"), Instant.now());
         assertThat(photo.getBlobPath()).isEqualTo("d/photo.png");
         BiometricPhoto refreshed = photo.withFreshSignedUrl(SasSignedUrl.of("https://a.com/c/d/photo.png?sp=r&sig=new"));
         assertThat(refreshed.getPhotoUrl().value()).contains("sig=new");
 
-        BiometricPhoto photoNoSlash = new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 100, 100, 100, SasSignedUrl.of("https://a.com?sp=r"), Instant.now());
+        BiometricPhoto photoNoSlash = new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 100, 100, 100, "photo.png", SasSignedUrl.of("https://a.com?sp=r"), Instant.now());
         assertThat(photoNoSlash.getBlobPath()).isNotNull();
 
         // SasSignedUrl validaciones
-        SasSignedUrl httpUrl = SasSignedUrl.of("http://example.com/blob.png?sp=r");
-        assertThat(httpUrl.value()).startsWith("http://");
+        assertThatThrownBy(() -> SasSignedUrl.of("http://example.com/blob.png?sp=r")).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("HTTPS");
+        assertThat(SasSignedUrl.of("https://example.com/blob.png?sp=r").value()).startsWith("https://");
 
         SasSignedUrl trailingQuestion = SasSignedUrl.of("https://example.com/blob.png?");
         assertThat(trailingQuestion.value()).endsWith("?");

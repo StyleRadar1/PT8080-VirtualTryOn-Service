@@ -55,47 +55,8 @@ public class BiometricPhoto {
         this.uploadedAt = Objects.requireNonNull(uploadedAt, "La fecha de carga es obligatoria");
     }
 
-    public BiometricPhoto(
-            UUID photoId,
-            UserId userId,
-            String contentType,
-            int width,
-            int height,
-            long sizeBytes,
-            SasSignedUrl photoUrl,
-            Instant uploadedAt
-    ) {
-        this(
-                photoId,
-                userId,
-                contentType,
-                width,
-                height,
-                sizeBytes,
-                extractBlobPathFromUrl(photoUrl != null ? photoUrl.value() : ""),
-                photoUrl,
-                uploadedAt
-        );
-    }
-
     public BiometricPhoto withFreshSignedUrl(SasSignedUrl freshUrl) {
         return new BiometricPhoto(photoId, userId, contentType, width, height, sizeBytes, blobPath, freshUrl, uploadedAt);
-    }
-
-    private static String extractBlobPathFromUrl(String url) {
-        if (url == null || url.isBlank()) {
-            return "";
-        }
-        int queryIdx = url.indexOf('?');
-        String cleanUrl = queryIdx >= 0 ? url.substring(0, queryIdx) : url;
-        int lastSlash = cleanUrl.lastIndexOf('/');
-        if (lastSlash >= 0) {
-            int secondLast = cleanUrl.lastIndexOf('/', lastSlash - 1);
-            if (secondLast >= 0) {
-                return cleanUrl.substring(secondLast + 1);
-            }
-        }
-        return cleanUrl;
     }
 
     public UUID getPhotoId() {
