@@ -13,8 +13,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import java.net.URI;
 import java.time.Instant;
@@ -149,6 +152,37 @@ public class GlobalExceptionHandler {
         problem.setType(URI.create(BASE_TYPE_URL + "validation-error"));
         problem.setProperty("errorCode", "VALIDATION_FAILED");
         problem.setProperty("invalidFields", fieldErrors);
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    /**
+     * Captura ausencia de partes multipart o parámetros obligatorios -> HTTP 400 Bad Request (SR-RF-23)
+     */
+    @ExceptionHandler({MissingServletRequestPartException.class, MissingServletRequestParameterException.class})
+    public ProblemDetail handleMissingMultipartOrParamException(Exception ex) {
+        log.warn("Falta parte multipart o parámetro requerido: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        problem.setTitle("Parámetro o Archivo Multipart Faltante");
+        problem.setType(URI.create(BASE_TYPE_URL + "missing-request-part"));
+        problem.setProperty("errorCode", "MISSING_REQUEST_PART");
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    /**
+     * Captura archivos multipart que exceden el límite del contenedor -> HTTP 413 Payload Too Large (SR-RF-23)
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ProblemDetail handleMaxUploadSizeExceededException(MaxUploadSizeExceededException ex) {
+        log.warn("Archivo cargado excede el tamaño máximo permitido: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.PAYLOAD_TOO_LARGE,
+                "La fotografía supera el límite máximo permitido de 5 MB."
+        );
+        problem.setTitle("Archivo Demasiado Grande");
+        problem.setType(URI.create(BASE_TYPE_URL + "payload-too-large"));
+        problem.setProperty("errorCode", "PAYLOAD_TOO_LARGE");
         problem.setProperty("timestamp", Instant.now());
         return problem;
     }
