@@ -3,17 +3,19 @@ package edu.dosw.styleradar.virtualtryon.application.mapper.in;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.BiometricConsentResponse;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.BiometricPhotoResponse;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.GarmentValidationResponse;
+import edu.dosw.styleradar.virtualtryon.application.dto.response.TryOnJobResponse;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.UserQuotaResponse;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 
 /**
- * Mapper de entrada que transforma entidades del dominio puro hacia DTOs de respuesta REST (SR-RF-23 y SR-RF-24).
+ * Mapper de entrada que transforma entidades del dominio puro hacia DTOs de respuesta REST (SR-RF-23 a SR-RF-25).
  */
 @Component
 public class VirtualTryOnDtoMapper {
@@ -64,6 +66,20 @@ public class VirtualTryOnDtoMapper {
                 garment.getImageUrl(),
                 garment.isEligibleForTryOn(),
                 garment.getUpdatedAt()
+        );
+    }
+
+    public TryOnJobResponse toJobResponse(TryOnJob job) {
+        return new TryOnJobResponse(
+                job.getId(),
+                job.getUserId().value(),
+                job.getGarmentId().value(),
+                job.getStatus().name(),
+                job.getResultImageUrl() != null ? job.getResultImageUrl().value() : null,
+                job.getExecutionTimeMs(),
+                job.getErrorMessage(),
+                job.getCreatedAt(),
+                job.getUpdatedAt()
         );
     }
 }
