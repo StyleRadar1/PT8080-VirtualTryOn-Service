@@ -6,8 +6,6 @@ import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
-import org.springframework.stereotype.Component;
-
 import javax.imageio.ImageIO;
 import java.awt.AlphaComposite;
 import java.awt.Color;
@@ -24,7 +22,6 @@ import java.io.UncheckedIOException;
  * (migrada de ComposicionProbador de StyleRadar-Backend) que genera el render PNG superponiendo la
  * prenda en la región anatómica correspondiente (torso o piernas) y lo almacena en Azure Blob Storage (SR-RF-25).
  */
-@Component
 public class MockAiStrategy implements AiInferenceStrategy {
 
     static final int MAX_SIDE_PX = 1600;

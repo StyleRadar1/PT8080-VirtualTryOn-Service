@@ -8,15 +8,12 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.AiInferenceClientPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
-import org.springframework.stereotype.Component;
-
 import java.util.Optional;
 
 /**
  * Estrategia concreta (Patrón Strategy) que delega la inferencia generativa de prueba virtual
  * hacia FASHN AI API y almacena el render resultante en Azure Blob Storage con URL SAS sp=r (SR-RF-25).
  */
-@Component
 public class FashnAiStrategy implements AiInferenceStrategy {
 
     private final AiInferenceClientPort aiInferenceClientPort;
