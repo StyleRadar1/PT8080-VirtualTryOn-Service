@@ -14,8 +14,8 @@ WORKDIR /build
 COPY pom.xml mvnw ./
 COPY .mvn .mvn
 
-# Dar permisos de ejecución al wrapper de Maven
-RUN chmod +x mvnw
+# Normalizar saltos de línea CRLF (Windows) a LF y dar permisos de ejecución al wrapper de Maven
+RUN sed -i 's/\r$//' mvnw && chmod +x mvnw
 
 # Descargar dependencias en caché
 RUN ./mvnw dependency:go-offline -B
@@ -30,7 +30,7 @@ RUN ./mvnw clean package -DskipTests -B
 FROM eclipse-temurin:21-jre-alpine AS runtime
 
 LABEL maintainer="Squad Portal8080 - StyleRadar (DOSW 2026)"
-LABEL description="Microservicio de Probador Virtual con IA (ms-probador-virtual · Puerto 8092)"
+LABEL description="Microservicio de Probador Virtual con IA (ms-probador-virtual · Puerto 8500)"
 
 # Crear usuario y grupo sin privilegios para ejecución segura (no-root)
 RUN addgroup -S styleradar && adduser -S styleradar -G styleradar
@@ -44,11 +44,11 @@ COPY --from=builder --chown=styleradar:styleradar /build/target/*.jar app.jar
 USER styleradar:styleradar
 
 # Puerto de escucha del microservicio
-EXPOSE 8092
+EXPOSE 8500
 
 # Verificación de salud periódica mediante endpoint de Actuator
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD wget -qO- http://localhost:8092/actuator/health || exit 1
+  CMD wget -qO- http://localhost:8500/actuator/health || exit 1
 
 # Parámetros optimizados para contenedores JVM en Java 21
 ENTRYPOINT ["java", \

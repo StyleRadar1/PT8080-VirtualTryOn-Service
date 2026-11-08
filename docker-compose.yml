@@ -15,9 +15,9 @@ services:
       dockerfile: Dockerfile
     container_name: sr-probador-virtual
     ports:
-      - "${SERVER_PORT:-8092}:8092"
+      - "${SERVER_PORT:-8500}:8500"
     environment:
-      SERVER_PORT: 8092
+      SERVER_PORT: 8500
       SPRING_PROFILES_ACTIVE: dev
       DB_URL: jdbc:postgresql://probador-postgres:5432/probador_db
       DB_USER: ${DB_USER:-postgres}
