@@ -5,8 +5,10 @@ import edu.dosw.styleradar.virtualtryon.application.dto.response.GarmentValidati
 import edu.dosw.styleradar.virtualtryon.application.dto.response.TryOnJobResponse;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.UserQuotaResponse;
 import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMapper;
+import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
@@ -39,7 +41,7 @@ import java.util.UUID;
 /**
  * Adaptador primario (Driving) REST para el microservicio de Probador Virtual.
  * Implementa la interfaz de documentación OpenAPI VirtualTryOnOpenApiDoc y delega
- * la consulta de cuotas mensuales y elegibilidad de prendas en QueryTryOnJobsService (SR-RF-24).
+ * la creación de trabajos en CreateTryOnJobService y las consultas en QueryTryOnJobsService (SR-RF-24 y SR-RF-25).
  */
 @RestController
 @RequestMapping("/api/v1/try-on")
@@ -57,13 +59,16 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
             "ROLE_ADMIN_STYLERADAR"
     );
 
+    private final CreateTryOnJobService createTryOnJobService;
     private final QueryTryOnJobsService queryTryOnJobsService;
     private final VirtualTryOnDtoMapper dtoMapper;
 
     public VirtualTryOnRestController(
+            CreateTryOnJobService createTryOnJobService,
             QueryTryOnJobsService queryTryOnJobsService,
             VirtualTryOnDtoMapper dtoMapper
     ) {
+        this.createTryOnJobService = createTryOnJobService;
         this.queryTryOnJobsService = queryTryOnJobsService;
         this.dtoMapper = dtoMapper;
     }
@@ -72,19 +77,15 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @PostMapping("/jobs")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<TryOnJobResponse> startTryOn(@Valid @RequestBody StartTryOnRequest request) {
-        UUID newJobId = UUID.randomUUID();
-        TryOnJobResponse response = new TryOnJobResponse(
-                newJobId,
-                request.userId(),
-                request.garmentId(),
-                "QUEUED",
-                null,
-                null,
-                null,
-                Instant.now(),
-                Instant.now()
+        UUID targetUserId = resolveAndVerifyCallerUserId(request.userId());
+        TryOnJob createdJob = createTryOnJobService.createTryOnJob(
+                UserId.of(targetUserId),
+                GarmentId.of(request.garmentId()),
+                request.photoUrl(),
+                Boolean.TRUE.equals(request.biometricConsent())
         );
-        URI location = URI.create("/api/v1/try-on/jobs/" + newJobId);
+        TryOnJobResponse response = dtoMapper.toJobResponse(createdJob);
+        URI location = URI.create("/api/v1/try-on/jobs/" + createdJob.getId());
         return ResponseEntity.accepted().location(location).body(response);
     }
 
@@ -165,7 +166,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
             UUID targetUserId = requestedUserId != null ? requestedUserId : authenticatedUser.userId();
             if (!isAdmin && !authenticatedUser.canAccessUser(targetUserId)) {
                 throw new AccessDeniedException(
-                        "No tiene permisos para consultar cuotas o validar prendas en nombre de otro usuario"
+                        "No tiene permisos para operar en el Probador Virtual en nombre de otro usuario"
                 );
             }
             return targetUserId;
@@ -179,7 +180,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
             UUID targetUserId = requestedUserId != null ? requestedUserId : authenticatedUuid;
             if (!isAdmin && !authenticatedUuid.equals(targetUserId)) {
                 throw new AccessDeniedException(
-                        "No tiene permisos para consultar cuotas o validar prendas en nombre de otro usuario"
+                        "No tiene permisos para operar en el Probador Virtual en nombre de otro usuario"
                 );
             }
             return targetUserId;
