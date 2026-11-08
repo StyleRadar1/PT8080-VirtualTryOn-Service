@@ -6,6 +6,7 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.validation.PhotoValidationChainTest;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
@@ -61,7 +62,6 @@ class BiometricConsentServiceImplTest {
     private static final String AZURE_BASE_URL = "https://styleradarblob.blob.core.windows.net";
     private static final String CONTAINER = "biometric-silhouettes";
     private static final String TEST_ACCOUNT_KEY = "U3R5bGVSYWRhclRlc3RTdG9yYWdlQWNjb3VudEtleTIwMjZQb3J0YWw4MDgwU2Vj";
-    private static final String SAS_TOKEN = "?sv=2024-11-04&sr=b&sp=racwd";
 
     @Mock
     private BiometricConsentJpaRepository consentJpaRepository;
@@ -114,7 +114,6 @@ class BiometricConsentServiceImplTest {
                 AZURE_BASE_URL + "/",
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
-                SAS_TOKEN,
                 Duration.ofMinutes(60),
                 "2024-11-04"
         );
@@ -154,12 +153,15 @@ class BiometricConsentServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (Positivo - Carga, Firma SAS por Recurso HMAC-SHA256 y Verificación de Lectura en Azure): Dada una foto PNG 400x600 px, Cuando se sube, Entonces ejecuta PUT BlockBlob, genera un SAS firmado por recurso (sp=r, sr=b, sig) sin alterar parámetros y verifica la lectura GET")
-    void shouldUploadGeneratePerResourceSignedSasAndVerifyReadViaAzureRestApi() throws Exception {
+    @DisplayName("HU SR-RF-23 (Positivo - Carga, Firma SAS por Recurso, Persistencia de Ruta y Renovación al Vuelo): Guarda ruta limpia en DB, genera SAS en lectura y renueva al consultar")
+    void shouldUploadPersistCleanPathAndGenerateFreshSasOnRead() throws Exception {
         byte[] photoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
 
-        // 1. Expect PUT BlockBlob + GET de verificación inmediata de lectura con SAS por recurso (sp=r&spr=https&sv=2024-11-04&sr=b&sig=...)
-        mockAzureServer.expect(requestTo(Matchers.startsWith(AZURE_BASE_URL + "/" + CONTAINER + "/" + RAW_USER_ID)))
+        // 1. Expect PUT BlockBlob con token dinámico de escritura (sp=racw&sr=b) + GET de verificación inmediata (sp=r&sr=b)
+        mockAzureServer.expect(requestTo(Matchers.allOf(
+                        Matchers.startsWith(AZURE_BASE_URL + "/" + CONTAINER + "/" + RAW_USER_ID),
+                        Matchers.containsString("sp=racw&spr=https&sv=2024-11-04&sr=b&sig=")
+                )))
                 .andExpect(method(HttpMethod.PUT))
                 .andExpect(header(AzureBlobStorageAdapter.HEADER_BLOB_TYPE, AzureBlobStorageAdapter.BLOCK_BLOB_TYPE))
                 .andExpect(header(AzureBlobStorageAdapter.HEADER_MS_VERSION, "2024-11-04"))
@@ -177,38 +179,46 @@ class BiometricConsentServiceImplTest {
 
         assertThat(uploaded.getWidth()).isEqualTo(400);
         assertThat(uploaded.getHeight()).isEqualTo(600);
+        assertThat(uploaded.getBlobPath()).startsWith(RAW_USER_ID + "/silhouette-").endsWith(".png");
         assertThat(uploaded.getPhotoUrl().value())
                 .contains(CONTAINER)
-                .contains("sp=r&spr=https&sv=2024-11-04&sr=b&sig=")
-                .doesNotContain("sp=racwd");
+                .contains("sp=r&spr=https&sv=2024-11-04&sr=b&sig=");
 
+        // En la base de datos se persiste la ruta del blob, NO la URL temporal con firma que expira
+        BiometricPhotoJpaEntity persistedEntity = persistedPhotos.get(RAW_USER_ID);
+        assertThat(persistedEntity.getPhotoUrl()).isEqualTo(uploaded.getBlobPath());
+
+        // Al consultar posteriormente, getPhotoByUserId() genera una nueva URL SAS fresca
         BiometricPhoto retrieved = consentService.getPhotoByUserId(USER_ID);
         assertThat(retrieved.getPhotoId()).isEqualTo(uploaded.getPhotoId());
+        assertThat(retrieved.getBlobPath()).isEqualTo(uploaded.getBlobPath());
+        assertThat(retrieved.getPhotoUrl().value()).contains("sp=r&spr=https&sv=2024-11-04&sr=b&sig=");
         mockAzureServer.verify();
         mockAzureServer.reset();
 
-        // 2. Expect GET Blob adicional usando exactamente la misma URL SAS de solo lectura sin modificar parámetros firmados
-        mockAzureServer.expect(requestTo(uploaded.getPhotoUrl().value()))
+        // 2. Expect GET Blob adicional usando la URL SAS de solo lectura generada
+        mockAzureServer.expect(requestTo(retrieved.getPhotoUrl().value()))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header(AzureBlobStorageAdapter.HEADER_MS_VERSION, "2024-11-04"))
                 .andRespond(withSuccess(photoBytes, MediaType.IMAGE_PNG));
 
-        Optional<byte[]> storedBytes = blobStorageAdapter.retrieveBlobBytes(uploaded.getPhotoUrl());
+        Optional<byte[]> storedBytes = blobStorageAdapter.retrieveBlobBytes(retrieved.getPhotoUrl());
         assertThat(storedBytes).isPresent();
         assertThat(storedBytes.get()).hasSize(photoBytes.length);
         mockAzureServer.verify();
         mockAzureServer.reset();
 
-        // 3. Al subir una segunda foto, elimina la anterior (DELETE) y sube + verifica lectura de la nueva (PUT + GET)
-        int queryIdx = uploaded.getPhotoUrl().value().indexOf('?');
-        String expectedDeleteUrl = uploaded.getPhotoUrl().value().substring(0, queryIdx) + "?sv=2024-11-04&sr=b&sp=racwd";
-        mockAzureServer.expect(requestTo(expectedDeleteUrl))
+        // 3. Al subir una segunda foto, elimina la anterior con token dinámico (sp=d&sr=b) y sube la nueva
+        mockAzureServer.expect(requestTo(Matchers.allOf(
+                        Matchers.startsWith(AZURE_BASE_URL + "/" + CONTAINER + "/" + RAW_USER_ID),
+                        Matchers.containsString("sp=d&spr=https&sv=2024-11-04&sr=b&sig=")
+                )))
                 .andExpect(method(HttpMethod.DELETE))
                 .andExpect(header(AzureBlobStorageAdapter.HEADER_DELETE_SNAPSHOTS, "include"))
                 .andRespond(withNoContent());
 
         byte[] secondPhotoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(500, 750);
-        mockAzureServer.expect(requestTo(Matchers.startsWith(AZURE_BASE_URL + "/" + CONTAINER + "/" + RAW_USER_ID)))
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw&spr=https&sv=2024-11-04&sr=b&sig=")))
                 .andExpect(method(HttpMethod.PUT))
                 .andExpect(header(AzureBlobStorageAdapter.HEADER_BLOB_TYPE, AzureBlobStorageAdapter.BLOCK_BLOB_TYPE))
                 .andRespond(withSuccess());
@@ -224,148 +234,400 @@ class BiometricConsentServiceImplTest {
                 secondPhotoBytes
         );
         assertThat(secondUpload.getWidth()).isEqualTo(500);
-        assertThat(secondUpload.getPhotoId()).isEqualTo(uploaded.getPhotoId());
+        assertThat(secondUpload.getPhotoId()).isNotNull();
+        assertThat(secondUpload.getUserId()).isEqualTo(uploaded.getUserId());
         mockAzureServer.verify();
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (Seguridad Biometría Ley 1581): Exige obligatoriamente AZURE_STORAGE_ACCOUNT_KEY para firmar cada blob individual (sr=b) e impide tokens de contenedor (sr=c)")
-    void shouldRequireAccountKeyAndRejectContainerScopeTokensForBiometricPhotos() {
-        RestClient.Builder builder = RestClient.builder();
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(
-                builder,
-                AZURE_BASE_URL,
-                CONTAINER,
-                "",
-                SAS_TOKEN,
-                Duration.ofMinutes(60),
-                "2024-11-04"
-        )).isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("AZURE_STORAGE_ACCOUNT_KEY es obligatoria");
+    @DisplayName("HU SR-RF-23 (Aislamiento Criptográfico de Firmas SAS): La firma generada para el Blob A es inválida e incompatible para el Blob B")
+    void shouldVerifySignatureIsValidForTargetBlobAndFailsForDifferentBlob() {
+        String blobA = "user-123/silhouette-aaa.png";
+        String blobB = "user-123/silhouette-bbb.png";
+        Instant expiry = Instant.parse("2026-12-31T23:59:59Z");
 
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(
-                builder,
-                AZURE_BASE_URL,
-                CONTAINER,
-                "   ",
-                SAS_TOKEN,
-                Duration.ofMinutes(60),
-                "2024-11-04"
-        )).isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("AZURE_STORAGE_ACCOUNT_KEY es obligatoria");
+        String sasTokenA = blobStorageAdapter.generatePerBlobReadOnlySasToken(blobA, expiry);
+        String sasTokenB = blobStorageAdapter.generatePerBlobReadOnlySasToken(blobB, expiry);
+
+        // Ambas tienen parámetros estándar sp=r, sr=b, spr=https
+        assertThat(sasTokenA).contains("sp=r&spr=https&sv=2024-11-04&sr=b&sig=");
+        assertThat(sasTokenB).contains("sp=r&spr=https&sv=2024-11-04&sr=b&sig=");
+
+        // Las firmas computadas son completamente diferentes porque el StringToSign incluye la ruta canónica del blob
+        String sigA = sasTokenA.substring(sasTokenA.indexOf("sig=") + 4);
+        String sigB = sasTokenB.substring(sasTokenB.indexOf("sig=") + 4);
+        assertThat(sigA).isNotEqualTo(sigB);
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (Seguridad en Logs): Verifica que los logs registren únicamente la ruta del recurso sin parámetros de autenticación (?se=...&sig=...)")
-    void shouldStripQueryParametersFromLoggedUrls() {
-        String sensitiveUrl = "https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes/user1/silhouette-123.png?se=2026-12-31T23%3A59%3A59Z&sp=r&spr=https&sv=2024-11-04&sr=b&sig=SecretSignatureValue%3D";
-        String stripped = AzureBlobStorageAdapter.stripQueryParametersForLog(sensitiveUrl);
+    @DisplayName("HU SR-RF-23 (Menor Privilegio de Operaciones): El token de lectura (sp=r) produce firmas distintas a escritura (sp=racw) o borrado (sp=d)")
+    void shouldVerifyReadOnlyTokenDoesNotAllowWriteOrDelete() {
+        String blob = "user-456/silhouette.png";
+        Instant expiry = Instant.parse("2026-12-31T23:59:59Z");
+
+        String readSas = blobStorageAdapter.generatePerBlobSasToken(blob, "r", expiry);
+        String writeSas = blobStorageAdapter.generatePerBlobSasToken(blob, "racw", expiry);
+        String deleteSas = blobStorageAdapter.generatePerBlobSasToken(blob, "d", expiry);
+
+        assertThat(readSas).contains("sp=r&").doesNotContain("sp=racw").doesNotContain("sp=d");
+        assertThat(writeSas).contains("sp=racw&");
+        assertThat(deleteSas).contains("sp=d&");
+
+        String sigRead = readSas.substring(readSas.indexOf("sig="));
+        String sigWrite = writeSas.substring(writeSas.indexOf("sig="));
+        String sigDelete = deleteSas.substring(deleteSas.indexOf("sig="));
+
+        assertThat(sigRead).isNotEqualTo(sigWrite);
+        assertThat(sigRead).isNotEqualTo(sigDelete);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Seguridad en Logs y Sanitización de URLs): Cero exposición de parámetros sig= o URLs en mensajes de log y excepciones")
+    void shouldNeverLeakSasTokenInErrorScenariosAndSanitizeLogs() {
+        String fullSignedUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/u1/photo.png?se=2026-12-31&sp=r&spr=https&sig=SUPER_SECRET_TOKEN%3D";
+        String stripped = AzureBlobStorageAdapter.stripQueryParametersForLog(fullSignedUrl);
 
         assertThat(stripped)
-                .isEqualTo("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes/user1/silhouette-123.png")
+                .isEqualTo("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/u1/photo.png")
                 .doesNotContain("sig=")
-                .doesNotContain("SecretSignatureValue");
+                .doesNotContain("SUPER_SECRET_TOKEN");
 
         assertThat(AzureBlobStorageAdapter.stripQueryParametersForLog("https://example.com/blob.png"))
                 .isEqualTo("https://example.com/blob.png");
         assertThat(AzureBlobStorageAdapter.stripQueryParametersForLog(null)).isEmpty();
-        assertThat(AzureBlobStorageAdapter.stripQueryParametersForLog("   ")).isEmpty();
+        assertThat(AzureBlobStorageAdapter.stripQueryParametersForLog("  ")).isEmpty();
+
+        // Error 500 en GET no propaga excepción con parámetros sensibles
+        mockAzureServer.expect(requestTo(Matchers.any(String.class)))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withServerError());
+
+        assertThat(blobStorageAdapter.retrieveBlobBytes(fullSignedUrl)).isEmpty();
+        mockAzureServer.verify();
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (Seguridad SAS y Errores REST API): Valida firma por recurso sin sasToken previo y fallos en PUT/GET/DELETE")
-    void shouldHandlePerBlobSigningValidationAndRestErrorsGracefully() {
-        SasSignedUrl sampleUrl = SasSignedUrl.of(AZURE_BASE_URL + "/" + CONTAINER + "/test.png");
-
-        // 1. Error 500 en PUT lanza IllegalStateException
-        mockAzureServer.expect(requestTo(Matchers.startsWith(AZURE_BASE_URL + "/" + CONTAINER + "/" + RAW_USER_ID)))
-                .andExpect(method(HttpMethod.PUT))
-                .andRespond(withServerError());
-
-        assertThatThrownBy(() -> blobStorageAdapter.storeBiometricPhoto(USER_ID, "image/png", new byte[]{1, 2, 3}))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Azure Blob Storage");
-        mockAzureServer.verify();
-        mockAzureServer.reset();
-
-        // 2. Si la verificación de lectura posterior al PUT retorna vacío, lanza IllegalStateException
-        mockAzureServer.expect(requestTo(Matchers.startsWith(AZURE_BASE_URL + "/" + CONTAINER + "/" + RAW_USER_ID)))
-                .andExpect(method(HttpMethod.PUT))
-                .andRespond(withSuccess());
-        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r&spr=https")))
-                .andExpect(method(HttpMethod.GET))
-                .andRespond(withSuccess(new byte[0], MediaType.IMAGE_PNG));
-
-        assertThatThrownBy(() -> blobStorageAdapter.storeBiometricPhoto(USER_ID, "image/png", new byte[]{1, 2, 3}))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("verificación de lectura");
-        mockAzureServer.verify();
-        mockAzureServer.reset();
-
-        // 3. Error 500 en GET retorna Optional.empty()
-        mockAzureServer.expect(requestTo(sampleUrl.value()))
-                .andExpect(method(HttpMethod.GET))
-                .andRespond(withServerError());
-
-        assertThat(blobStorageAdapter.retrieveBlobBytes(sampleUrl)).isEmpty();
-        mockAzureServer.verify();
-        mockAzureServer.reset();
-
-        // 4. Error 500 en DELETE no propaga excepción no controlada
-        mockAzureServer.expect(requestTo(sampleUrl.value() + "?sv=2024-11-04&sr=b&sp=racwd"))
+    @DisplayName("HU SR-RF-23 (Política de Reintentos y Manejo de Fallos en Eliminación Ley 1581): Reintenta hasta 3 veces y propaga excepción explícita si falla")
+    void shouldRetryAndThrowWhenBlobDeletionFailsInAzure() {
+        // Simular 3 fallos consecutivos en DELETE
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d&spr=https")))
                 .andExpect(method(HttpMethod.DELETE))
                 .andRespond(withServerError());
 
-        blobStorageAdapter.deleteBlob(sampleUrl);
-        mockAzureServer.verify();
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d&spr=https")))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withServerError());
 
-        // 5. Adaptador con accountKey pero sin sasToken firma dinámicamente PUT (sp=racw), GET (sp=r) y DELETE (sp=d)
-        RestClient.Builder keyOnlyBuilder = RestClient.builder();
-        MockRestServiceServer keyOnlyServer = MockRestServiceServer.bindTo(keyOnlyBuilder).build();
-        AzureBlobStorageAdapter keyOnlyAdapter = new AzureBlobStorageAdapter(
-                keyOnlyBuilder,
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d&spr=https")))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withServerError());
+
+        assertThatThrownBy(() -> blobStorageAdapter.deleteBlob("user-test/silhouette.png"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("No fue posible eliminar la fotografía biométrica en Azure Blob Storage");
+
+        mockAzureServer.verify();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Validación Estricta de Inicialización): Rechaza URLs inválidas, esquemas inseguros, claves cortas, duraciones no positivas o nombres de cuenta no identificables")
+    void shouldValidateInitializationParametersStrictly() {
+        RestClient.Builder builder = RestClient.builder();
+
+        // 1. URL vacía o nula
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, "", CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_STORAGE_BASE_URL");
+
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, null, CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_STORAGE_BASE_URL");
+
+        // 2. Esquema no HTTP/HTTPS
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, "ftp://storage.blob.core.windows.net", CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("http:// o https://");
+
+        // 3. Contenedor vacío o nulo
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, "  ", TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_STORAGE_CONTAINER");
+
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, null, TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_STORAGE_CONTAINER");
+
+        // 4. Clave vacía o nula o no Base64
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, "  ", Duration.ofMinutes(60), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_STORAGE_ACCOUNT_KEY es obligatoria");
+
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, null, Duration.ofMinutes(60), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_STORAGE_ACCOUNT_KEY es obligatoria");
+
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, "not-valid-base64!@#", Duration.ofMinutes(60), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Base64 válido");
+
+        // 5. Clave demasiado corta (< 32 bytes)
+        String shortBase64Key = "c2hvcnQta2V5"; // "short-key" (9 bytes)
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, shortBase64Key, Duration.ofMinutes(60), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("longitud mínima de 32 bytes");
+
+        // 6. Duración negativa o nula
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, TEST_ACCOUNT_KEY, Duration.ZERO, "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("readSasDuration");
+
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, TEST_ACCOUNT_KEY, null, "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("readSasDuration");
+
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(-5), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("readSasDuration");
+
+        // 7. Host sin nombre de cuenta identificable
+        assertThatThrownBy(() -> AzureBlobStorageAdapter.parseAccountNameStrict("https://invalid-host-without-dot"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("No fue posible determinar un nombre de cuenta válido");
+
+        // 8. Normalización de URL terminada en / y esquema http:// con apiVersion por defecto
+        AzureBlobStorageAdapter trailingSlashAdapter = new AzureBlobStorageAdapter(
+                builder,
+                AZURE_BASE_URL + "/",
+                CONTAINER,
+                TEST_ACCOUNT_KEY,
+                Duration.ofMinutes(60),
+                ""
+        );
+        assertThat(trailingSlashAdapter).isNotNull();
+
+        AzureBlobStorageAdapter httpAdapter = new AzureBlobStorageAdapter(
+                builder,
+                "http://styleradarblob.blob.core.windows.net",
+                CONTAINER,
+                TEST_ACCOUNT_KEY,
+                Duration.ofMinutes(60),
+                null
+        );
+        assertThat(httpAdapter).isNotNull();
+
+        // 9. Constructor @Autowired de Spring funciona con parámetros válidos
+        AzureBlobStorageAdapter springAdapter = new AzureBlobStorageAdapter(
                 AZURE_BASE_URL,
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
-                "",
-                Duration.ofMinutes(30),
+                Duration.ofMinutes(45),
                 "2024-11-04"
         );
-        keyOnlyServer.expect(requestTo(Matchers.containsString("sp=racw&spr=https&sv=2024-11-04&sr=b&sig=")))
-                .andExpect(method(HttpMethod.PUT))
-                .andRespond(withSuccess());
-        keyOnlyServer.expect(requestTo(Matchers.containsString("sp=r&spr=https&sv=2024-11-04&sr=b&sig=")))
-                .andExpect(method(HttpMethod.GET))
-                .andRespond(withSuccess(new byte[]{10, 20}, MediaType.IMAGE_PNG));
-        keyOnlyServer.expect(requestTo(Matchers.containsString("sp=d&spr=https&sv=2024-11-04&sr=b&sig=")))
+        assertThat(springAdapter).isNotNull();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Cobertura Métodos por Defecto e Invocaciones Nulas): Valida invocaciones con nulos y métodos default de BlobStoragePort")
+    void shouldCoverBlobStoragePortDefaultMethodsAndNullArgs() {
+        // Métodos con argumentos nulos o vacíos retornan de inmediato sin interactuar con Azure
+        blobStorageAdapter.deleteBlob((String) null);
+        blobStorageAdapter.deleteBlob("   ");
+        assertThat(blobStorageAdapter.retrieveBlobBytes((String) null)).isEmpty();
+        assertThat(blobStorageAdapter.retrieveBlobBytes("   ")).isEmpty();
+
+        // Invocaciones de los métodos default de BlobStoragePort con SasSignedUrl nulo
+        BlobStoragePort port = blobStorageAdapter;
+        port.deleteBlob((SasSignedUrl) null);
+        assertThat(port.retrieveBlobBytes((SasSignedUrl) null)).isEmpty();
+
+        // Invocación con SasSignedUrl no nulo
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d")))
                 .andExpect(method(HttpMethod.DELETE))
                 .andRespond(withNoContent());
 
-        SasSignedUrl generatedUrl = keyOnlyAdapter.storeBiometricPhoto(USER_ID, "image/png", new byte[]{10, 20});
-        keyOnlyAdapter.deleteBlob(generatedUrl);
-        keyOnlyServer.verify();
+        port.deleteBlob(SasSignedUrl.of("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes/u1/p1.png?sp=r"));
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+    }
 
-        // 6. Verificar constructor @Autowired de Spring y validación de AZURE_STORAGE_BASE_URL
-        AzureBlobStorageAdapter springConstructed = new AzureBlobStorageAdapter(
-                AZURE_BASE_URL,
-                CONTAINER,
-                TEST_ACCOUNT_KEY,
-                "",
-                Duration.ofMinutes(60),
-                "2024-11-04"
-        );
-        assertThat(springConstructed.generatePerBlobReadOnlySasToken("u1/photo.png", Instant.parse("2027-12-31T23:59:59Z")))
-                .contains("se=2027-12-31T23%3A59%3A59Z&sp=r&spr=https&sv=2024-11-04&sr=b&sig=");
+    @Test
+    @DisplayName("HU SR-RF-23 (Reintento Exitoso y Variantes de Ruta en Eliminación): Reintento exitoso en segundo intento y extracción de nombres de blob")
+    void shouldRetrySuccessfullyOnSecondAttemptAndExtractBlobNames() {
+        // 1. Intento 1 falla con 500, Intento 2 tiene éxito con 204
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d")))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withServerError());
 
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(
-                "  ",
-                CONTAINER,
-                TEST_ACCOUNT_KEY,
-                "",
-                Duration.ofMinutes(60),
-                "2024-11-04"
-        )).isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("AZURE_STORAGE_BASE_URL");
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d")))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withNoContent());
+
+        blobStorageAdapter.deleteBlob("user-retry/photo.png");
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        // 2. Extracción con prefijo completo de almacenamiento
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d")))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withNoContent());
+
+        blobStorageAdapter.deleteBlob(AZURE_BASE_URL + "/" + CONTAINER + "/user-pref/photo.png");
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        // 3. Extracción sin barras
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d")))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withNoContent());
+
+        blobStorageAdapter.deleteBlob("justsinglephoto.png");
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        // 4. Extracción con múltiples barras
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d")))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withNoContent());
+
+        blobStorageAdapter.deleteBlob("/nested/dir/user-multi/photo.png");
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Rutas Limpias y Respuestas Vacías en Lectura): Genera SAS dinámico para ruta limpia y maneja contenido vacío")
+    void shouldCoverRetrieveBlobBytesBranches() {
+        byte[] sampleBytes = new byte[]{1, 2, 3, 4};
+
+        // 1. Recuperar con ruta limpia (sin ?) genera URL firmada al vuelo
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r&spr=https")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(sampleBytes, MediaType.IMAGE_PNG));
+
+        Optional<byte[]> result = blobStorageAdapter.retrieveBlobBytes("user-clean/photo.png");
+        assertThat(result).isPresent().contains(sampleBytes);
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        // 2. Azure responde contenido vacío (0 bytes)
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(new byte[0], MediaType.IMAGE_PNG));
+
+        Optional<byte[]> emptyResult = blobStorageAdapter.retrieveBlobBytes("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes/u1/photo.png?sp=r");
+        assertThat(emptyResult).isEmpty();
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Carga JPEG y Manejo de Errores en Almacenamiento): Valida extensión JPEG y fallos en verificación o PUT")
+    void shouldCoverStoreBiometricPhotoJpegAndFailureScenarios() {
+        byte[] jpegBytes = new byte[]{10, 20, 30};
+
+        // 1. Carga con formato image/jpeg
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andExpect(header(AzureBlobStorageAdapter.HEADER_BLOB_TYPE, AzureBlobStorageAdapter.BLOCK_BLOB_TYPE))
+                .andRespond(withSuccess());
+
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(jpegBytes, MediaType.IMAGE_JPEG));
+
+        String storedBlobName = blobStorageAdapter.storeBiometricPhoto(USER_ID, "image/jpeg", jpegBytes);
+        assertThat(storedBlobName).endsWith(".jpg");
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        // 2. Falla verificación de lectura inmediata
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withServerError());
+
+        assertThatThrownBy(() -> blobStorageAdapter.storeBiometricPhoto(USER_ID, "image/png", jpegBytes))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("La verificación de lectura del archivo en Azure Blob Storage no retornó contenido");
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        // 3. Falla solicitud PUT a Azure
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withServerError());
+
+        assertThatThrownBy(() -> blobStorageAdapter.storeBiometricPhoto(USER_ID, "image/png", jpegBytes))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("No fue posible almacenar la fotografía biométrica en Azure Blob Storage");
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Ramas de Dominio y Mapeadores): Valida validaciones de BiometricPhoto, SasSignedUrl, BiometricConsent y TryOnPersistenceMapper")
+    void shouldCoverDomainModelAndMapperBranches() {
+        // BiometricPhoto validaciones
+        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 0, 100, 100, "p", SasSignedUrl.of("https://a.com/b?sp=r"), Instant.now()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 100, -5, 100, "p", SasSignedUrl.of("https://a.com/b?sp=r"), Instant.now()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 100, 100, 0, "p", SasSignedUrl.of("https://a.com/b?sp=r"), Instant.now()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new BiometricPhoto(UUID.randomUUID(), USER_ID, "  ", 100, 100, 100, "p", SasSignedUrl.of("https://a.com/b?sp=r"), Instant.now()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        BiometricPhoto photo = new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 100, 100, 100, SasSignedUrl.of("https://a.com/c/d/photo.png?sp=r"), Instant.now());
+        assertThat(photo.getBlobPath()).isEqualTo("d/photo.png");
+        BiometricPhoto refreshed = photo.withFreshSignedUrl(SasSignedUrl.of("https://a.com/c/d/photo.png?sp=r&sig=new"));
+        assertThat(refreshed.getPhotoUrl().value()).contains("sig=new");
+
+        BiometricPhoto photoNoSlash = new BiometricPhoto(UUID.randomUUID(), USER_ID, "image/png", 100, 100, 100, SasSignedUrl.of("https://a.com?sp=r"), Instant.now());
+        assertThat(photoNoSlash.getBlobPath()).isNotNull();
+
+        // SasSignedUrl validaciones
+        SasSignedUrl httpUrl = SasSignedUrl.of("http://example.com/blob.png?sp=r");
+        assertThat(httpUrl.value()).startsWith("http://");
+
+        SasSignedUrl trailingQuestion = SasSignedUrl.of("https://example.com/blob.png?");
+        assertThat(trailingQuestion.value()).endsWith("?");
+
+        assertThatThrownBy(() -> SasSignedUrl.of("https://a.com/b?ss=b"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> SasSignedUrl.of("https://a.com/b?srt=c"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> SasSignedUrl.of("https://a.com/b?sp=w"))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // BiometricConsent validaciones y revocación
+        BiometricConsent defaultPurposesConsent = new BiometricConsent(UUID.randomUUID(), USER_ID, "v1", true, null, Instant.now(), null, "127.0.0.1");
+        assertThat(defaultPurposesConsent.getPurposes()).contains("VIRTUAL_TRY_ON_INFERENCE");
+        assertThat(defaultPurposesConsent.isValidForInference()).isTrue();
+
+        defaultPurposesConsent.revoke(Instant.now());
+        assertThat(defaultPurposesConsent.isValidForInference()).isFalse();
+
+        BiometricConsent unacceptedConsent = new BiometricConsent(UUID.randomUUID(), USER_ID, "v1", false, List.of(), Instant.now(), null, "127.0.0.1");
+        assertThat(unacceptedConsent.isValidForInference()).isFalse();
+
+        assertThatThrownBy(() -> new BiometricConsent(UUID.randomUUID(), USER_ID, "  ", true, List.of(), Instant.now(), null, "127.0.0.1"))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // TryOnPersistenceMapper http/https/null branches
+        BiometricPhotoJpaEntity httpEntity = new BiometricPhotoJpaEntity(UUID.randomUUID(), RAW_USER_ID, "image/png", 100, 100, 100, "http://custom.storage.com/photo.png?sp=r", Instant.now());
+        BiometricPhoto domainHttp = persistenceMapper.toPhotoDomain(httpEntity);
+        assertThat(domainHttp.getPhotoUrl().value()).startsWith("http://");
+
+        BiometricPhotoJpaEntity httpsEntity = new BiometricPhotoJpaEntity(UUID.randomUUID(), RAW_USER_ID, "image/png", 100, 100, 100, "https://custom.storage.com/photo.png?sp=r", Instant.now());
+        BiometricPhoto domainHttps = persistenceMapper.toPhotoDomain(httpsEntity);
+        assertThat(domainHttps.getPhotoUrl().value()).startsWith("https://");
+
+        BiometricPhotoJpaEntity nullEntity = new BiometricPhotoJpaEntity(UUID.randomUUID(), RAW_USER_ID, "image/png", 100, 100, 100, null, Instant.now());
+        BiometricPhoto domainNull = persistenceMapper.toPhotoDomain(nullEntity);
+        assertThat(domainNull.getBlobPath()).isEmpty();
     }
 
     @Test
@@ -408,14 +670,15 @@ class BiometricConsentServiceImplTest {
                 liveBaseUrl,
                 liveContainer,
                 liveKey,
-                "",
                 Duration.ofMinutes(30),
                 "2024-11-04"
         );
 
         byte[] realPngBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
-        SasSignedUrl readOnlyBlobUrl = liveAdapter.storeBiometricPhoto(USER_ID, "image/png", realPngBytes);
+        String blobPath = liveAdapter.storeBiometricPhoto(USER_ID, "image/png", realPngBytes);
+        SasSignedUrl readOnlyBlobUrl = liveAdapter.generateReadOnlySignedUrl(blobPath);
 
+        assertThat(blobPath).startsWith(RAW_USER_ID + "/silhouette-").endsWith(".png");
         assertThat(readOnlyBlobUrl.value())
                 .startsWith(liveBaseUrl + "/" + liveContainer + "/" + RAW_USER_ID)
                 .contains("sp=r&spr=https&sv=2024-11-04&sr=b&sig=");
@@ -424,6 +687,6 @@ class BiometricConsentServiceImplTest {
         assertThat(downloadedFromAzure).isPresent();
         assertThat(downloadedFromAzure.get()).isEqualTo(realPngBytes);
 
-        liveAdapter.deleteBlob(readOnlyBlobUrl);
+        liveAdapter.deleteBlob(blobPath);
     }
 }
