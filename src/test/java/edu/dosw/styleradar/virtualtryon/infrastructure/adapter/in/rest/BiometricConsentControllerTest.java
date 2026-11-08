@@ -121,6 +121,7 @@ class BiometricConsentControllerTest {
                 400,
                 600,
                 2048L,
+                "pose.png",
                 SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/pose.png"),
                 Instant.parse("2026-11-07T22:05:00Z")
         );

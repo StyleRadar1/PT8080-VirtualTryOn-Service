@@ -20,6 +20,12 @@ spring:
       indent-output: true
       write-dates-as-timestamps: false
 
+  # Migraciones de esquema PostgreSQL con Flyway
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
 # Documentación interactiva OpenAPI 3.0 / Swagger UI
 springdoc:
   api-docs:
@@ -42,7 +48,7 @@ management:
       show-details: always
 
 # Configuración transversal de seguridad JWT y almacenamiento Azure Blob Storage
-# Las credenciales (JWT_SECRET_BASE64 y AZURE_SAS_TOKEN) deben inyectarse por variables de entorno o secretos de despliegue
+# Las credenciales (JWT_SECRET_BASE64 y AZURE_STORAGE_ACCOUNT_KEY) deben inyectarse por variables de entorno o secretos de despliegue
 styleradar:
   security:
     jwt:
@@ -51,7 +57,7 @@ styleradar:
   tryon:
     blob-base-url: ${AZURE_STORAGE_BASE_URL}
     blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes}
-    blob-sas-token: ${AZURE_SAS_TOKEN:}
-    blob-read-sas-token: ${AZURE_READ_SAS_TOKEN:}
+    blob-account-key: ${AZURE_STORAGE_ACCOUNT_KEY}
+    blob-read-sas-duration: ${AZURE_READ_SAS_DURATION:PT60M}
     blob-api-version: ${AZURE_STORAGE_API_VERSION:2024-11-04}
 
