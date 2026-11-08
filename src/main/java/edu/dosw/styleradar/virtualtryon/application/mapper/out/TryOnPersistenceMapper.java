@@ -13,6 +13,7 @@ import java.util.List;
 
 /**
  * Mapper de salida que convierte entidades del dominio hacia entidades JPA de persistencia y viceversa (SR-RF-23).
+ * Persiste únicamente la ruta del blob en la base de datos relacional para evitar la persistencia de tokens SAS temporales.
  */
 @Component
 public class TryOnPersistenceMapper {
@@ -55,12 +56,17 @@ public class TryOnPersistenceMapper {
                 domain.getWidth(),
                 domain.getHeight(),
                 domain.getSizeBytes(),
-                domain.getPhotoUrl().value(),
+                domain.getBlobPath(),
                 domain.getUploadedAt()
         );
     }
 
     public BiometricPhoto toPhotoDomain(BiometricPhotoJpaEntity entity) {
+        String persistedBlobPath = entity.getPhotoUrl();
+        String safeBlobPath = persistedBlobPath == null ? "" : persistedBlobPath;
+        String safeUrl = (persistedBlobPath != null && (persistedBlobPath.startsWith("http://") || persistedBlobPath.startsWith("https://")))
+                ? persistedBlobPath
+                : "https://blob.storage.local/biometric-silhouettes/" + safeBlobPath;
         return new BiometricPhoto(
                 entity.getId(),
                 UserId.of(entity.getUserId()),
@@ -68,9 +74,9 @@ public class TryOnPersistenceMapper {
                 entity.getWidth(),
                 entity.getHeight(),
                 entity.getSizeBytes(),
-                SasSignedUrl.of(entity.getPhotoUrl()),
+                safeBlobPath,
+                SasSignedUrl.of(safeUrl),
                 entity.getUploadedAt()
         );
     }
 }
-

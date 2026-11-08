@@ -25,8 +25,9 @@ import java.util.UUID;
 
 /**
  * Implementación del servicio de aplicación para la gestión de consentimiento biométrico (Ley 1581)
- * y la carga validada de la fotografía frontal del usuario (SR-RF-23) aplicando el patrón
- * Chain of Responsibility (BiometricConsentValidator -> ImageFormatResolutionValidator -> PoseReferenceValidator).
+ * y la carga validada de la fotografía frontal del usuario (SR-RF-23).
+ * Persiste únicamente la ruta del blob en la base de datos relacional y genera una nueva URL firmada SAS
+ * fresca de solo lectura cada vez que se entrega acceso a la fotografía.
  */
 @Service
 @Transactional
@@ -135,9 +136,10 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
         }
 
         biometricDataRepositoryPort.findPhotoByUserId(userId)
-                .ifPresent(previousPhoto -> blobStoragePort.deleteBlob(previousPhoto.getPhotoUrl()));
+                .ifPresent(previousPhoto -> blobStoragePort.deleteBlob(previousPhoto.getBlobPath()));
 
-        SasSignedUrl storedUrl = blobStoragePort.storeBiometricPhoto(userId, contentType, photoBytes);
+        String storedBlobPath = blobStoragePort.storeBiometricPhoto(userId, contentType, photoBytes);
+        SasSignedUrl freshSignedUrl = blobStoragePort.generateReadOnlySignedUrl(storedBlobPath);
 
         BiometricPhoto photo = new BiometricPhoto(
                 UUID.randomUUID(),
@@ -146,21 +148,23 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
                 validationContext.getImageWidth(),
                 validationContext.getImageHeight(),
                 validationContext.getImageSizeBytes(),
-                storedUrl,
+                storedBlobPath,
+                freshSignedUrl,
                 Instant.now()
         );
 
         BiometricPhoto savedPhoto = biometricDataRepositoryPort.savePhoto(photo);
-        log.info("Fotografía frontal validada y almacenada para el usuario {} ({}x{} px, {} bytes)",
-                userId.value(), savedPhoto.getWidth(), savedPhoto.getHeight(), savedPhoto.getSizeBytes());
-        return savedPhoto;
+        log.info("Fotografía frontal validada y almacenada para el usuario {} ({}x{} px, {} bytes, ruta: {})",
+                userId.value(), savedPhoto.getWidth(), savedPhoto.getHeight(), savedPhoto.getSizeBytes(), storedBlobPath);
+        return photo;
     }
 
     @Override
     @Transactional(readOnly = true)
     public BiometricPhoto getPhotoByUserId(UserId userId) {
-        return biometricDataRepositoryPort.findPhotoByUserId(userId)
+        BiometricPhoto persistedPhoto = biometricDataRepositoryPort.findPhotoByUserId(userId)
                 .orElseThrow(() -> new JobNotFoundException(userId.value()));
+        SasSignedUrl freshSignedUrl = blobStoragePort.generateReadOnlySignedUrl(persistedPhoto.getBlobPath());
+        return persistedPhoto.withFreshSignedUrl(freshSignedUrl);
     }
 }
-
