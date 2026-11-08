@@ -34,7 +34,7 @@ styleradar:
     daily-quota-limit: 10
     blob-base-url: https://styleradarblob.blob.core.windows.net
     blob-container: biometric-silhouettes
-    blob-sas-token: sv=2024-11-04&sr=b&sp=racwd
-    blob-read-sas-token: sv=2024-11-04&sr=b&sp=r&spr=https
+    blob-account-key: U3R5bGVSYWRhclRlc3RTdG9yYWdlQWNjb3VudEtleTIwMjZQb3J0YWw4MDgwU2Vj
+    blob-read-sas-duration: PT60M
     blob-api-version: 2024-11-04
 
