@@ -8,6 +8,7 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.e
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.BiometricPhotoJpaEntity;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 
@@ -63,10 +64,8 @@ public class TryOnPersistenceMapper {
 
     public BiometricPhoto toPhotoDomain(BiometricPhotoJpaEntity entity) {
         String persistedBlobPath = entity.getPhotoUrl();
-        String safeBlobPath = persistedBlobPath == null ? "" : persistedBlobPath;
-        String safeUrl = (persistedBlobPath != null && (persistedBlobPath.startsWith("http://") || persistedBlobPath.startsWith("https://")))
-                ? persistedBlobPath
-                : "https://blob.storage.local/biometric-silhouettes/" + safeBlobPath;
+        String cleanBlobPath = normalizePersistedBlobPath(persistedBlobPath);
+        String safeUrl = "https://blob.storage.local/biometric-silhouettes/" + cleanBlobPath;
         return new BiometricPhoto(
                 entity.getId(),
                 UserId.of(entity.getUserId()),
@@ -74,9 +73,42 @@ public class TryOnPersistenceMapper {
                 entity.getWidth(),
                 entity.getHeight(),
                 entity.getSizeBytes(),
-                safeBlobPath,
+                cleanBlobPath,
                 SasSignedUrl.of(safeUrl),
                 entity.getUploadedAt()
         );
+    }
+
+    /**
+     * Normaliza referencias antiguas almacenadas en la base de datos eliminando parámetros
+     * query SAS (?se=...&sig=...) y extrayendo únicamente la ruta relativa del blob.
+     */
+    public static String normalizePersistedBlobPath(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) {
+            return "";
+        }
+        String stripped = rawPath.trim();
+        int queryIdx = stripped.indexOf('?');
+        if (queryIdx >= 0) {
+            stripped = stripped.substring(0, queryIdx);
+        }
+        if (stripped.startsWith("http://") || stripped.startsWith("https://")) {
+            try {
+                URI uri = URI.create(stripped);
+                String path = uri.getPath();
+                if (path != null && !path.isBlank()) {
+                    while (path.startsWith("/")) {
+                        path = path.substring(1);
+                    }
+                    int firstSlash = path.indexOf('/');
+                    if (firstSlash >= 0 && firstSlash < path.length() - 1) {
+                        return path.substring(firstSlash + 1);
+                    }
+                    return path;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return stripped;
     }
 }

@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -135,8 +136,7 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
             biometricDataRepositoryPort.saveConsent(autoRegisteredConsent);
         }
 
-        biometricDataRepositoryPort.findPhotoByUserId(userId)
-                .ifPresent(previousPhoto -> blobStoragePort.deleteBlob(previousPhoto.getBlobPath()));
+        Optional<BiometricPhoto> previousPhotoOpt = biometricDataRepositoryPort.findPhotoByUserId(userId);
 
         String storedBlobPath = blobStoragePort.storeBiometricPhoto(userId, contentType, photoBytes);
         SasSignedUrl freshSignedUrl = blobStoragePort.generateReadOnlySignedUrl(storedBlobPath);
@@ -156,7 +156,20 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
         BiometricPhoto savedPhoto = biometricDataRepositoryPort.savePhoto(photo);
         log.info("Fotografía frontal validada y almacenada para el usuario {} ({}x{} px, {} bytes, ruta: {})",
                 userId.value(), savedPhoto.getWidth(), savedPhoto.getHeight(), savedPhoto.getSizeBytes(), storedBlobPath);
-        return photo;
+
+        // Eliminación de la fotografía anterior únicamente tras confirmar el almacenamiento exitoso de la nueva
+        previousPhotoOpt.ifPresent(previousPhoto -> {
+            try {
+                blobStoragePort.deleteBlob(previousPhoto.getBlobPath());
+                log.info("Fotografía biométrica anterior eliminada exitosamente en reemplazo (usuario: {}, ruta: {})",
+                        userId.value(), previousPhoto.getBlobPath());
+            } catch (Exception ex) {
+                log.warn("No fue posible eliminar la fotografía biométrica anterior en Azure tras reemplazo (ruta: {}, causa: {}). La nueva fotografía permanece activa.",
+                        previousPhoto.getBlobPath(), ex.getClass().getSimpleName());
+            }
+        });
+
+        return savedPhoto.withFreshSignedUrl(freshSignedUrl);
     }
 
     @Override
