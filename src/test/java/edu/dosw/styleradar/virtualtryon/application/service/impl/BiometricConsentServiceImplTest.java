@@ -208,15 +208,8 @@ class BiometricConsentServiceImplTest {
         mockAzureServer.verify();
         mockAzureServer.reset();
 
-        // 3. Al subir una segunda foto, elimina la anterior con token dinámico (sp=d&sr=b) y sube la nueva
-        mockAzureServer.expect(requestTo(Matchers.allOf(
-                        Matchers.startsWith(AZURE_BASE_URL + "/" + CONTAINER + "/" + RAW_USER_ID),
-                        Matchers.containsString("sp=d&spr=https&sv=2024-11-04&sr=b&sig=")
-                )))
-                .andExpect(method(HttpMethod.DELETE))
-                .andExpect(header(AzureBlobStorageAdapter.HEADER_DELETE_SNAPSHOTS, "include"))
-                .andRespond(withNoContent());
-
+        // 3. Al subir una segunda foto (reemplazo):
+        // PRIMERO sube la nueva foto a Azure y verifica su lectura, y SOLO DESPUÉS de guardar elimina la anterior en Azure
         byte[] secondPhotoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(500, 750);
         mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw&spr=https&sv=2024-11-04&sr=b&sig=")))
                 .andExpect(method(HttpMethod.PUT))
@@ -226,6 +219,14 @@ class BiometricConsentServiceImplTest {
         mockAzureServer.expect(requestTo(Matchers.containsString("sp=r&spr=https&sv=2024-11-04&sr=b&sig=")))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(secondPhotoBytes, MediaType.IMAGE_PNG));
+
+        mockAzureServer.expect(requestTo(Matchers.allOf(
+                        Matchers.startsWith(AZURE_BASE_URL + "/" + CONTAINER + "/" + RAW_USER_ID),
+                        Matchers.containsString("sp=d&spr=https&sv=2024-11-04&sr=b&sig=")
+                )))
+                .andExpect(method(HttpMethod.DELETE))
+                .andExpect(header(AzureBlobStorageAdapter.HEADER_DELETE_SNAPSHOTS, "include"))
+                .andRespond(withNoContent());
 
         BiometricPhoto secondUpload = consentService.uploadPhoto(
                 USER_ID,
@@ -495,6 +496,43 @@ class BiometricConsentServiceImplTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-23 (Resiliencia en Reemplazo): Si la eliminación de la foto vieja falla tras confirmar la nueva, la nueva foto se preserva y no falla el flujo")
+    void shouldPreserveNewPhotoWhenOldPhotoDeletionFailsDuringReplacement() throws Exception {
+        byte[] firstBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(firstBytes, MediaType.IMAGE_PNG));
+
+        BiometricPhoto firstPhoto = consentService.uploadPhoto(USER_ID, true, "image/png", firstBytes);
+        assertThat(firstPhoto).isNotNull();
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        byte[] secondBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
+        // Nueva foto sube y se verifica con éxito
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(secondBytes, MediaType.IMAGE_PNG));
+
+        // Los 3 reintentos de DELETE de la foto anterior fallan
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d"))).andExpect(method(HttpMethod.DELETE)).andRespond(withServerError());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d"))).andExpect(method(HttpMethod.DELETE)).andRespond(withServerError());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d"))).andExpect(method(HttpMethod.DELETE)).andRespond(withServerError());
+
+        BiometricPhoto secondPhoto = consentService.uploadPhoto(USER_ID, true, "image/png", secondBytes);
+        assertThat(secondPhoto).isNotNull();
+        assertThat(secondPhoto.getPhotoId()).isNotNull();
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+    }
+
+    @Test
     @DisplayName("HU SR-RF-23 (Rutas Limpias y Respuestas Vacías en Lectura): Genera SAS dinámico para ruta limpia y maneja contenido vacío")
     void shouldCoverRetrieveBlobBytesBranches() {
         byte[] sampleBytes = new byte[]{1, 2, 3, 4};
@@ -616,18 +654,25 @@ class BiometricConsentServiceImplTest {
         assertThatThrownBy(() -> new BiometricConsent(UUID.randomUUID(), USER_ID, "  ", true, List.of(), Instant.now(), null, "127.0.0.1"))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        // TryOnPersistenceMapper http/https/null branches
-        BiometricPhotoJpaEntity httpEntity = new BiometricPhotoJpaEntity(UUID.randomUUID(), RAW_USER_ID, "image/png", 100, 100, 100, "http://custom.storage.com/photo.png?sp=r", Instant.now());
+        // TryOnPersistenceMapper normalización de referencias antiguas (URLs completas con SAS)
+        BiometricPhotoJpaEntity httpEntity = new BiometricPhotoJpaEntity(UUID.randomUUID(), RAW_USER_ID, "image/png", 100, 100, 100, "http://custom.storage.com/container/user/photo.png?sp=r&sig=OLD", Instant.now());
         BiometricPhoto domainHttp = persistenceMapper.toPhotoDomain(httpEntity);
-        assertThat(domainHttp.getPhotoUrl().value()).startsWith("http://");
+        assertThat(domainHttp.getBlobPath()).isEqualTo("user/photo.png").doesNotContain("sp=r").doesNotContain("http");
 
-        BiometricPhotoJpaEntity httpsEntity = new BiometricPhotoJpaEntity(UUID.randomUUID(), RAW_USER_ID, "image/png", 100, 100, 100, "https://custom.storage.com/photo.png?sp=r", Instant.now());
+        BiometricPhotoJpaEntity httpsEntity = new BiometricPhotoJpaEntity(UUID.randomUUID(), RAW_USER_ID, "image/png", 100, 100, 100, "https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes/user-99/old-photo.png?sp=r&sig=abc", Instant.now());
         BiometricPhoto domainHttps = persistenceMapper.toPhotoDomain(httpsEntity);
-        assertThat(domainHttps.getPhotoUrl().value()).startsWith("https://");
+        assertThat(domainHttps.getBlobPath()).isEqualTo("user-99/old-photo.png").doesNotContain("sig=");
+
+        BiometricPhotoJpaEntity singleSlashEntity = new BiometricPhotoJpaEntity(UUID.randomUUID(), RAW_USER_ID, "image/png", 100, 100, 100, "https://styleradarpt8080blob.blob.core.windows.net/single.png?sp=r", Instant.now());
+        BiometricPhoto domainSingle = persistenceMapper.toPhotoDomain(singleSlashEntity);
+        assertThat(domainSingle.getBlobPath()).isEqualTo("single.png");
 
         BiometricPhotoJpaEntity nullEntity = new BiometricPhotoJpaEntity(UUID.randomUUID(), RAW_USER_ID, "image/png", 100, 100, 100, null, Instant.now());
         BiometricPhoto domainNull = persistenceMapper.toPhotoDomain(nullEntity);
         assertThat(domainNull.getBlobPath()).isEmpty();
+
+        assertThat(TryOnPersistenceMapper.normalizePersistedBlobPath("   ")).isEmpty();
+        assertThat(TryOnPersistenceMapper.normalizePersistedBlobPath("user/photo.png")).isEqualTo("user/photo.png");
     }
 
     @Test
