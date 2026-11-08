@@ -98,6 +98,16 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         String extension = "image/png".equalsIgnoreCase(contentType) ? "png" : "jpg";
         String resolvedContentType = "png".equals(extension) ? MediaType.IMAGE_PNG_VALUE : MediaType.IMAGE_JPEG_VALUE;
         String blobName = userId.value() + "/silhouette-" + UUID.randomUUID() + "." + extension;
+        return uploadBlockBlob(userId, blobName, resolvedContentType, photoBytes);
+    }
+
+    @Override
+    public SasSignedUrl storeRenderedResult(UserId userId, UUID jobId, byte[] renderedPngBytes) {
+        String blobName = userId.value() + "/render-" + jobId + ".png";
+        return uploadBlockBlob(userId, blobName, MediaType.IMAGE_PNG_VALUE, renderedPngBytes);
+    }
+
+    private SasSignedUrl uploadBlockBlob(UserId userId, String blobName, String resolvedContentType, byte[] blobBytes) {
         String writeUrl = buildWriteSignedBlobUrl(blobName);
         String readOnlyUrl = buildReadOnlySignedBlobUrl(blobName);
 
@@ -107,7 +117,7 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                     .header(HEADER_BLOB_TYPE, BLOCK_BLOB_TYPE)
                     .header(HEADER_MS_VERSION, apiVersion)
                     .contentType(MediaType.parseMediaType(resolvedContentType))
-                    .body(photoBytes)
+                    .body(blobBytes)
                     .retrieve()
                     .toBodilessEntity();
 

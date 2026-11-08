@@ -3,6 +3,10 @@
 -- Requerimientos: SR-RF-23 a SR-RF-27 · Ley 1581 de 2012 (Habeas Data)
 -- ===================================================================
 
+ALTER TABLE try_on_jobs
+    ADD COLUMN IF NOT EXISTS garment_category VARCHAR(32) NOT NULL DEFAULT 'TOPS',
+    ADD COLUMN IF NOT EXISTS ai_provider VARCHAR(32) NOT NULL DEFAULT 'FASHN_AI';
+
 ALTER TABLE user_quotas
     ADD COLUMN IF NOT EXISTS is_radar_plus BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
