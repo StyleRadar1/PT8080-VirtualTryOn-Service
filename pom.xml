@@ -104,6 +104,12 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Migraciones de Base de Datos Flyway (PostgreSQL) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
         <!-- Redis para caché volátil y TTL de estados de jobs -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

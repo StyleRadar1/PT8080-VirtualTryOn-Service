@@ -28,7 +28,10 @@ public class TryOnEventListenerAdapter {
         this.queryTryOnJobsService = queryTryOnJobsService;
     }
 
-    @RabbitListener(queues = CATALOG_GARMENT_UPDATED_QUEUE, autoStartup = "${styleradar.tryon.amqp.listeners-enabled:false}")
+    @RabbitListener(
+            queues = "${styleradar.tryon.amqp.catalog-garment-queue:" + CATALOG_GARMENT_UPDATED_QUEUE + "}",
+            autoStartup = "${styleradar.tryon.amqp.listeners-enabled:true}"
+    )
     public void onCatalogGarmentUpdated(CatalogGarmentUpdatedEvent event) {
         if (event == null || event.garmentId() == null) {
             log.warn("Evento catalog.garment.updated descartado por carecer de garmentId válido");
