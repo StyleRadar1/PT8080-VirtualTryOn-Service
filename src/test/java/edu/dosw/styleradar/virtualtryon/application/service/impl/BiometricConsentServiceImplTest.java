@@ -115,7 +115,6 @@ class BiometricConsentServiceImplTest {
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
                 SAS_TOKEN,
-                "",
                 Duration.ofMinutes(60),
                 "2024-11-04"
         );
@@ -230,41 +229,51 @@ class BiometricConsentServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (Positivo - Consentimiento Previo y SAS Pre-firmado Intacto): Dado un token de solo lectura pre-firmado (sp=r), Cuando se sube una foto JPEG, Entonces preserva la firma original sin modificar parámetros")
-    void shouldUploadPhotoPreservingPreSignedReadSasIntact() throws Exception {
-        String preSignedReadToken = "se=2027-12-31T23%3A59%3A59Z&sp=r&spr=https&sv=2024-11-04&sr=c&sig= intactSignature123%3D".replace(" ", "");
-        RestClient.Builder preSignedBuilder = RestClient.builder();
-        MockRestServiceServer preSignedServer = MockRestServiceServer.bindTo(preSignedBuilder).build();
-        AzureBlobStorageAdapter preSignedAdapter = new AzureBlobStorageAdapter(
-                preSignedBuilder,
+    @DisplayName("HU SR-RF-23 (Seguridad Biometría Ley 1581): Exige obligatoriamente AZURE_STORAGE_ACCOUNT_KEY para firmar cada blob individual (sr=b) e impide tokens de contenedor (sr=c)")
+    void shouldRequireAccountKeyAndRejectContainerScopeTokensForBiometricPhotos() {
+        RestClient.Builder builder = RestClient.builder();
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(
+                builder,
+                AZURE_BASE_URL,
+                CONTAINER,
+                "",
+                SAS_TOKEN,
+                Duration.ofMinutes(60),
+                "2024-11-04"
+        )).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_STORAGE_ACCOUNT_KEY es obligatoria");
+
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(
+                builder,
                 AZURE_BASE_URL,
                 CONTAINER,
                 "   ",
-                preSignedReadToken,
+                SAS_TOKEN,
+                Duration.ofMinutes(60),
                 "2024-11-04"
-        );
-        BiometricConsentServiceImpl customService = new BiometricConsentServiceImpl(repositoryAdapter, preSignedAdapter);
-
-        customService.grantConsent(USER_ID, "v1.0", true, List.of("VIRTUAL_TRY_ON_INFERENCE"), "127.0.0.1");
-        byte[] photoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(350, 520);
-
-        preSignedServer.expect(requestTo(Matchers.startsWith(AZURE_BASE_URL + "/" + CONTAINER + "/" + RAW_USER_ID)))
-                .andExpect(method(HttpMethod.PUT))
-                .andRespond(withSuccess());
-
-        preSignedServer.expect(requestTo(Matchers.endsWith("?" + preSignedReadToken)))
-                .andExpect(method(HttpMethod.GET))
-                .andRespond(withSuccess(photoBytes, MediaType.IMAGE_JPEG));
-
-        BiometricPhoto uploaded = customService.uploadPhoto(USER_ID, false, "image/jpeg", photoBytes);
-
-        assertThat(uploaded.getContentType()).isEqualTo("image/jpeg");
-        assertThat(uploaded.getPhotoUrl().value()).endsWith(".jpg?" + preSignedReadToken);
-        preSignedServer.verify();
+        )).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_STORAGE_ACCOUNT_KEY es obligatoria");
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (Seguridad SAS y Errores REST API): Valida firma por recurso sin sasToken previo, rechazo de token de lectura con permisos de escritura y fallos en PUT/GET/DELETE")
+    @DisplayName("HU SR-RF-23 (Seguridad en Logs): Verifica que los logs registren únicamente la ruta del recurso sin parámetros de autenticación (?se=...&sig=...)")
+    void shouldStripQueryParametersFromLoggedUrls() {
+        String sensitiveUrl = "https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes/user1/silhouette-123.png?se=2026-12-31T23%3A59%3A59Z&sp=r&spr=https&sv=2024-11-04&sr=b&sig=SecretSignatureValue%3D";
+        String stripped = AzureBlobStorageAdapter.stripQueryParametersForLog(sensitiveUrl);
+
+        assertThat(stripped)
+                .isEqualTo("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes/user1/silhouette-123.png")
+                .doesNotContain("sig=")
+                .doesNotContain("SecretSignatureValue");
+
+        assertThat(AzureBlobStorageAdapter.stripQueryParametersForLog("https://example.com/blob.png"))
+                .isEqualTo("https://example.com/blob.png");
+        assertThat(AzureBlobStorageAdapter.stripQueryParametersForLog(null)).isEmpty();
+        assertThat(AzureBlobStorageAdapter.stripQueryParametersForLog("   ")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Seguridad SAS y Errores REST API): Valida firma por recurso sin sasToken previo y fallos en PUT/GET/DELETE")
     void shouldHandlePerBlobSigningValidationAndRestErrorsGracefully() {
         SasSignedUrl sampleUrl = SasSignedUrl.of(AZURE_BASE_URL + "/" + CONTAINER + "/test.png");
 
@@ -319,7 +328,6 @@ class BiometricConsentServiceImplTest {
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
                 "",
-                "",
                 Duration.ofMinutes(30),
                 "2024-11-04"
         );
@@ -337,25 +345,12 @@ class BiometricConsentServiceImplTest {
         keyOnlyAdapter.deleteBlob(generatedUrl);
         keyOnlyServer.verify();
 
-        // 6. Rechazar pre-signed read token que contenga permisos distintos de sp=r (sin mutar su firma)
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(
-                AZURE_BASE_URL,
-                CONTAINER,
-                "",
-                "",
-                "sv=2024-11-04&sr=b&sp=racwd&sig=abc",
-                Duration.ofMinutes(60),
-                "2024-11-04"
-        )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("sp=r");
-
-        // 7. Verificar constructor @Autowired de Spring y validación de AZURE_STORAGE_BASE_URL
+        // 6. Verificar constructor @Autowired de Spring y validación de AZURE_STORAGE_BASE_URL
         AzureBlobStorageAdapter springConstructed = new AzureBlobStorageAdapter(
                 AZURE_BASE_URL,
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
                 "",
-                "sv=2024-11-04&sr=b&sp=r&spr=https&sig=xyz",
                 Duration.ofMinutes(60),
                 "2024-11-04"
         );
@@ -365,8 +360,7 @@ class BiometricConsentServiceImplTest {
         assertThatThrownBy(() -> new AzureBlobStorageAdapter(
                 "  ",
                 CONTAINER,
-                "",
-                "",
+                TEST_ACCOUNT_KEY,
                 "",
                 Duration.ofMinutes(60),
                 "2024-11-04"
@@ -414,7 +408,6 @@ class BiometricConsentServiceImplTest {
                 liveBaseUrl,
                 liveContainer,
                 liveKey,
-                "",
                 "",
                 Duration.ofMinutes(30),
                 "2024-11-04"
