@@ -2,10 +2,13 @@ package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.dosw.styleradar.virtualtryon.application.dto.request.StartTryOnRequest;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtTokenProvider;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.SecurityProblemHandler;
 import edu.dosw.styleradar.virtualtryon.infrastructure.exception.GlobalExceptionHandler;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
@@ -28,7 +31,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Valida contratos HTTP, cabeceras y códigos de respuesta alineados a las HUs de Jira.
  */
 @WebMvcTest(controllers = VirtualTryOnRestController.class)
-@Import(GlobalExceptionHandler.class)
+@AutoConfigureMockMvc(addFilters = false)
+@Import({GlobalExceptionHandler.class, JwtTokenProvider.class, SecurityProblemHandler.class})
 @ActiveProfiles("test")
 class VirtualTryOnRestControllerTest {
 
