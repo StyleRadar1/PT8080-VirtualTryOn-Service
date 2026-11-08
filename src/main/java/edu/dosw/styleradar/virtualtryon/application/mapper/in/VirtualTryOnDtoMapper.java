@@ -2,12 +2,18 @@ package edu.dosw.styleradar.virtualtryon.application.mapper.in;
 
 import edu.dosw.styleradar.virtualtryon.application.dto.response.BiometricConsentResponse;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.BiometricPhotoResponse;
+import edu.dosw.styleradar.virtualtryon.application.dto.response.GarmentValidationResponse;
+import edu.dosw.styleradar.virtualtryon.application.dto.response.UserQuotaResponse;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
+import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+
 /**
- * Mapper de entrada que transforma entidades del dominio puro hacia DTOs de respuesta REST (SR-RF-23).
+ * Mapper de entrada que transforma entidades del dominio puro hacia DTOs de respuesta REST (SR-RF-23 y SR-RF-24).
  */
 @Component
 public class VirtualTryOnDtoMapper {
@@ -37,5 +43,27 @@ public class VirtualTryOnDtoMapper {
                 photo.getUploadedAt()
         );
     }
-}
 
+    public UserQuotaResponse toQuotaResponse(UserQuota quota) {
+        return new UserQuotaResponse(
+                quota.getUserId().value(),
+                quota.getMonthlyLimit(),
+                quota.getUsedCount(),
+                quota.getRemainingCount(),
+                quota.getBillingPeriod().getValue(),
+                Instant.now()
+        );
+    }
+
+    public GarmentValidationResponse toGarmentValidationResponse(CatalogGarment garment) {
+        return new GarmentValidationResponse(
+                garment.getGarmentId().value(),
+                garment.getName(),
+                garment.getCategory().name(),
+                garment.getCategory().getFashnCategoryCode(),
+                garment.getImageUrl(),
+                garment.isEligibleForTryOn(),
+                garment.getUpdatedAt()
+        );
+    }
+}
