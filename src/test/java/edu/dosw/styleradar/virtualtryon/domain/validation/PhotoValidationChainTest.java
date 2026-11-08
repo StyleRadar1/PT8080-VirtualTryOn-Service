@@ -11,6 +11,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.time.Instant;
@@ -23,9 +25,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Pruebas unitarias de los validadores de la cadena de responsabilidad (Chain of Responsibility)
- * y objetos de valor asociados al requerimiento SR-RF-23 (Carga de silueta y consentimiento biométrico).
+ * y objetos de valor asociados al requerimiento SR-RF-23 (Carga de silueta frontal de cuerpo completo
+ * y consentimiento biométrico).
  */
-class PhotoValidationChainTest {
+public class PhotoValidationChainTest {
 
     private static final UUID RAW_USER_ID = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
     private static final UserId USER_ID = UserId.of(RAW_USER_ID);
@@ -41,17 +44,61 @@ class PhotoValidationChainTest {
         this.validationChain = consentValidator;
     }
 
-    private static byte[] createPngBytes(int width, int height) throws Exception {
+    /**
+     * Genera una imagen PNG con fondo claro y una silueta humana frontal centrada de cuerpo completo
+     * abarcando cabeza/hombros (10%-30%), torso (30%-65%) y piernas (65%-90%).
+     */
+    public static byte[] createFullBodyFrontalPngBytes(int width, int height) throws Exception {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        g.setColor(new Color(240, 240, 240));
+        g.fillRect(0, 0, width, height);
+
+        g.setColor(new Color(45, 55, 72));
+        int centerX = width / 2;
+        // Cabeza y cuello (10% - 28%)
+        int headWidth = Math.max(10, (int) (width * 0.22));
+        g.fillOval(centerX - headWidth / 2, (int) (height * 0.10), headWidth, (int) (height * 0.18));
+        // Torso y brazos frontales (28% - 65%)
+        int torsoWidth = Math.max(16, (int) (width * 0.36));
+        g.fillRect(centerX - torsoWidth / 2, (int) (height * 0.28), torsoWidth, (int) (height * 0.37));
+        // Cadera y piernas (65% - 90%)
+        int legsWidth = Math.max(12, (int) (width * 0.28));
+        g.fillRect(centerX - legsWidth / 2, (int) (height * 0.65), legsWidth, (int) (height * 0.25));
+        g.dispose();
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", output);
+        return output.toByteArray();
+    }
+
+    private static byte[] createBlankPngBytes(int width, int height) throws Exception {
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         ImageIO.write(image, "png", output);
         return output.toByteArray();
     }
 
+    private static byte[] createOffCenterSilhouettePngBytes(int width, int height) throws Exception {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        g.setColor(new Color(240, 240, 240));
+        g.fillRect(0, 0, width, height);
+
+        // Dibujar silueta desplazada hacia el borde izquierdo pero tocando parcialmente el corredor
+        g.setColor(new Color(20, 20, 20));
+        g.fillRect((int) (width * 0.12), (int) (height * 0.10), (int) (width * 0.22), (int) (height * 0.80));
+        g.dispose();
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", output);
+        return output.toByteArray();
+    }
+
     @Test
-    @DisplayName("HU SR-RF-23 (Positivo): Dada una fotografía PNG vertical de 400x600 px con consentimiento aceptado, Cuando se ejecuta la cadena de validación, Entonces aprueba y registra sus dimensiones")
+    @DisplayName("HU SR-RF-23 (Positivo): Dada una fotografía PNG frontal de cuerpo completo (400x600 px) con consentimiento aceptado, Cuando se ejecuta la cadena de validación, Entonces aprueba y registra sus dimensiones")
     void shouldValidateValidVerticalPhotoWithConsent() throws Exception {
-        byte[] validPng = createPngBytes(400, 600);
+        byte[] validPng = createFullBodyFrontalPngBytes(400, 600);
         TryOnValidationContext context = new TryOnValidationContext(USER_ID, true, "image/png", validPng);
 
         assertThatCode(() -> validationChain.validate(context)).doesNotThrowAnyException();
@@ -65,7 +112,7 @@ class PhotoValidationChainTest {
     @Test
     @DisplayName("HU SR-RF-23 (Negativo - Consentimiento): Dada una solicitud sin consentimiento biométrico, Cuando se ejecuta la cadena, Entonces lanza ConsentRequiredException")
     void shouldThrowConsentRequiredWhenNotAccepted() throws Exception {
-        byte[] validPng = createPngBytes(400, 600);
+        byte[] validPng = createFullBodyFrontalPngBytes(400, 600);
         TryOnValidationContext context = new TryOnValidationContext(USER_ID, false, "image/png", validPng);
 
         assertThatThrownBy(() -> validationChain.validate(context))
@@ -93,7 +140,7 @@ class PhotoValidationChainTest {
     @Test
     @DisplayName("HU SR-RF-23 (Negativo - Formato): Dada una fotografía con formato MIME no permitido (GIF o nulo), Cuando se valida, Entonces lanza InvalidPhotoException")
     void shouldThrowWhenContentTypeIsUnsupported() throws Exception {
-        byte[] png = createPngBytes(400, 600);
+        byte[] png = createFullBodyFrontalPngBytes(400, 600);
         TryOnValidationContext gifContext = new TryOnValidationContext(USER_ID, true, "image/gif", png);
         TryOnValidationContext nullTypeContext = new TryOnValidationContext(USER_ID, true, null, png);
 
@@ -131,8 +178,8 @@ class PhotoValidationChainTest {
     @Test
     @DisplayName("HU SR-RF-23 (Negativo - Dimensiones < 300x400): Dada una imagen menor a 300x400 píxeles, Cuando se valida, Entonces lanza InvalidPhotoException")
     void shouldThrowWhenImageIsSmallerThanMinimumDimensions() throws Exception {
-        byte[] smallWidth = createPngBytes(250, 500);
-        byte[] smallHeight = createPngBytes(350, 350);
+        byte[] smallWidth = createFullBodyFrontalPngBytes(250, 500);
+        byte[] smallHeight = createFullBodyFrontalPngBytes(350, 350);
 
         TryOnValidationContext widthCtx = new TryOnValidationContext(USER_ID, true, "image/png", smallWidth);
         TryOnValidationContext heightCtx = new TryOnValidationContext(USER_ID, true, "image/png", smallHeight);
@@ -149,12 +196,48 @@ class PhotoValidationChainTest {
     @Test
     @DisplayName("HU SR-RF-23 (Negativo - Orientación Horizontal): Dada una imagen horizontal (600x450 px), Cuando se valida la pose, Entonces lanza InvalidPhotoException")
     void shouldThrowWhenImageIsHorizontal() throws Exception {
-        byte[] landscape = createPngBytes(600, 450);
+        byte[] landscape = createFullBodyFrontalPngBytes(600, 450);
         TryOnValidationContext context = new TryOnValidationContext(USER_ID, true, "image/png", landscape);
 
         assertThatThrownBy(() -> validationChain.validate(context))
                 .isInstanceOf(InvalidPhotoException.class)
                 .hasMessageContaining("orientación vertical");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Negativo - Proporción No Cuerpo Completo): Dada una imagen vertical casi cuadrada (400x440) o desproporcionada (300x840), Cuando se valida la pose, Entonces lanza InvalidPhotoException")
+    void shouldThrowWhenAspectRatioIsNotFullBody() throws Exception {
+        byte[] nearSquareHeadshot = createFullBodyFrontalPngBytes(400, 440);
+        byte[] overlyNarrowStrip = createFullBodyFrontalPngBytes(300, 840);
+
+        TryOnValidationContext headshotCtx = new TryOnValidationContext(USER_ID, true, "image/png", nearSquareHeadshot);
+        TryOnValidationContext narrowCtx = new TryOnValidationContext(USER_ID, true, "image/png", overlyNarrowStrip);
+
+        assertThatThrownBy(() -> validationChain.validate(headshotCtx))
+                .isInstanceOf(InvalidPhotoException.class)
+                .hasMessageContaining("proporción vertical de cuerpo completo");
+
+        assertThatThrownBy(() -> validationChain.validate(narrowCtx))
+                .isInstanceOf(InvalidPhotoException.class)
+                .hasMessageContaining("proporción vertical de cuerpo completo");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Negativo - Sin Silueta Cuerpo Completo o Descentrada): Dada una imagen plana sin silueta o con silueta descentrada, Cuando se valida la pose, Entonces lanza InvalidPhotoException")
+    void shouldThrowWhenSilhouetteIsMissingOrOffCenter() throws Exception {
+        byte[] blankImage = createBlankPngBytes(400, 600);
+        byte[] offCenterImage = createOffCenterSilhouettePngBytes(400, 600);
+
+        TryOnValidationContext blankCtx = new TryOnValidationContext(USER_ID, true, "image/png", blankImage);
+        TryOnValidationContext offCenterCtx = new TryOnValidationContext(USER_ID, true, "image/png", offCenterImage);
+
+        assertThatThrownBy(() -> validationChain.validate(blankCtx))
+                .isInstanceOf(InvalidPhotoException.class)
+                .hasMessageContaining("silueta frontal de cuerpo completo distinguible");
+
+        assertThatThrownBy(() -> validationChain.validate(offCenterCtx))
+                .isInstanceOf(InvalidPhotoException.class)
+                .hasMessageContaining("postura frontal y centrada");
     }
 
     @Test
@@ -226,4 +309,3 @@ class PhotoValidationChainTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }
-
