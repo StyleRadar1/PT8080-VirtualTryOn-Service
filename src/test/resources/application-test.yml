@@ -1,5 +1,5 @@
 # ===================================================================
-# Perfil de Testing Automatizado (test) - Scaffolding Mode
+# Perfil de Testing Automatizado (test)
 # ===================================================================
 
 spring:
@@ -7,17 +7,33 @@ spring:
     activate:
       on-profile: test
 
-  # En scaffolding puro excluimos conexiones a bases de datos y brokers externos
+  datasource:
+    url: jdbc:h2:mem:probador_test_db;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+  # Excluimos brokers externos en pruebas unitarias/contexto base
   autoconfigure:
     exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
-      - org.springframework.boot.autoconfigure.sql.init.SqlInitializationAutoConfiguration
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
       - org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration
 
 styleradar:
+  security:
+    jwt:
+      secret-base64: U3R5bGVSYWRhclZpcnR1YWxUcnlPblNlY3JldEtleTIwMjZQb3J0YWw4MDgwU2Vj
+      duration: PT60M
   tryon:
     ai-provider: mock
     daily-quota-limit: 10
+    blob-base-url: https://styleradarblob.blob.core.windows.net
+    blob-container: biometric-silhouettes
+    blob-sas-token: sv=2024-11-04&sr=b&sp=racwd
+    blob-api-version: 2024-11-04
+
