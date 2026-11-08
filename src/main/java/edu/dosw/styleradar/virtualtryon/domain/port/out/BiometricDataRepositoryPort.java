@@ -5,10 +5,11 @@ import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Puerto de salida para la persistencia de consentimientos biométricos y metadatos de fotografías
- * de silueta en la base de datos del servicio (SR-RF-23).
+ * de silueta en la base de datos del servicio (SR-RF-23 y SR-RF-27).
  */
 public interface BiometricDataRepositoryPort {
 
@@ -31,5 +32,18 @@ public interface BiometricDataRepositoryPort {
      * Busca los metadatos de la fotografía frontal cargada por el usuario.
      */
     Optional<BiometricPhoto> findPhotoByUserId(UserId userId);
+
+    /**
+     * Busca una fotografía frontal por su identificador único (photoId).
+     */
+    default Optional<BiometricPhoto> findPhotoById(UUID photoId) {
+        return Optional.empty();
+    }
+
+    /**
+     * Elimina el registro de fotografía frontal por identificador de usuario.
+     */
+    default void deletePhotoByUserId(UserId userId) {
+    }
 }
 
