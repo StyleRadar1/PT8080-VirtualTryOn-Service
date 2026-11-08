@@ -344,10 +344,10 @@ class BiometricConsentServiceImplTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AZURE_STORAGE_BASE_URL");
 
-        // 2. Esquema no HTTP/HTTPS
+        // 2. Esquema no HTTPS
         assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, "ftp://storage.blob.core.windows.net", CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("http:// o https://");
+                .hasMessageContaining("protocolo seguro https://");
 
         // 3. Contenedor vacío o nulo
         assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, "  ", TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
@@ -395,7 +395,7 @@ class BiometricConsentServiceImplTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No fue posible determinar un nombre de cuenta válido");
 
-        // 8. Normalización de URL terminada en / y esquema http:// con apiVersion por defecto
+        // 8. Normalización de URL terminada en / y apiVersion por defecto con null
         AzureBlobStorageAdapter trailingSlashAdapter = new AzureBlobStorageAdapter(
                 builder,
                 AZURE_BASE_URL + "/",
@@ -406,15 +406,26 @@ class BiometricConsentServiceImplTest {
         );
         assertThat(trailingSlashAdapter).isNotNull();
 
-        AzureBlobStorageAdapter httpAdapter = new AzureBlobStorageAdapter(
+        AzureBlobStorageAdapter nullApiVersionAdapter = new AzureBlobStorageAdapter(
+                builder,
+                AZURE_BASE_URL,
+                CONTAINER,
+                TEST_ACCOUNT_KEY,
+                Duration.ofMinutes(60),
+                null
+        );
+        assertThat(nullApiVersionAdapter).isNotNull();
+
+        // Rechazo categórico del protocolo inseguro HTTP para transporte de datos biométricos
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(
                 builder,
                 "http://styleradarblob.blob.core.windows.net",
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
                 Duration.ofMinutes(60),
                 null
-        );
-        assertThat(httpAdapter).isNotNull();
+        )).isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("protocolo seguro https://");
 
         // 9. Constructor @Autowired de Spring funciona con parámetros válidos
         AzureBlobStorageAdapter springAdapter = new AzureBlobStorageAdapter(
@@ -578,7 +589,7 @@ class BiometricConsentServiceImplTest {
         mockAzureServer.verify();
         mockAzureServer.reset();
 
-        // 2. Falla verificación de lectura inmediata
+        // 2. Falla verificación de lectura inmediata -> compensa eliminando el blob huérfano recién subido
         mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
                 .andExpect(method(HttpMethod.PUT))
                 .andRespond(withSuccess());
@@ -587,13 +598,17 @@ class BiometricConsentServiceImplTest {
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withServerError());
 
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d")))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withNoContent());
+
         assertThatThrownBy(() -> blobStorageAdapter.storeBiometricPhoto(USER_ID, "image/png", jpegBytes))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("La verificación de lectura del archivo en Azure Blob Storage no retornó contenido");
         mockAzureServer.verify();
         mockAzureServer.reset();
 
-        // 3. Falla solicitud PUT a Azure
+        // 3. Falla solicitud PUT a Azure (no subió el archivo, no requiere compensación)
         mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
                 .andExpect(method(HttpMethod.PUT))
                 .andRespond(withServerError());
@@ -601,6 +616,38 @@ class BiometricConsentServiceImplTest {
         assertThatThrownBy(() -> blobStorageAdapter.storeBiometricPhoto(USER_ID, "image/png", jpegBytes))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No fue posible almacenar la fotografía biométrica en Azure Blob Storage");
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Compensación de Archivo Huérfano por Fallo en Base de Datos): Elimina el nuevo blob en Azure si falla el guardado en repositorio")
+    void shouldCompensateAndCleanUpNewBlobWhenDatabaseSaveFails() throws Exception {
+        byte[] photoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
+
+        // 1. PUT exitoso en Azure
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+
+        // 2. GET verificación exitoso en Azure
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(photoBytes, MediaType.IMAGE_PNG));
+
+        // 3. Compensación: DELETE del nuevo blob cuando savePhoto() falla
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=d")))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withNoContent());
+
+        // Simular fallo en repositorio
+        when(photoJpaRepository.save(any(BiometricPhotoJpaEntity.class)))
+                .thenThrow(new RuntimeException("Fallo simulado de conexión en base de datos"));
+
+        assertThatThrownBy(() -> consentService.uploadPhoto(USER_ID, true, "image/png", photoBytes))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Fallo simulado de conexión en base de datos");
+
         mockAzureServer.verify();
         mockAzureServer.reset();
     }
