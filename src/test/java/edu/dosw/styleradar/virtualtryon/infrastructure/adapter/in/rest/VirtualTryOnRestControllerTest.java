@@ -2,23 +2,39 @@ package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.dosw.styleradar.virtualtryon.application.dto.request.StartTryOnRequest;
+import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMapper;
+import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
+import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
+import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtAuthenticationFilter;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtTokenProvider;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.SecurityProblemHandler;
+import edu.dosw.styleradar.virtualtryon.infrastructure.config.SecurityConfig;
 import edu.dosw.styleradar.virtualtryon.infrastructure.exception.GlobalExceptionHandler;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -27,12 +43,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Pruebas de API (Capa de Adaptador REST / Controladores Web) mediante MockMvc.
- * Valida contratos HTTP, cabeceras y códigos de respuesta alineados a las HUs de Jira.
+ * Pruebas de API (Capa de Adaptador REST / Controladores Web) mediante MockMvc con seguridad JWT real activa.
+ * Valida contratos HTTP, cabeceras, autenticación 401, autorización/titularidad 403 y códigos de respuesta (SR-RF-24).
  */
 @WebMvcTest(controllers = VirtualTryOnRestController.class)
-@AutoConfigureMockMvc(addFilters = false)
-@Import({GlobalExceptionHandler.class, JwtTokenProvider.class, SecurityProblemHandler.class})
+@Import({
+        VirtualTryOnDtoMapper.class,
+        GlobalExceptionHandler.class,
+        SecurityConfig.class,
+        JwtAuthenticationFilter.class,
+        JwtTokenProvider.class,
+        SecurityProblemHandler.class
+})
 @ActiveProfiles("test")
 class VirtualTryOnRestControllerTest {
 
@@ -42,20 +64,29 @@ class VirtualTryOnRestControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
+
+    @MockBean
+    private QueryTryOnJobsService queryTryOnJobsService;
+
+    private String bearerTokenFor(UUID userId, String role) {
+        return "Bearer " + jwtTokenProvider.generateToken(userId, role);
+    }
+
     @Test
     @DisplayName("HU SR-RF-25 (V04): Dado una solicitud válida con foto y prenda compatible, Cuando se envía POST /api/v1/try-on/jobs, Entonces responde 202 Accepted con cabecera Location y estado QUEUED")
     void testStartTryOnSuccess() throws Exception {
-        // Dado: Un usuario con consentimiento y prenda válida
+        UUID userId = UUID.randomUUID();
         StartTryOnRequest request = new StartTryOnRequest(
-                UUID.randomUUID(),
+                userId,
                 UUID.randomUUID(),
                 "https://styleradar.blob.core.windows.net/photos/user-test.jpg",
                 true
         );
 
-        // Cuando: Se envía la petición asíncrona de prueba virtual
-        // Entonces: El sistema responde 202 Accepted inmediatamente con Location hacia el job
         mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isAccepted())
@@ -65,12 +96,11 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (V03): Dado un cuerpo de solicitud vacío sin campos obligatorios, Cuando se envía POST /api/v1/try-on/jobs, Entonces responde 400 Bad Request con ProblemDetail de validación (Caso Negativo)")
+    @DisplayName("HU SR-RF-23 (V03): Dado un cuerpo de solicitud vacío sin campos obligatorios, Cuando se envía POST /api/v1/try-on/jobs, Entonces responde 400 Bad Request con ProblemDetail de validación")
     void testStartTryOnInvalidRequest() throws Exception {
-        // Dado: Un request vacío inválido
-        // Cuando: Se invoca el endpoint de inicio de job
-        // Entonces: Rechaza con 400 y detalle de campos inválidos
+        UUID userId = UUID.randomUUID();
         mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest())
@@ -82,12 +112,11 @@ class VirtualTryOnRestControllerTest {
     @Test
     @DisplayName("HU SR-RF-26 (V05): Dado un jobId existente de un job completado, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 200 OK con estado COMPLETED y URL temporal firmada SAS")
     void testGetTryOnJob() throws Exception {
-        // Dado: Un identificador de trabajo generado previamente
+        UUID userId = UUID.randomUUID();
         UUID jobId = UUID.randomUUID();
 
-        // Cuando: Se consulta el resultado del procesamiento
-        // Entonces: Retorna 200 OK con la URL generada del resultado
         mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.jobId", is(jobId.toString())))
@@ -96,45 +125,207 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25 (V04): Dado un usuario autenticado con userId, Cuando se envía GET /api/v1/try-on/quotas, Entonces responde 200 OK con cuotas consumidas y saldo restante")
+    @DisplayName("HU SR-RF-24: Dado un usuario autenticado con userId propio, Cuando se envía GET /api/v1/try-on/quotas, Entonces responde 200 OK con cuotas consumidas y saldo restante desde QueryTryOnJobsService")
     void testGetUserQuotas() throws Exception {
-        // Dado: Un usuario autenticado con identificador específico
         UUID userId = UUID.randomUUID();
+        UserQuota quota = new UserQuota(
+                UUID.randomUUID(),
+                UserId.of(userId),
+                10,
+                3,
+                BillingPeriod.of("2026-11"),
+                false,
+                Instant.now()
+        );
+        when(queryTryOnJobsService.getUserQuota(UserId.of(userId))).thenReturn(quota);
 
-        // Cuando: Consulta su saldo de cuota mensual
-        // Entonces: Retorna 200 OK con el límite y el saldo disponible
         mockMvc.perform(get("/api/v1/try-on/quotas")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
                         .param("userId", userId.toString())
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId", is(userId.toString())))
                 .andExpect(jsonPath("$.monthlyLimit", is(10)))
-                .andExpect(jsonPath("$.remainingCount", is(7)));
+                .andExpect(jsonPath("$.usedCount", is(3)))
+                .andExpect(jsonPath("$.remainingCount", is(7)))
+                .andExpect(jsonPath("$.billingPeriod", is("2026-11")));
     }
 
     @Test
-    @DisplayName("HU SR-RF-25 (V04): Dado un usuario sin userId explícito en la URL, Cuando se envía GET /api/v1/try-on/quotas, Entonces responde 200 OK asignando el usuario por defecto de sesión")
-    void testGetUserQuotasDefaultUser() throws Exception {
-        // Dado: Una consulta sin parámetro userId
-        UUID defaultUserId = UUID.fromString("a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d");
+    @DisplayName("HU SR-RF-24: Dado un usuario sin userId explícito en la URL, Cuando se envía GET /api/v1/try-on/quotas, Entonces toma el userId del token JWT autenticado y responde 200 OK")
+    void testGetUserQuotasDefaultAuthenticatedUser() throws Exception {
+        UUID authenticatedUserId = UUID.randomUUID();
+        UserQuota quota = UserQuota.createDefault(UserId.of(authenticatedUserId), BillingPeriod.of("2026-11"));
+        when(queryTryOnJobsService.getUserQuota(UserId.of(authenticatedUserId))).thenReturn(quota);
 
-        // Cuando: Se solicita el balance de cuota
-        // Entonces: Responde 200 OK asignando el usuario por defecto
         mockMvc.perform(get("/api/v1/try-on/quotas")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "COMPRADOR"))
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.userId", is(defaultUserId.toString())));
+                .andExpect(jsonPath("$.userId", is(authenticatedUserId.toString())))
+                .andExpect(jsonPath("$.remainingCount", is(10)));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Dada una prenda compatible y cuota disponible, Cuando se envía GET /api/v1/try-on/garments/{garmentId}/validate, Entonces responde 200 OK con GarmentValidationResponse")
+    void testValidateGarmentForTryOnSuccess() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+        CatalogGarment garment = new CatalogGarment(
+                GarmentId.of(garmentId),
+                "Chaqueta Denim Clásica",
+                GarmentCategory.TOPS,
+                "https://styleradar.blob.core.windows.net/catalog/denim.png",
+                true,
+                Instant.now()
+        );
+        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(garmentId)))
+                .thenReturn(garment);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.garmentId", is(garmentId.toString())))
+                .andExpect(jsonPath("$.category", is("TOPS")))
+                .andExpect(jsonPath("$.fashnCategoryCode", is("tops")))
+                .andExpect(jsonPath("$.eligibleForTryOn", is(true)));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Dada prenda incompatible o cuota agotada, Cuando se envía GET /api/v1/try-on/garments/{garmentId}/validate, Entonces responde 400 Bad Request o 429 Too Many Requests con ProblemDetail")
+    void testValidateGarmentForTryOnFailures() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID incompatibleGarmentId = UUID.randomUUID();
+        UUID quotaExhaustedGarmentId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(incompatibleGarmentId)))
+                .thenThrow(new InvalidGarmentException(incompatibleGarmentId, "El probador virtual no admite prendas de tipo FOOTWEAR"));
+        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(quotaExhaustedGarmentId)))
+                .thenThrow(new QuotaExceededException(userId, 10, 10));
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", incompatibleGarmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("INVALID_GARMENT")));
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", quotaExhaustedGarmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString()))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.errorCode", is("QUOTA_EXCEEDED")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Dado usuario no autenticado o intentando consultar cuota de otro usuario sin ser ADMIN, Cuando invoca /quotas o /garments/{id}/validate, Entonces responde 401 o 403")
+    void testQuotasAndGarmentValidationSecurityAndOwnership() throws Exception {
+        UUID authenticatedUserId = UUID.randomUUID();
+        UUID anotherUserId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+
+        mockMvc.perform(get("/api/v1/try-on/quotas").param("userId", authenticatedUserId.toString()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode", is("UNAUTHORIZED")));
+
+        mockMvc.perform(get("/api/v1/try-on/quotas")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "COMPRADOR"))
+                        .param("userId", anotherUserId.toString()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")));
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "COMPRADOR"))
+                        .param("userId", anotherUserId.toString()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")));
+
+        // ADMIN puede consultar cuotas y validar prendas de cualquier usuario
+        UserQuota adminTargetQuota = UserQuota.createDefault(UserId.of(anotherUserId), BillingPeriod.of("2026-11"));
+        when(queryTryOnJobsService.getUserQuota(UserId.of(anotherUserId))).thenReturn(adminTargetQuota);
+        mockMvc.perform(get("/api/v1/try-on/quotas")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "ADMIN"))
+                        .param("userId", anotherUserId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is(anotherUserId.toString())));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Dado invocación directa del controlador con UserDetails, sin autenticación o con rol inválido, Cuando se invocan los endpoints, Entonces valida todos los caminos de seguridad y titularidad")
+    void testDirectControllerPrincipalBranches() {
+        VirtualTryOnRestController directController = new VirtualTryOnRestController(
+                queryTryOnJobsService,
+                new VirtualTryOnDtoMapper()
+        );
+        UUID userId = UUID.randomUUID();
+        UUID otherUserId = UUID.randomUUID();
+        UserQuota quota = UserQuota.createDefault(UserId.of(userId), BillingPeriod.of("2026-11"));
+        when(queryTryOnJobsService.getUserQuota(UserId.of(userId))).thenReturn(quota);
+
+        try {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    org.springframework.security.authentication.InsufficientAuthenticationException.class,
+                    () -> directController.getUserQuotas(userId)
+            );
+
+            // Rol no permitido
+            var badRoleAuth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                    userId.toString(), null, List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_GUEST"))
+            );
+            org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(badRoleAuth);
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    org.springframework.security.access.AccessDeniedException.class,
+                    () -> directController.getUserQuotas(userId)
+            );
+
+            // UserDetails con UUID propio y sin parámetro userId
+            var userDetails = org.springframework.security.core.userdetails.User.withUsername(userId.toString())
+                    .password("N/A")
+                    .authorities("ROLE_USER")
+                    .build();
+            var validUserDetailsAuth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                    userDetails, null, userDetails.getAuthorities()
+            );
+            org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(validUserDetailsAuth);
+            org.junit.jupiter.api.Assertions.assertEquals(200, directController.getUserQuotas(null).getStatusCode().value());
+
+            // UserDetails intentando consultar otro usuario sin ser ADMIN
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    org.springframework.security.access.AccessDeniedException.class,
+                    () -> directController.getUserQuotas(otherUserId)
+            );
+
+            // Principal con nombre no-UUID y no-admin -> AccessDeniedException
+            var invalidNameAuth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                    "not-a-uuid", null, List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_COMPRADOR"))
+            );
+            org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(invalidNameAuth);
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    org.springframework.security.access.AccessDeniedException.class,
+                    () -> directController.getUserQuotas(userId)
+            );
+
+            // Principal con nombre no-UUID pero con rol ADMIN y requestedUserId explícito -> 200 OK
+            var adminNameAuth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                    "admin-service", null, List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))
+            );
+            org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(adminNameAuth);
+            org.junit.jupiter.api.Assertions.assertEquals(200, directController.getUserQuotas(userId).getStatusCode().value());
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
     }
 
     @Test
     @DisplayName("HU SR-RF-27 (V05): Dado un jobId de foto corporal existente, Cuando se envía DELETE /api/v1/try-on/personal-photos/{id}, Entonces responde 204 No Content para purga física definitiva (Ley 1581)")
     void testDeleteBiometricPhoto() throws Exception {
-        // Dado: Un jobId con fotografía biométrica almacenada
+        UUID userId = UUID.randomUUID();
         UUID jobId = UUID.randomUUID();
 
-        // Cuando: El usuario solicita el borrado irreversible por derecho al olvido
-        // Entonces: El sistema purga la foto y responde 204 No Content
-        mockMvc.perform(delete("/api/v1/try-on/personal-photos/{jobId}", jobId))
+        mockMvc.perform(delete("/api/v1/try-on/personal-photos/{jobId}", jobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR")))
                 .andExpect(status().isNoContent());
     }
 }

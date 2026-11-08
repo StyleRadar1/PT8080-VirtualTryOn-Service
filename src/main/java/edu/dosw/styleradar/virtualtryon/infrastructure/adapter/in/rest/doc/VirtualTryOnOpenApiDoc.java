@@ -1,6 +1,7 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.doc;
 
 import edu.dosw.styleradar.virtualtryon.application.dto.request.StartTryOnRequest;
+import edu.dosw.styleradar.virtualtryon.application.dto.response.GarmentValidationResponse;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.TryOnJobResponse;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.UserQuotaResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -19,7 +20,7 @@ import java.util.UUID;
  * Contrato de documentación OpenAPI 3.0 para el microservicio de Probador Virtual.
  * Separa las anotaciones de documentación de la lógica del controlador REST.
  */
-@Tag(name = "Virtual Try-On", description = "Endpoints de orquestación de Virtual Try-On con IA, consulta de estados y privacidad biométrica")
+@Tag(name = "Virtual Try-On", description = "Endpoints de orquestación de Virtual Try-On con IA, selección de prendas, consulta de cuotas y privacidad biométrica")
 public interface VirtualTryOnOpenApiDoc {
 
     @Operation(
@@ -57,17 +58,43 @@ public interface VirtualTryOnOpenApiDoc {
     );
 
     @Operation(
-            summary = "Consultar saldo de cuotas del usuario",
-            description = "Consulta la cantidad de pruebas virtuales gratuitas consumidas y restantes en el mes calendario para el usuario autenticado."
+            summary = "Consultar saldo de cuotas del usuario (SR-RF-24)",
+            description = "Consulta la cantidad de pruebas virtuales consumidas y restantes en el mes calendario para el usuario autenticado."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Saldo de cuotas obtenido exitosamente",
                     content = @Content(schema = @Schema(implementation = UserQuotaResponse.class))),
             @ApiResponse(responseCode = "401", description = "Usuario no autenticado (token JWT requerido)",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado a cuotas de otro usuario",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
     ResponseEntity<UserQuotaResponse> getUserQuotas(
             @Parameter(description = "Identificador del usuario (UUID)", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
+            UUID userId
+    );
+
+    @Operation(
+            summary = "Validar elegibilidad de prenda del catálogo y cuota mensual del usuario (SR-RF-24)",
+            description = "Verifica que la prenda exista en el catálogo, sea visible, pertenezca a una categoría compatible " +
+                    "(TOPS, BOTTOMS, ONE_PIECES, OUTERWEAR), que el usuario tenga consentimiento biométrico activo y cuota mensual disponible."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Prenda elegible y cuota mensual disponible",
+                    content = @Content(schema = @Schema(implementation = GarmentValidationResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Prenda incompatible, inexistente o falta consentimiento biométrico",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "401", description = "Usuario no autenticado (token JWT requerido)",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado para validar en nombre de otro usuario",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "429", description = "Cuota mensual de pruebas virtuales excedida",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    ResponseEntity<GarmentValidationResponse> validateGarmentForTryOn(
+            @Parameter(description = "Identificador único de la prenda del catálogo (UUID)", example = "f8e7d6c5-b4a3-2109-8765-43210fedcba9")
+            UUID garmentId,
+            @Parameter(description = "Identificador único del usuario comprador (UUID)", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
             UUID userId
     );
 

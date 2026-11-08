@@ -20,6 +20,12 @@ spring:
       indent-output: true
       write-dates-as-timestamps: false
 
+  # Migraciones de esquema PostgreSQL con Flyway
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
 # Documentación interactiva OpenAPI 3.0 / Swagger UI
 springdoc:
   api-docs:

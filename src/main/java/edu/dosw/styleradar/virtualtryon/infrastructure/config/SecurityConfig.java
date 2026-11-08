@@ -22,8 +22,8 @@ import java.util.List;
 
 /**
  * Configuración de seguridad Stateless con Bearer JWT para el microservicio de Probador Virtual.
- * Protege los endpoints de consentimiento y fotografías biométricas exigiendo autenticación válida
- * y rol autorizado (COMPRADOR, USER o ADMIN).
+ * Protege los endpoints de consentimiento, fotografías biométricas, cuotas y selección de prendas
+ * exigiendo autenticación válida y rol autorizado (COMPRADOR, USER o ADMIN).
  */
 @Configuration
 @EnableWebSecurity
@@ -66,7 +66,12 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/v1/try-on/consents/**",
                                 "/api/v1/try-on/photos/**",
-                                "/api/v1/try-on/personal-photos/**"
+                                "/api/v1/try-on/personal-photos/**",
+                                "/api/v1/try-on/quotas",
+                                "/api/v1/try-on/quotas/**",
+                                "/api/v1/try-on/garments/**",
+                                "/api/v1/try-on/jobs",
+                                "/api/v1/try-on/jobs/**"
                         ).hasAnyRole("COMPRADOR", "USER", "ADMIN", "ADMIN_STYLERADAR")
                         .anyRequest().authenticated()
                 )
@@ -96,4 +101,3 @@ public class SecurityConfig {
         return registration;
     }
 }
-
