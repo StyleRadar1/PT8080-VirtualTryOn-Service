@@ -282,7 +282,7 @@ class BiometricConsentServiceImplTest {
         blobStorageAdapter.deleteBlob(sampleUrl);
         mockAzureServer.verify();
 
-        // Verificar constructor @Autowired de Spring y validación de AZURE_STORAGE_BASE_URL
+        // Verificar constructor @Autowired de Spring y validación de AZURE_STORAGE_BASE_URL y generateReadOnlySasUrl
         AzureBlobStorageAdapter springConstructed = new AzureBlobStorageAdapter(
                 AZURE_BASE_URL,
                 CONTAINER,
@@ -291,6 +291,22 @@ class BiometricConsentServiceImplTest {
                 "2024-11-04"
         );
         assertThat(springConstructed).isNotNull();
+        SasSignedUrl refreshedWithToken = springConstructed.generateReadOnlySasUrl(
+                SasSignedUrl.of(AZURE_BASE_URL + "/" + CONTAINER + "/render-test.png?old=1")
+        );
+        assertThat(refreshedWithToken.value()).contains("sp=r");
+
+        AzureBlobStorageAdapter noTokenAdapter = new AzureBlobStorageAdapter(
+                AZURE_BASE_URL + "/",
+                CONTAINER,
+                "",
+                "",
+                "2024-11-04"
+        );
+        SasSignedUrl refreshedNoToken = noTokenAdapter.generateReadOnlySasUrl(
+                SasSignedUrl.of(AZURE_BASE_URL + "/" + CONTAINER + "/render-test.png")
+        );
+        assertThat(refreshedNoToken.value()).isEqualTo(AZURE_BASE_URL + "/" + CONTAINER + "/render-test.png");
         assertThatThrownBy(() -> new AzureBlobStorageAdapter(
                 "  ",
                 CONTAINER,

@@ -14,6 +14,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtAuthenticationFilter;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtTokenProvider;
@@ -131,10 +132,24 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-26 (V05): Dado un jobId existente de un job completado, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 200 OK con estado COMPLETED y URL temporal firmada SAS")
+    @DisplayName("HU SR-RF-26 (V05): Dado un jobId existente de un job completado o historial del usuario, Cuando se envía GET /api/v1/try-on/jobs/{id} y GET /api/v1/try-on/jobs, Entonces responde 200 OK con estado COMPLETED y URL temporal firmada SAS")
     void testGetTryOnJob() throws Exception {
         UUID userId = UUID.randomUUID();
         UUID jobId = UUID.randomUUID();
+        TryOnJob completedJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(UserId.of(userId))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withCategory(GarmentCategory.TOPS)
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
+                .build();
+        completedJob.complete(
+                SasSignedUrl.of("https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png?sr=b&sp=r&spr=https"),
+                2100L
+        );
+
+        when(queryTryOnJobsService.getJobStatus(jobId, UserId.of(userId), false)).thenReturn(completedJob);
+        when(queryTryOnJobsService.getJobHistory(UserId.of(userId))).thenReturn(List.of(completedJob));
 
         mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
@@ -143,6 +158,13 @@ class VirtualTryOnRestControllerTest {
                 .andExpect(jsonPath("$.jobId", is(jobId.toString())))
                 .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.resultImageUrl", notNullValue()));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].jobId", is(jobId.toString())))
+                .andExpect(jsonPath("$[0].status", is("COMPLETED")));
     }
 
     @Test
