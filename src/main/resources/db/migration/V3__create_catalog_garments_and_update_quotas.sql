@@ -17,3 +17,4 @@ CREATE TABLE IF NOT EXISTS catalog_garments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_catalog_garments_category ON catalog_garments(category);
+

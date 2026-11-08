@@ -15,8 +15,8 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Configuración del broker RabbitMQ para el microservicio de Probador Virtual.
- * Declara el Exchange de eventos del catálogo, la cola de sincronización de prendas,
- * su binding con routing key y el conversor JSON para mensajes AMQP (SR-RF-24).
+ * Declara el Exchange de eventos del catálogo, la cola de sincronización de prendas
+ * con Dead Letter Queue (DLQ), sus bindings con routing keys y el conversor JSON (SR-RF-24).
  */
 @Configuration
 public class RabbitConfig {
@@ -24,6 +24,10 @@ public class RabbitConfig {
     public static final String DEFAULT_CATALOG_EXCHANGE = "styleradar.catalog.events";
     public static final String DEFAULT_CATALOG_QUEUE = "q.tryon.catalog.garment.updated";
     public static final String DEFAULT_CATALOG_ROUTING_KEY = "catalog.garment.updated";
+
+    public static final String DEFAULT_CATALOG_DLX = "styleradar.catalog.dlx";
+    public static final String DEFAULT_CATALOG_DLQ = "q.tryon.catalog.garment.updated.dlq";
+    public static final String DEFAULT_CATALOG_DLQ_ROUTING_KEY = "catalog.garment.updated.dead";
 
     @Bean
     public TopicExchange catalogEventsExchange(
@@ -33,10 +37,38 @@ public class RabbitConfig {
     }
 
     @Bean
-    public Queue catalogGarmentUpdatedQueue(
-            @Value("${styleradar.tryon.amqp.catalog-garment-queue:" + DEFAULT_CATALOG_QUEUE + "}") String queueName
+    public TopicExchange catalogDeadLetterExchange(
+            @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxName
     ) {
-        return QueueBuilder.durable(queueName).build();
+        return ExchangeBuilder.topicExchange(dlxName).durable(true).build();
+    }
+
+    @Bean
+    public Queue catalogGarmentUpdatedDlq(
+            @Value("${styleradar.tryon.amqp.catalog-garment-dlq:" + DEFAULT_CATALOG_DLQ + "}") String dlqName
+    ) {
+        return QueueBuilder.durable(dlqName).build();
+    }
+
+    @Bean
+    public Binding catalogGarmentUpdatedDlqBinding(
+            Queue catalogGarmentUpdatedDlq,
+            TopicExchange catalogDeadLetterExchange,
+            @Value("${styleradar.tryon.amqp.catalog-garment-dlq-routing-key:" + DEFAULT_CATALOG_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return BindingBuilder.bind(catalogGarmentUpdatedDlq).to(catalogDeadLetterExchange).with(dlqRoutingKey);
+    }
+
+    @Bean
+    public Queue catalogGarmentUpdatedQueue(
+            @Value("${styleradar.tryon.amqp.catalog-garment-queue:" + DEFAULT_CATALOG_QUEUE + "}") String queueName,
+            @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxName,
+            @Value("${styleradar.tryon.amqp.catalog-garment-dlq-routing-key:" + DEFAULT_CATALOG_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return QueueBuilder.durable(queueName)
+                .deadLetterExchange(dlxName)
+                .deadLetterRoutingKey(dlqRoutingKey)
+                .build();
     }
 
     @Bean

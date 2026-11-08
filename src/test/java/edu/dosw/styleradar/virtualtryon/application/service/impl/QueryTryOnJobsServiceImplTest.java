@@ -43,6 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -251,6 +252,12 @@ class QueryTryOnJobsServiceImplTest {
         eventListenerAdapter.onCatalogGarmentUpdated(new CatalogGarmentUpdatedEvent(
                 UUID.randomUUID(), "Perfume", "CATEGORIA_INVALIDA", "https://img", true, Instant.now()
         ));
+
+        // Error inesperado lanza AmqpRejectAndDontRequeueException para enrutar a DLQ
+        doThrow(new RuntimeException("DB connection timeout")).when(catalogGarmentJpaRepository).save(any(CatalogGarmentJpaEntity.class));
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
+                eventListenerAdapter.onCatalogGarmentUpdated(validEvent)
+        );
     }
 
     @Test

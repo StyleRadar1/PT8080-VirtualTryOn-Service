@@ -53,6 +53,12 @@ public class TryOnEventListenerAdapter {
                     event.garmentId(), category, category.isCompatibleWithTryOn());
         } catch (IllegalArgumentException ex) {
             log.warn("Evento catalog.garment.updated ignorado para prenda {}: {}", event.garmentId(), ex.getMessage());
+        } catch (Exception ex) {
+            log.error("Fallo inesperado al procesar evento catalog.garment.updated para prenda {}. Redirigiendo a DLQ: {}",
+                    event.garmentId(), ex.getMessage());
+            throw new org.springframework.amqp.AmqpRejectAndDontRequeueException(
+                    "Error irrecuperable al sincronizar prenda. Redirigido a Dead Letter Queue", ex
+            );
         }
     }
 }
