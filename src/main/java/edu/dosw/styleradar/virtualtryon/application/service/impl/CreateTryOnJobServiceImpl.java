@@ -10,6 +10,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnEventPublisherPort;
@@ -153,6 +154,11 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             long elapsedMs = Math.max(1L, (System.nanoTime() - startNanos) / 1_000_000L);
             savedQueuedJob.complete(renderUrl, elapsedMs);
             TryOnJob completedJob = jobRepositoryPort.saveJob(savedQueuedJob);
+            jobRepositoryPort.saveOutfit(TryOnOutfit.createForCompletedJob(
+                    completedJob.getId(),
+                    completedJob.getUserId(),
+                    renderUrl
+            ));
             jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
                     completedJob.getId(),
                     JobStatus.PROCESSING,
