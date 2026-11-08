@@ -27,6 +27,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
@@ -748,6 +750,87 @@ class BiometricConsentServiceImplTest {
         BiometricConsent foundConsent = consentService.getConsentByUserId(USER_ID);
         assertThat(foundConsent.getPurposes()).isEmpty();
         verify(consentJpaRepository).save(any(BiometricConsentJpaEntity.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Extracción Canónica de Rutas de Blob): Preserva íntegros los segmentos de usuario en rutas relativas de dos segmentos, URLs y prefijos de contenedor")
+    void shouldPreserveUserFolderAndCanonicalSegmentsInExtractBlobName() {
+        String twoSegmentRelative = "550e8400-e29b-41d4-a716-446655440000/silhouette-123.png";
+        assertThat(blobStorageAdapter.extractBlobNameFromUrl(twoSegmentRelative))
+                .isEqualTo(twoSegmentRelative);
+
+        String leadingSlashRelative = "/550e8400-e29b-41d4-a716-446655440000/silhouette-123.png";
+        assertThat(blobStorageAdapter.extractBlobNameFromUrl(leadingSlashRelative))
+                .isEqualTo(twoSegmentRelative);
+
+        String relativeWithContainer = "biometric-silhouettes/550e8400-e29b-41d4-a716-446655440000/silhouette-123.png";
+        assertThat(blobStorageAdapter.extractBlobNameFromUrl(relativeWithContainer))
+                .isEqualTo(twoSegmentRelative);
+
+        String absoluteWithContainer = "/biometric-silhouettes/550e8400-e29b-41d4-a716-446655440000/silhouette-123.png";
+        assertThat(blobStorageAdapter.extractBlobNameFromUrl(absoluteWithContainer))
+                .isEqualTo(twoSegmentRelative);
+
+        String fullHttpsUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/550e8400-e29b-41d4-a716-446655440000/silhouette-123.png?se=2026-11-08T20%3A00%3A00Z&sp=r&sig=abc";
+        assertThat(blobStorageAdapter.extractBlobNameFromUrl(fullHttpsUrl))
+                .isEqualTo(twoSegmentRelative);
+
+        String otherHostUrl = "http://localhost:8080/custom-container/550e8400-e29b-41d4-a716-446655440000/silhouette-123.png?sp=r";
+        assertThat(blobStorageAdapter.extractBlobNameFromUrl(otherHostUrl))
+                .isEqualTo(twoSegmentRelative);
+
+        String singleFileName = "silhouette-standalone.png";
+        assertThat(blobStorageAdapter.extractBlobNameFromUrl(singleFileName))
+                .isEqualTo(singleFileName);
+
+        assertThat(blobStorageAdapter.extractBlobNameFromUrl(null)).isEmpty();
+        assertThat(blobStorageAdapter.extractBlobNameFromUrl("   ")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23 (Sincronización Transaccional y Compensación ante Rollback): Elimina nuevo blob si ocurre rollback en commit y elimina anterior tras commit exitoso")
+    void shouldCompensateNewBlobOnRollbackAndCleanPreviousOnCommit() throws Exception {
+        byte[] photoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
+
+        BiometricPhotoJpaEntity existingEntity = new BiometricPhotoJpaEntity(
+                UUID.randomUUID(), RAW_USER_ID, "image/png", 400, 600, 1000, "user/old-silhouette.png", Instant.now()
+        );
+        when(photoJpaRepository.findByUserId(RAW_USER_ID))
+                .thenReturn(Optional.of(existingEntity));
+
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw"))).andExpect(method(HttpMethod.PUT)).andRespond(withSuccess());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r"))).andExpect(method(HttpMethod.GET)).andRespond(withSuccess(photoBytes, MediaType.IMAGE_PNG));
+
+        TransactionSynchronizationManager.initSynchronization();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            BiometricPhoto uploaded = consentService.uploadPhoto(USER_ID, true, "image/png", photoBytes);
+            assertThat(uploaded).isNotNull();
+            mockAzureServer.verify();
+            mockAzureServer.reset();
+
+            List<TransactionSynchronization> synchronizations = TransactionSynchronizationManager.getSynchronizations();
+            assertThat(synchronizations).hasSize(1);
+            TransactionSynchronization sync = synchronizations.get(0);
+
+            // 1. Compensación por Rollback (status != STATUS_COMMITTED)
+            mockAzureServer.expect(requestTo(Matchers.containsString("sp=d"))).andExpect(method(HttpMethod.DELETE)).andRespond(withNoContent());
+            sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+            mockAzureServer.verify();
+            mockAzureServer.reset();
+
+            // 2. Commit exitoso (afterCommit) -> elimina la foto previa
+            mockAzureServer.expect(requestTo(Matchers.containsString("sp=d"))).andExpect(method(HttpMethod.DELETE)).andRespond(withNoContent());
+            sync.afterCommit();
+            mockAzureServer.verify();
+            mockAzureServer.reset();
+
+            // 3. Estado STATUS_COMMITTED en afterCompletion no debe re-compensar
+            sync.afterCompletion(TransactionSynchronization.STATUS_COMMITTED);
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test
