@@ -46,6 +46,14 @@ public class SecurityConfig {
                 .requestCache(AbstractHttpConfigurer::disable)
                 .headers(headers -> headers
                         .frameOptions(frame -> frame.deny())
+                        .contentTypeOptions(Customizer.withDefaults())
+                        .httpStrictTransportSecurity(hsts -> hsts
+                                .includeSubDomains(true)
+                                .maxAgeInSeconds(31536000)
+                        )
+                        .referrerPolicy(referrer -> referrer
+                                .policy(org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN)
+                        )
                         .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'"))
                 )
                 .exceptionHandling(ex -> ex
