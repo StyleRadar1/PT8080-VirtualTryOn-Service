@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -55,6 +56,23 @@ public interface VirtualTryOnOpenApiDoc {
     ResponseEntity<TryOnJobResponse> getTryOnJob(
             @Parameter(description = "Identificador único del trabajo (UUID)", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
             UUID jobId
+    );
+
+    @Operation(
+            summary = "Consultar historial de trabajos de prueba virtual del usuario (SR-RF-26)",
+            description = "Retorna el listado de trabajos de prueba virtual del usuario autenticado (o del usuario solicitado si es ADMIN), " +
+                    "incluyendo sus URLs firmadas de solo lectura (sp=r) para resultados completados."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Historial de trabajos obtenido exitosamente"),
+            @ApiResponse(responseCode = "401", description = "Usuario no autenticado (token JWT requerido)",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado al historial de otro usuario",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    ResponseEntity<List<TryOnJobResponse>> getUserTryOnHistory(
+            @Parameter(description = "Identificador opcional del usuario comprador (UUID)", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
+            UUID userId
     );
 
     @Operation(

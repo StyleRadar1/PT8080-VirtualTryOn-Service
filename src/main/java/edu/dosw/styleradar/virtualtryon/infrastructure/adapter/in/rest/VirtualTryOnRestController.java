@@ -34,7 +34,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
-import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -93,18 +93,21 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @GetMapping("/jobs/{jobId}")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<TryOnJobResponse> getTryOnJob(@PathVariable UUID jobId) {
-        TryOnJobResponse response = new TryOnJobResponse(
-                jobId,
-                UUID.fromString("a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"),
-                UUID.fromString("f8e7d6c5-b4a3-2109-8765-43210fedcba9"),
-                "COMPLETED",
-                "https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png",
-                2100L,
-                null,
-                Instant.now().minusSeconds(10),
-                Instant.now()
-        );
-        return ResponseEntity.ok(response);
+        UUID callerUserId = resolveAndVerifyCallerUserId(null);
+        boolean callerIsAdmin = isCallerAdmin();
+        TryOnJob job = queryTryOnJobsService.getJobStatus(jobId, UserId.of(callerUserId), callerIsAdmin);
+        return ResponseEntity.ok(dtoMapper.toJobResponse(job));
+    }
+
+    @Override
+    @GetMapping("/jobs")
+    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    public ResponseEntity<List<TryOnJobResponse>> getUserTryOnHistory(@RequestParam(required = false) UUID userId) {
+        UUID targetUserId = resolveAndVerifyCallerUserId(userId);
+        List<TryOnJobResponse> history = queryTryOnJobsService.getJobHistory(UserId.of(targetUserId)).stream()
+                .map(dtoMapper::toJobResponse)
+                .toList();
+        return ResponseEntity.ok(history);
     }
 
     @Override
@@ -136,6 +139,13 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<Void> deleteBiometricPhoto(@PathVariable UUID jobId) {
         return ResponseEntity.noContent().build();
+    }
+
+    private boolean isCallerAdmin() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(ADMIN_ROLES::contains);
     }
 
     private UUID resolveAndVerifyCallerUserId(UUID requestedUserId) {
