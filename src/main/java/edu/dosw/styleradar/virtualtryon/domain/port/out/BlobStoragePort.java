@@ -25,6 +25,13 @@ public interface BlobStoragePort {
     }
 
     /**
+     * Renueva o construye una URL firmada temporal de solo lectura (sp=r, sr=b, spr=https) para visualizar un resultado.
+     */
+    default SasSignedUrl generateReadOnlySasUrl(SasSignedUrl existingUrl) {
+        return existingUrl;
+    }
+
+    /**
      * Recupera los bytes binarios de una fotografía almacenada a partir de su URL firmada.
      */
     Optional<byte[]> retrieveBlobBytes(SasSignedUrl blobUrl);

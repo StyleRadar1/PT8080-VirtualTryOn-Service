@@ -74,6 +74,10 @@ public class TryOnJob {
         this.updatedAt = Instant.now();
     }
 
+    public void updateResultImageUrl(SasSignedUrl refreshedUrl) {
+        this.resultImageUrl = Objects.requireNonNull(refreshedUrl, "La URL firmada del resultado no puede ser nula");
+    }
+
     public void markFailed(String reason) {
         this.errorMessage = (reason == null || reason.isBlank()) ? "Error en el procesamiento de inferencia IA" : reason.trim();
         this.status = JobStatus.FAILED;
