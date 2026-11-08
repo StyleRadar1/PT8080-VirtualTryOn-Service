@@ -12,5 +12,7 @@ import java.util.UUID;
 public interface BiometricPhotoJpaRepository extends JpaRepository<BiometricPhotoJpaEntity, UUID> {
 
     Optional<BiometricPhotoJpaEntity> findByUserId(UUID userId);
+
+    void deleteByUserId(UUID userId);
 }
 
