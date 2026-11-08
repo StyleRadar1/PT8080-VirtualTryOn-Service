@@ -242,7 +242,7 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                 log.warn("Intento {}/{} fallido al eliminar objeto binario en Azure Blob Storage (ruta: {}, causa: {})",
                         attempt, maxAttempts, safeBlobPath, ex.getClass().getSimpleName());
                 if (attempt == maxAttempts) {
-                    log.error("Fallo definitivo tras {} reintentos al eliminar fotografía biométrica: {}",
+                    log.error("[ORPHAN_CLEANUP_REQUIRED] Fallo definitivo tras {} reintentos al eliminar fotografía biométrica: {}",
                             maxAttempts, safeBlobPath);
                     throw new IllegalStateException("No fue posible eliminar la fotografía biométrica en Azure Blob Storage", ex);
                 }
@@ -330,19 +330,52 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         return queryIdx >= 0 ? rawUrl.substring(0, queryIdx) : rawUrl;
     }
 
-    private String extractBlobNameFromUrl(String basePath) {
-        String prefix = storageBaseUrl + "/" + containerName + "/";
-        if (basePath.startsWith(prefix)) {
-            return basePath.substring(prefix.length());
+    /**
+     * Extrae de forma canónica el nombre relativo del blob (ej: userId/silhouette-UUID.png)
+     * a partir de URLs completas con o sin parámetros query SAS, rutas absolutas con contenedor,
+     * o rutas relativas directas, preservando invariablemente todos los segmentos de usuario.
+     */
+    public String extractBlobNameFromUrl(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) {
+            return "";
         }
-        int lastSlash = basePath.lastIndexOf('/');
-        if (lastSlash >= 0) {
-            int secondLast = basePath.lastIndexOf('/', lastSlash - 1);
-            if (secondLast >= 0) {
-                return basePath.substring(secondLast + 1);
+        String path = stripQueryParametersForLog(rawPath.trim());
+
+        // Si es una URL absoluta (http:// o https://), extraemos el componente path del URI
+        if (path.startsWith("http://") || path.startsWith("https://")) {
+            try {
+                URI uri = URI.create(path);
+                String uriPath = uri.getPath();
+                if (uriPath != null && !uriPath.isBlank()) {
+                    path = uriPath;
+                }
+            } catch (Exception ignored) {
+                // Si la URI no es válida sintácticamente, se continúa con la cadena limpia
             }
         }
-        return basePath;
+
+        // Eliminamos slashes iniciales redundantes (ej: /container/user/photo.png -> container/user/photo.png)
+        while (path.startsWith("/")) {
+            path = path.substring(1);
+        }
+
+        // Si la ruta inicia con el contenedor configurado o con prefijo de contenedor, se remueve únicamente el contenedor
+        String configuredContainerPrefix = containerName + "/";
+        if (path.startsWith(configuredContainerPrefix)) {
+            return path.substring(configuredContainerPrefix.length());
+        }
+
+        // Si la ruta era una URL absoluta con un contenedor diferente pero conocido, removemos el primer segmento (el contenedor)
+        // SOLO si la cadena original era una URL absoluta (http:// o https://) y contiene al menos otro slash
+        if (rawPath.trim().startsWith("http://") || rawPath.trim().startsWith("https://")) {
+            int firstSlash = path.indexOf('/');
+            if (firstSlash >= 0 && firstSlash < path.length() - 1) {
+                return path.substring(firstSlash + 1);
+            }
+        }
+
+        // Si es una ruta relativa (ej: userId/silhouette-123.png o silhouette-123.png), se preserva íntegramente
+        return path;
     }
 
     public static String parseAccountNameStrict(String baseUrl) {

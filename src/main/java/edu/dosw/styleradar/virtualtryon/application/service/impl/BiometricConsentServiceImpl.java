@@ -173,30 +173,51 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
         log.info("Fotografía frontal validada y almacenada para el usuario {} ({}x{} px, {} bytes, ruta: {})",
                 userId.value(), savedPhoto.getWidth(), savedPhoto.getHeight(), savedPhoto.getSizeBytes(), storedBlobPath);
 
-        // Eliminación de la fotografía anterior únicamente tras confirmar el commit exitoso en la base de datos
-        previousPhotoOpt.ifPresent(previousPhoto -> {
-            Runnable cleanupTask = () -> {
+        // Registro de sincronización transaccional:
+        // - afterCommit: Elimina la fotografía anterior únicamente si la transacción se confirmó exitosamente.
+        // - afterCompletion: Si el commit falla o la transacción es revertida (rollback), compensa eliminando el nuevo blob subido.
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    previousPhotoOpt.ifPresent(previousPhoto -> {
+                        try {
+                            blobStoragePort.deleteBlob(previousPhoto.getBlobPath());
+                            log.info("Fotografía biométrica anterior eliminada exitosamente en reemplazo tras commit (usuario: {}, ruta: {})",
+                                    userId.value(), previousPhoto.getBlobPath());
+                        } catch (Exception ex) {
+                            log.warn("No fue posible eliminar la fotografía biométrica anterior en Azure tras commit (ruta: {}, causa: {}). La nueva fotografía permanece activa.",
+                                    previousPhoto.getBlobPath(), ex.getClass().getSimpleName());
+                        }
+                    });
+                }
+
+                @Override
+                public void afterCompletion(int status) {
+                    if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                        log.warn("Transacción no confirmada en BD (status: {}). Compensando eliminación del nuevo blob en Azure: {}",
+                                status, storedBlobPath);
+                        try {
+                            blobStoragePort.deleteBlob(storedBlobPath);
+                        } catch (Exception cleanupEx) {
+                            log.warn("Fallo en compensación de archivo huérfano tras rollback en Azure (ruta: {}, causa: {})",
+                                    storedBlobPath, cleanupEx.getClass().getSimpleName());
+                        }
+                    }
+                }
+            });
+        } else {
+            previousPhotoOpt.ifPresent(previousPhoto -> {
                 try {
                     blobStoragePort.deleteBlob(previousPhoto.getBlobPath());
-                    log.info("Fotografía biométrica anterior eliminada exitosamente en reemplazo tras commit (usuario: {}, ruta: {})",
+                    log.info("Fotografía biométrica anterior eliminada exitosamente en reemplazo (usuario: {}, ruta: {})",
                             userId.value(), previousPhoto.getBlobPath());
                 } catch (Exception ex) {
-                    log.warn("No fue posible eliminar la fotografía biométrica anterior en Azure tras commit (ruta: {}, causa: {}). La nueva fotografía permanece activa.",
+                    log.warn("No fue posible eliminar la fotografía biométrica anterior en Azure (ruta: {}, causa: {})",
                             previousPhoto.getBlobPath(), ex.getClass().getSimpleName());
                 }
-            };
-
-            if (TransactionSynchronizationManager.isActualTransactionActive()) {
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        cleanupTask.run();
-                    }
-                });
-            } else {
-                cleanupTask.run();
-            }
-        });
+            });
+        }
 
         return savedPhoto.withFreshSignedUrl(freshSignedUrl);
     }

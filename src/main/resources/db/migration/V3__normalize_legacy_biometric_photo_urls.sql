@@ -3,12 +3,19 @@
 -- Elimina parámetros query SAS temporales (?se=...&sig=...) y esquemas absolutos
 -- en la columna photo_url, persistiendo exclusivamente la ruta canónica relativa
 -- del blob en Azure Blob Storage (ej: userId/silhouette-UUID.png).
+-- Totalmente compatible con PostgreSQL 12+ y H2 en modo PostgreSQL.
 -- ===================================================================
 
 UPDATE biometric_photos
 SET photo_url = REGEXP_REPLACE(
-    REGEXP_REPLACE(photo_url, '\?.*$', ''),
-    '^https?://[^/]+/[^/]+/',
+    REGEXP_REPLACE(
+        REGEXP_REPLACE(photo_url, '\?.*$', ''),
+        '^https?://[^/]+/[^/]+/',
+        ''
+    ),
+    '^biometric-silhouettes/',
     ''
 )
-WHERE photo_url LIKE 'http%' OR photo_url LIKE '%?%';
+WHERE photo_url LIKE 'http%' OR photo_url LIKE '%?%' OR photo_url LIKE 'biometric-silhouettes/%';
+
+

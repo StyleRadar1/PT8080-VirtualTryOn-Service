@@ -81,34 +81,41 @@ public class TryOnPersistenceMapper {
 
     /**
      * Normaliza referencias antiguas almacenadas en la base de datos eliminando parámetros
-     * query SAS (?se=...&sig=...) y extrayendo únicamente la ruta relativa del blob.
+     * query SAS (?se=...&sig=...) y extrayendo únicamente la ruta canónica relativa del blob
+     * (ej: userId/silhouette-UUID.png), preservando todos los segmentos del usuario.
      */
     public static String normalizePersistedBlobPath(String rawPath) {
         if (rawPath == null || rawPath.isBlank()) {
             return "";
         }
-        String stripped = rawPath.trim();
-        int queryIdx = stripped.indexOf('?');
+        String path = rawPath.trim();
+        int queryIdx = path.indexOf('?');
         if (queryIdx >= 0) {
-            stripped = stripped.substring(0, queryIdx);
+            path = path.substring(0, queryIdx);
         }
-        if (stripped.startsWith("http://") || stripped.startsWith("https://")) {
+        boolean wasHttp = path.startsWith("http://") || path.startsWith("https://");
+        if (wasHttp) {
             try {
-                URI uri = URI.create(stripped);
-                String path = uri.getPath();
-                if (path != null && !path.isBlank()) {
-                    while (path.startsWith("/")) {
-                        path = path.substring(1);
-                    }
-                    int firstSlash = path.indexOf('/');
-                    if (firstSlash >= 0 && firstSlash < path.length() - 1) {
-                        return path.substring(firstSlash + 1);
-                    }
-                    return path;
+                URI uri = URI.create(path);
+                String uriPath = uri.getPath();
+                if (uriPath != null && !uriPath.isBlank()) {
+                    path = uriPath;
                 }
             } catch (Exception ignored) {
             }
         }
-        return stripped;
+        while (path.startsWith("/")) {
+            path = path.substring(1);
+        }
+        if (path.startsWith("biometric-silhouettes/")) {
+            return path.substring("biometric-silhouettes/".length());
+        }
+        if (wasHttp) {
+            int firstSlash = path.indexOf('/');
+            if (firstSlash >= 0 && firstSlash < path.length() - 1) {
+                return path.substring(firstSlash + 1);
+            }
+        }
+        return path;
     }
 }
