@@ -19,6 +19,7 @@ public class TryOnJob {
     private final GarmentId garmentId;
     private String photoUrl;
     private final GarmentCategory garmentCategory;
+    private final String garmentImageUrl;
     private JobStatus status;
     private SasSignedUrl resultImageUrl;
     private final AiProvider aiProvider;
@@ -34,6 +35,7 @@ public class TryOnJob {
             GarmentId garmentId,
             String photoUrl,
             GarmentCategory garmentCategory,
+            String garmentImageUrl,
             JobStatus status,
             SasSignedUrl resultImageUrl,
             AiProvider aiProvider,
@@ -51,6 +53,7 @@ public class TryOnJob {
         }
         this.photoUrl = photoUrl;
         this.garmentCategory = Objects.requireNonNull(garmentCategory, "La categoría de la prenda no puede ser nula");
+        this.garmentImageUrl = garmentImageUrl;
         this.status = Objects.requireNonNull(status, "El estado del trabajo no puede ser nulo");
         this.resultImageUrl = resultImageUrl;
         this.aiProvider = Objects.requireNonNull(aiProvider, "El proveedor de IA no puede ser nulo");
@@ -59,6 +62,24 @@ public class TryOnJob {
         this.photoPurged = photoPurged;
         this.createdAt = Objects.requireNonNull(createdAt, "La fecha de creación no puede ser nula");
         this.updatedAt = Objects.requireNonNull(updatedAt, "La fecha de actualización no puede ser nula");
+    }
+
+    public TryOnJob(
+            UUID id,
+            UserId userId,
+            GarmentId garmentId,
+            String photoUrl,
+            GarmentCategory garmentCategory,
+            JobStatus status,
+            SasSignedUrl resultImageUrl,
+            AiProvider aiProvider,
+            Long executionTimeMs,
+            String errorMessage,
+            boolean photoPurged,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+        this(id, userId, garmentId, photoUrl, garmentCategory, null, status, resultImageUrl, aiProvider, executionTimeMs, errorMessage, photoPurged, createdAt, updatedAt);
     }
 
     public void startAiProcessing() {
@@ -105,6 +126,10 @@ public class TryOnJob {
 
     public GarmentCategory getGarmentCategory() {
         return garmentCategory;
+    }
+
+    public String getGarmentImageUrl() {
+        return garmentImageUrl;
     }
 
     public JobStatus getStatus() {

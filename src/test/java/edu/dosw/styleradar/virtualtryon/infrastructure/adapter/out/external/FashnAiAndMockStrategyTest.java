@@ -22,10 +22,12 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
+import javax.imageio.ImageIO;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -90,6 +92,7 @@ class FashnAiAndMockStrategyTest {
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(MODEL_IMAGE_URL)
                 .withCategory(GarmentCategory.TOPS)
+                .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
 
@@ -203,6 +206,39 @@ class FashnAiAndMockStrategyTest {
         assertThat(decoded.getHeight()).isEqualTo(1600);
         assertThat(decoded.getWidth()).isEqualTo(1200);
         assertThat(mockAiStrategy.decodeImage(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Cuando MockAiStrategy recibe URLs de Azure Blob Storage con bytes reales, Entonces decodifica y compone las imágenes del usuario y prenda")
+    void shouldSubmitTryOnWithRealBlobBytesInMockAiStrategy() throws Exception {
+        BufferedImage realUserPhoto = new BufferedImage(300, 500, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream userPhotoStream = new ByteArrayOutputStream();
+        ImageIO.write(realUserPhoto, "png", userPhotoStream);
+
+        BufferedImage realGarment = new BufferedImage(150, 200, BufferedImage.TYPE_INT_ARGB);
+        ByteArrayOutputStream garmentStream = new ByteArrayOutputStream();
+        ImageIO.write(realGarment, "png", garmentStream);
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/user/photo.png";
+        String garmentUrl = "https://styleradarblob.blob.core.windows.net/catalog-garments/garment.png";
+
+        when(blobStoragePort.retrieveBlobBytes(photoUrl)).thenReturn(Optional.of(userPhotoStream.toByteArray()));
+        when(blobStoragePort.retrieveBlobBytes(garmentUrl)).thenReturn(Optional.of(garmentStream.toByteArray()));
+
+        TryOnJob job = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(photoUrl)
+                .withCategory(GarmentCategory.TOPS)
+                .withGarmentImageUrl(garmentUrl)
+                .withProvider(AiProvider.MOCK_LOCAL)
+                .build();
+
+        SasSignedUrl result = mockAiStrategy.submitTryOn(job);
+        assertThat(result).isNotNull();
+        Mockito.verify(blobStoragePort).retrieveBlobBytes(photoUrl);
+        Mockito.verify(blobStoragePort).retrieveBlobBytes(garmentUrl);
+        Mockito.verify(blobStoragePort).storeRenderedResult(eq(job.getUserId()), eq(job.getId()), any(byte[].class));
     }
 }
 

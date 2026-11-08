@@ -31,6 +31,9 @@ public class TryOnJobJpaEntity {
     @Column(name = "garment_category", nullable = false, length = 32)
     private String garmentCategory;
 
+    @Column(name = "garment_image_url", columnDefinition = "TEXT")
+    private String garmentImageUrl;
+
     @Column(name = "status", nullable = false, length = 32)
     private String status;
 
@@ -64,6 +67,7 @@ public class TryOnJobJpaEntity {
             UUID garmentId,
             String photoUrl,
             String garmentCategory,
+            String garmentImageUrl,
             String status,
             String resultImageUrl,
             String aiProvider,
@@ -78,6 +82,7 @@ public class TryOnJobJpaEntity {
         this.garmentId = garmentId;
         this.photoUrl = photoUrl;
         this.garmentCategory = garmentCategory;
+        this.garmentImageUrl = garmentImageUrl;
         this.status = status;
         this.resultImageUrl = resultImageUrl;
         this.aiProvider = aiProvider;
@@ -86,6 +91,24 @@ public class TryOnJobJpaEntity {
         this.photoPurged = photoPurged;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+    }
+
+    public TryOnJobJpaEntity(
+            UUID id,
+            UUID userId,
+            UUID garmentId,
+            String photoUrl,
+            String garmentCategory,
+            String status,
+            String resultImageUrl,
+            String aiProvider,
+            Long executionTimeMs,
+            String errorMessage,
+            boolean photoPurged,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+        this(id, userId, garmentId, photoUrl, garmentCategory, null, status, resultImageUrl, aiProvider, executionTimeMs, errorMessage, photoPurged, createdAt, updatedAt);
     }
 
     public UUID getId() {
@@ -126,6 +149,14 @@ public class TryOnJobJpaEntity {
 
     public void setGarmentCategory(String garmentCategory) {
         this.garmentCategory = garmentCategory;
+    }
+
+    public String getGarmentImageUrl() {
+        return garmentImageUrl;
+    }
+
+    public void setGarmentImageUrl(String garmentImageUrl) {
+        this.garmentImageUrl = garmentImageUrl;
     }
 
     public String getStatus() {

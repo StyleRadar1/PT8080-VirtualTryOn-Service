@@ -18,9 +18,11 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 
 /**
- * Estrategia concreta (Patrón Strategy) de composición gráfica local con Graphics2D y AlphaComposite
- * (migrada de ComposicionProbador de StyleRadar-Backend) que genera el render PNG superponiendo la
- * prenda en la región anatómica correspondiente (torso o piernas) y lo almacena en Azure Blob Storage (SR-RF-25).
+ * Estrategia concreta (Patrón Strategy) de composición gráfica local para pruebas y desarrollo.
+ * Utiliza las fotografías reales del usuario y de las prendas del catálogo cuando están disponibles en
+ * Azure Blob Storage, con composición visual vía Graphics2D y AlphaComposite.
+ * Si las imágenes remotas no están disponibles en entornos aislados o de testing unitario,
+ * provee un lienzo de silueta sintética como mecanismo de contingencia sin costo de GPU (SR-RF-25).
  */
 public class MockAiStrategy implements AiInferenceStrategy {
 
@@ -38,8 +40,26 @@ public class MockAiStrategy implements AiInferenceStrategy {
 
     @Override
     public SasSignedUrl submitTryOn(TryOnJob job) {
-        BufferedImage baseSilhouette = createDefaultSilhouetteCanvas(400, 600);
-        BufferedImage garmentOverlay = createDefaultGarmentOverlay(220, 260, job.getGarmentCategory());
+        BufferedImage baseSilhouette = null;
+        if (job.getPhotoUrl() != null && !job.getPhotoUrl().isBlank()) {
+            baseSilhouette = blobStoragePort.retrieveBlobBytes(job.getPhotoUrl())
+                    .map(this::decodeImage)
+                    .orElse(null);
+        }
+        if (baseSilhouette == null) {
+            baseSilhouette = createDefaultSilhouetteCanvas(400, 600);
+        }
+
+        BufferedImage garmentOverlay = null;
+        if (job.getGarmentImageUrl() != null && !job.getGarmentImageUrl().isBlank()) {
+            garmentOverlay = blobStoragePort.retrieveBlobBytes(job.getGarmentImageUrl())
+                    .map(this::decodeImage)
+                    .orElse(null);
+        }
+        if (garmentOverlay == null) {
+            garmentOverlay = createDefaultGarmentOverlay(220, 260, job.getGarmentCategory());
+        }
+
         byte[] renderedPng = composeOverlay(baseSilhouette, garmentOverlay, job.getGarmentCategory());
         return blobStoragePort.storeRenderedResult(job.getUserId(), job.getId(), renderedPng);
     }

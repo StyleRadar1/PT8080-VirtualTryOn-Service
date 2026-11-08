@@ -2,8 +2,12 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
+import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.model.AiProvider;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
+import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
@@ -26,26 +30,28 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.OptionalInt;
+import java.util.function.Supplier;
 
 /**
  * Implementación del servicio de aplicación que orquesta el flujo completo de creación y
  * generación de una prueba virtual con IA (SR-RF-25):
- * 1. Valida la cadena de responsabilidad (Consentimiento V01 -> Cuota Mensual V02 -> Prenda Compatible V03).
- * 2. Construye el agregado TryOnJob mediante TryOnJobBuilder en estado QUEUED y registra JobAuditLog.
- * 3. Consume 1 crédito de la cuota mensual en PostgreSQL y Redis.
- * 4. Publica el evento tryon.job.created en RabbitMQ.
- * 5. Ejecuta la estrategia de inferencia (FashnAiStrategy o MockAiStrategy), actualiza el job a COMPLETED
- *    o FAILED, registra la transición en JobAuditLog y publica tryon.job.completed / tryon.job.failed.
+ * 1. Valida el consentimiento biométrico informado (Ley 1581 de 2012) y la titularidad de la silueta.
+ * 2. Valida la existencia real y compatibilidad de la prenda del catálogo.
+ * 3. Ejecuta la cadena de validación (Consentimiento V01 -> Cuota Mensual V02 -> Prenda Compatible V03).
+ * 4. Persiste de forma atómica en PostgreSQL el TryOnJob en estado QUEUED y descuenta la cuota.
+ * 5. Ejecuta la inferencia fuera de transacciones JDBC para no retener conexiones durante I/O HTTP.
+ * 6. Garantiza la persistencia confirmada de estados COMPLETED o FAILED junto con su auditoría y eventos AMQP.
  */
 @Service
-@Transactional
 public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
 
     private final TryOnJobRepositoryPort jobRepositoryPort;
@@ -56,7 +62,9 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
     private final List<AiInferenceStrategy> inferenceStrategies;
     private final AiProvider configuredProvider;
     private final TryOnValidatorHandler validationChain;
+    private final TransactionTemplate transactionTemplate;
 
+    @Autowired
     public CreateTryOnJobServiceImpl(
             TryOnJobRepositoryPort jobRepositoryPort,
             UserQuotaRepositoryPort quotaRepositoryPort,
@@ -64,7 +72,8 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             BiometricDataRepositoryPort biometricDataRepositoryPort,
             TryOnEventPublisherPort eventPublisherPort,
             List<AiInferenceStrategy> inferenceStrategies,
-            @Value("${styleradar.tryon.ai-provider:mock}") String configuredProviderName
+            @Value("${styleradar.tryon.ai-provider:mock}") String configuredProviderName,
+            ObjectProvider<TransactionTemplate> transactionTemplateProvider
     ) {
         this.jobRepositoryPort = jobRepositoryPort;
         this.quotaRepositoryPort = quotaRepositoryPort;
@@ -73,12 +82,25 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         this.eventPublisherPort = eventPublisherPort;
         this.inferenceStrategies = inferenceStrategies;
         this.configuredProvider = AiProvider.fromConfigValue(configuredProviderName);
+        this.transactionTemplate = transactionTemplateProvider != null ? transactionTemplateProvider.getIfAvailable() : null;
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
         TryOnValidatorHandler garmentValidator = new GarmentCategoryValidator();
         consentValidator.setNext(quotaValidator).setNext(garmentValidator);
         this.validationChain = consentValidator;
+    }
+
+    public CreateTryOnJobServiceImpl(
+            TryOnJobRepositoryPort jobRepositoryPort,
+            UserQuotaRepositoryPort quotaRepositoryPort,
+            UserQuotaCachePort quotaCachePort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            TryOnEventPublisherPort eventPublisherPort,
+            List<AiInferenceStrategy> inferenceStrategies,
+            String configuredProviderName
+    ) {
+        this(jobRepositoryPort, quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, eventPublisherPort, inferenceStrategies, configuredProviderName, null);
     }
 
     @Override
@@ -88,23 +110,47 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             String photoUrl,
             boolean biometricConsent
     ) {
-        boolean hasPersistedConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
+        // 1. Verificación estricta de consentimiento biométrico explícito y registrado (Ley 1581 de 2012)
+        if (!biometricConsent) {
+            throw new ConsentRequiredException(
+                    "Debe confirmar explícitamente el consentimiento biométrico para iniciar la prueba virtual");
+        }
+        boolean hasActivePersistedConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
                 .map(BiometricConsent::isValidForInference)
                 .orElse(false);
-        boolean effectiveConsent = biometricConsent || hasPersistedConsent;
+        if (!hasActivePersistedConsent) {
+            throw new ConsentRequiredException(
+                    "El usuario " + userId.value() + " no cuenta con consentimiento biométrico activo registrado");
+        }
+
+        // 2. Verificación de existencia y titularidad de la fotografía frontal de silueta del usuario
+        BiometricPhoto userPhoto = biometricDataRepositoryPort.findPhotoByUserId(userId)
+                .orElseThrow(() -> new InvalidPhotoException(
+                        "El usuario " + userId.value() + " no tiene una fotografía frontal de silueta registrada y validada"));
+
+        if (photoUrl == null || photoUrl.isBlank()) {
+            throw new InvalidPhotoException("La URL de la fotografía frontal es obligatoria");
+        }
+
+        String userUuidStr = userId.value().toString();
+        boolean belongsToUser = photoUrl.contains(userUuidStr)
+                || (userPhoto.getBlobPath() != null && photoUrl.contains(userPhoto.getBlobPath()));
+        if (!belongsToUser) {
+            throw new InvalidPhotoException(
+                    "La fotografía proporcionada no corresponde a la silueta biométrica del usuario autenticado");
+        }
+
+        String effectivePhotoUrl = (userPhoto.getPhotoUrl() != null && userPhoto.getPhotoUrl().value() != null)
+                ? userPhoto.getPhotoUrl().value()
+                : photoUrl.trim();
+
+        // 3. Validación de existencia real de la prenda en el catálogo
+        CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                .orElseThrow(() -> new InvalidGarmentException(
+                        "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
 
         BillingPeriod currentPeriod = BillingPeriod.current();
         UserQuota quota = resolveCurrentQuota(userId, currentPeriod);
-
-        CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
-                .orElseGet(() -> new CatalogGarment(
-                        garmentId,
-                        "Prenda Catálogo " + garmentId.value(),
-                        GarmentCategory.TOPS,
-                        "https://styleradar.dosw.edu/catalog/garments/" + garmentId.value() + ".png",
-                        true,
-                        Instant.now()
-                ));
 
         TryOnValidationContext validationContext = new TryOnValidationContext(
                 userId,
@@ -112,66 +158,96 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                 garment.getCategory(),
                 garment.getImageUrl(),
                 garment.isVisible(),
-                effectiveConsent,
+                true,
                 quota
         );
         validationChain.validate(validationContext);
 
-        quota.consumeQuota();
-        quotaRepositoryPort.saveQuota(quota);
-        quotaCachePort.cacheUsedCount(userId, currentPeriod, quota.getUsedCount());
+        // 4. Fase 1: Creación atómica del TryOnJob y consumo de cuota (transacción confirmada en BD)
+        TryOnJob savedQueuedJob = executeInTransaction(() -> {
+            quota.consumeQuota();
+            quotaRepositoryPort.saveQuota(quota);
+            quotaCachePort.cacheUsedCount(userId, currentPeriod, quota.getUsedCount());
 
-        TryOnJob queuedJob = new TryOnJobBuilder()
-                .withUserId(userId)
-                .withGarmentId(garmentId)
-                .withPhotoUrl(photoUrl)
-                .withCategory(garment.getCategory())
-                .withProvider(configuredProvider)
-                .build();
+            TryOnJob queuedJob = new TryOnJobBuilder()
+                    .withUserId(userId)
+                    .withGarmentId(garmentId)
+                    .withPhotoUrl(effectivePhotoUrl)
+                    .withCategory(garment.getCategory())
+                    .withGarmentImageUrl(garment.getImageUrl())
+                    .withProvider(configuredProvider)
+                    .build();
 
-        TryOnJob savedQueuedJob = jobRepositoryPort.saveJob(queuedJob);
-        jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                savedQueuedJob.getId(),
-                null,
-                JobStatus.QUEUED,
-                "Trabajo de prueba virtual creado y encolado tras superar validaciones V01..V03"
-        ));
-        eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(savedQueuedJob));
+            TryOnJob saved = jobRepositoryPort.saveJob(queuedJob);
+            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                    saved.getId(),
+                    null,
+                    JobStatus.QUEUED,
+                    "Trabajo de prueba virtual creado y encolado tras superar validaciones V01..V03"
+            ));
+            eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(saved));
+            return saved;
+        });
 
+        // 5. Fase 2: Ejecución de inferencia externa (I/O HTTP fuera de transacción JDBC)
         long startNanos = System.nanoTime();
-        savedQueuedJob.startAiProcessing();
-        jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                savedQueuedJob.getId(),
-                JobStatus.QUEUED,
-                JobStatus.PROCESSING,
-                "Iniciando procesamiento de inferencia IA con proveedor " + configuredProvider
-        ));
+        runInTransaction(() -> {
+            savedQueuedJob.startAiProcessing();
+            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                    savedQueuedJob.getId(),
+                    JobStatus.QUEUED,
+                    JobStatus.PROCESSING,
+                    "Iniciando procesamiento de inferencia IA con proveedor " + configuredProvider
+            ));
+        });
 
         AiInferenceStrategy selectedStrategy = selectStrategy(configuredProvider);
         try {
             SasSignedUrl renderUrl = selectedStrategy.submitTryOn(savedQueuedJob);
             long elapsedMs = Math.max(1L, (System.nanoTime() - startNanos) / 1_000_000L);
-            savedQueuedJob.complete(renderUrl, elapsedMs);
-            TryOnJob completedJob = jobRepositoryPort.saveJob(savedQueuedJob);
-            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                    completedJob.getId(),
-                    JobStatus.PROCESSING,
-                    JobStatus.COMPLETED,
-                    "Renderizado de prueba virtual completado exitosamente en " + elapsedMs + " ms"
-            ));
-            eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(completedJob));
-            return completedJob;
+
+            // 6. Fase 3a: Actualización a COMPLETED (transacción confirmada de forma atómica)
+            return executeInTransaction(() -> {
+                savedQueuedJob.complete(renderUrl, elapsedMs);
+                TryOnJob completedJob = jobRepositoryPort.saveJob(savedQueuedJob);
+                jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                        completedJob.getId(),
+                        JobStatus.PROCESSING,
+                        JobStatus.COMPLETED,
+                        "Renderizado de prueba virtual completado exitosamente en " + elapsedMs + " ms"
+                ));
+                eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(completedJob));
+                return completedJob;
+            });
         } catch (RuntimeException ex) {
-            savedQueuedJob.markFailed(ex.getMessage());
-            TryOnJob failedJob = jobRepositoryPort.saveJob(savedQueuedJob);
-            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                    failedJob.getId(),
-                    JobStatus.PROCESSING,
-                    JobStatus.FAILED,
-                    "Error durante la generación de prueba virtual: " + failedJob.getErrorMessage()
-            ));
-            eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(failedJob));
+            // 7. Fase 3b: Registro garantizado del fallo en BD en transacción confirmada antes de relanzar
+            runInTransaction(() -> {
+                savedQueuedJob.markFailed(ex.getMessage());
+                TryOnJob failedJob = jobRepositoryPort.saveJob(savedQueuedJob);
+                jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                        failedJob.getId(),
+                        JobStatus.PROCESSING,
+                        JobStatus.FAILED,
+                        "Error durante la generación de prueba virtual: " + failedJob.getErrorMessage()
+                ));
+                eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(failedJob));
+            });
             throw ex;
+        }
+    }
+
+    private <T> T executeInTransaction(Supplier<T> action) {
+        if (transactionTemplate != null) {
+            return transactionTemplate.execute(status -> action.get());
+        }
+        return action.get();
+    }
+
+    private void runInTransaction(Runnable action) {
+        if (transactionTemplate != null) {
+            transactionTemplate.executeWithoutResult(status -> action.run());
+        } else {
+            action.run();
         }
     }
 
@@ -200,4 +276,3 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                 .orElseGet(() -> inferenceStrategies.get(0));
     }
 }
-
