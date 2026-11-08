@@ -107,6 +107,17 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         return uploadBlockBlob(userId, blobName, MediaType.IMAGE_PNG_VALUE, renderedPngBytes);
     }
 
+    @Override
+    public SasSignedUrl generateReadOnlySasUrl(SasSignedUrl existingUrl) {
+        String raw = existingUrl.value();
+        int queryIdx = raw.indexOf('?');
+        String basePath = queryIdx >= 0 ? raw.substring(0, queryIdx) : raw;
+        if (readOnlySasToken.isEmpty()) {
+            return SasSignedUrl.of(basePath);
+        }
+        return SasSignedUrl.of(basePath + "?" + readOnlySasToken);
+    }
+
     private SasSignedUrl uploadBlockBlob(UserId userId, String blobName, String resolvedContentType, byte[] blobBytes) {
         String writeUrl = buildWriteSignedBlobUrl(blobName);
         String readOnlyUrl = buildReadOnlySignedBlobUrl(blobName);

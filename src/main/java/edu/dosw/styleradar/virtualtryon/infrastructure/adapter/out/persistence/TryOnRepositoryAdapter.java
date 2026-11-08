@@ -6,6 +6,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
@@ -18,12 +19,14 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.e
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.CatalogGarmentJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.JobAuditLogJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.TryOnJobJpaEntity;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.TryOnOutfitJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.UserQuotaJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.BiometricConsentJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.BiometricPhotoJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.CatalogGarmentJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.JobAuditLogJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.TryOnJobJpaRepository;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.TryOnOutfitJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.UserQuotaJpaRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -45,6 +48,7 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     private final CatalogGarmentJpaRepository catalogGarmentJpaRepository;
     private final TryOnJobJpaRepository tryOnJobJpaRepository;
     private final JobAuditLogJpaRepository jobAuditLogJpaRepository;
+    private final TryOnOutfitJpaRepository tryOnOutfitJpaRepository;
     private final TryOnPersistenceMapper persistenceMapper;
 
     @Autowired
@@ -55,6 +59,7 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
             CatalogGarmentJpaRepository catalogGarmentJpaRepository,
             TryOnJobJpaRepository tryOnJobJpaRepository,
             JobAuditLogJpaRepository jobAuditLogJpaRepository,
+            TryOnOutfitJpaRepository tryOnOutfitJpaRepository,
             TryOnPersistenceMapper persistenceMapper
     ) {
         this.consentJpaRepository = consentJpaRepository;
@@ -63,7 +68,29 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
         this.catalogGarmentJpaRepository = catalogGarmentJpaRepository;
         this.tryOnJobJpaRepository = tryOnJobJpaRepository;
         this.jobAuditLogJpaRepository = jobAuditLogJpaRepository;
+        this.tryOnOutfitJpaRepository = tryOnOutfitJpaRepository;
         this.persistenceMapper = persistenceMapper;
+    }
+
+    public TryOnRepositoryAdapter(
+            BiometricConsentJpaRepository consentJpaRepository,
+            BiometricPhotoJpaRepository photoJpaRepository,
+            UserQuotaJpaRepository quotaJpaRepository,
+            CatalogGarmentJpaRepository catalogGarmentJpaRepository,
+            TryOnJobJpaRepository tryOnJobJpaRepository,
+            JobAuditLogJpaRepository jobAuditLogJpaRepository,
+            TryOnPersistenceMapper persistenceMapper
+    ) {
+        this(
+                consentJpaRepository,
+                photoJpaRepository,
+                quotaJpaRepository,
+                catalogGarmentJpaRepository,
+                tryOnJobJpaRepository,
+                jobAuditLogJpaRepository,
+                null,
+                persistenceMapper
+        );
     }
 
     public TryOnRepositoryAdapter(
@@ -181,5 +208,33 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
         return jobAuditLogJpaRepository.findByJobIdOrderByOccurredAtAsc(jobId).stream()
                 .map(persistenceMapper::toAuditLogDomain)
                 .toList();
+    }
+
+    @Override
+    public TryOnOutfit saveOutfit(TryOnOutfit outfit) {
+        if (tryOnOutfitJpaRepository == null) {
+            return outfit;
+        }
+        Optional<TryOnOutfitJpaEntity> existing = tryOnOutfitJpaRepository.findByJobId(outfit.getJobId());
+        TryOnOutfitJpaEntity toSave = persistenceMapper.toOutfitJpaEntity(outfit);
+        existing.ifPresent(entity -> toSave.setId(entity.getId()));
+        TryOnOutfitJpaEntity saved = tryOnOutfitJpaRepository.save(toSave);
+        return persistenceMapper.toOutfitDomain(saved);
+    }
+
+    @Override
+    public Optional<TryOnOutfit> findOutfitByJobId(UUID jobId) {
+        if (tryOnOutfitJpaRepository == null) {
+            return Optional.empty();
+        }
+        return tryOnOutfitJpaRepository.findByJobId(jobId)
+                .map(persistenceMapper::toOutfitDomain);
+    }
+
+    @Override
+    public void deleteOutfitByJobId(UUID jobId) {
+        if (tryOnOutfitJpaRepository != null) {
+            tryOnOutfitJpaRepository.deleteByJobId(jobId);
+        }
     }
 }
