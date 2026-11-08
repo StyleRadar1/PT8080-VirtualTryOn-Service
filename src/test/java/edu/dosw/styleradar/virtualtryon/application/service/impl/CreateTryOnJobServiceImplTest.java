@@ -286,7 +286,7 @@ class CreateTryOnJobServiceImplTest {
         RabbitConfig rabbitConfig = new RabbitConfig();
         assertThat(rabbitConfig.tryOnEventsExchange(RabbitConfig.DEFAULT_TRYON_EXCHANGE).getName())
                 .isEqualTo(RabbitConfig.DEFAULT_TRYON_EXCHANGE);
-        assertThat(rabbitConfig.jackson2JsonMessageConverter()).isNotNull();
+        assertThat(rabbitConfig.jackson2JsonMessageConverter(new com.fasterxml.jackson.databind.ObjectMapper())).isNotNull();
 
         eventPublisherAdapter.publishJobEvent(null);
         Mockito.doThrow(new RuntimeException("Rabbit offline"))

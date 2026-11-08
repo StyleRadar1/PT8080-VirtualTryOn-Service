@@ -140,10 +140,11 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
     @Override
     public SasSignedUrl storeRenderedResult(UserId userId, UUID jobId, byte[] renderedPngBytes) {
         String blobName = userId.value() + "/render-" + jobId + ".png";
-        return uploadBlockBlob(userId, blobName, MediaType.IMAGE_PNG_VALUE, renderedPngBytes);
+        uploadBlockBlob(userId, blobName, MediaType.IMAGE_PNG_VALUE, renderedPngBytes);
+        return generateReadOnlySignedUrl(blobName);
     }
 
-    private SasSignedUrl uploadBlockBlob(UserId userId, String blobName, String resolvedContentType, byte[] blobBytes) {
+    private String uploadBlockBlob(UserId userId, String blobName, String resolvedContentType, byte[] blobBytes) {
         String writeUrl = buildWriteSignedBlobUrl(blobName);
         SasSignedUrl readOnlySignedUrl = generateReadOnlySignedUrl(blobName);
         boolean uploadSucceeded = false;
