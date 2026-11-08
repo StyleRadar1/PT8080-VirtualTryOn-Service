@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.dosw.styleradar.virtualtryon.application.dto.request.StartTryOnRequest;
 import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMapper;
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
+import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
@@ -76,6 +77,9 @@ class VirtualTryOnRestControllerTest {
 
     @MockBean
     private QueryTryOnJobsService queryTryOnJobsService;
+
+    @MockBean
+    private DeleteBiometricDataService deleteBiometricDataService;
 
     private String bearerTokenFor(UUID userId, String role) {
         return "Bearer " + jwtTokenProvider.generateToken(userId, role);
@@ -371,5 +375,8 @@ class VirtualTryOnRestControllerTest {
         mockMvc.perform(delete("/api/v1/try-on/personal-photos/{jobId}", jobId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR")))
                 .andExpect(status().isNoContent());
+
+        org.mockito.Mockito.verify(deleteBiometricDataService)
+                .deleteBiometricPhoto(jobId, UserId.of(userId), false);
     }
 }
