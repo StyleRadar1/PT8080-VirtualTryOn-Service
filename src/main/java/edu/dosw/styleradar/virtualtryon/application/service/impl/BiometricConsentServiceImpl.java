@@ -18,6 +18,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.List;
@@ -153,19 +155,46 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
                 Instant.now()
         );
 
-        BiometricPhoto savedPhoto = biometricDataRepositoryPort.savePhoto(photo);
+        BiometricPhoto savedPhoto;
+        try {
+            savedPhoto = biometricDataRepositoryPort.savePhoto(photo);
+        } catch (Exception ex) {
+            log.warn("Fallo al persistir la referencia en base de datos. Compensando eliminación del nuevo blob en Azure: {}",
+                    storedBlobPath);
+            try {
+                blobStoragePort.deleteBlob(storedBlobPath);
+            } catch (Exception cleanupEx) {
+                log.warn("Fallo al compensar archivo huérfano en Azure (ruta: {}, causa: {})",
+                        storedBlobPath, cleanupEx.getClass().getSimpleName());
+            }
+            throw ex;
+        }
+
         log.info("Fotografía frontal validada y almacenada para el usuario {} ({}x{} px, {} bytes, ruta: {})",
                 userId.value(), savedPhoto.getWidth(), savedPhoto.getHeight(), savedPhoto.getSizeBytes(), storedBlobPath);
 
-        // Eliminación de la fotografía anterior únicamente tras confirmar el almacenamiento exitoso de la nueva
+        // Eliminación de la fotografía anterior únicamente tras confirmar el commit exitoso en la base de datos
         previousPhotoOpt.ifPresent(previousPhoto -> {
-            try {
-                blobStoragePort.deleteBlob(previousPhoto.getBlobPath());
-                log.info("Fotografía biométrica anterior eliminada exitosamente en reemplazo (usuario: {}, ruta: {})",
-                        userId.value(), previousPhoto.getBlobPath());
-            } catch (Exception ex) {
-                log.warn("No fue posible eliminar la fotografía biométrica anterior en Azure tras reemplazo (ruta: {}, causa: {}). La nueva fotografía permanece activa.",
-                        previousPhoto.getBlobPath(), ex.getClass().getSimpleName());
+            Runnable cleanupTask = () -> {
+                try {
+                    blobStoragePort.deleteBlob(previousPhoto.getBlobPath());
+                    log.info("Fotografía biométrica anterior eliminada exitosamente en reemplazo tras commit (usuario: {}, ruta: {})",
+                            userId.value(), previousPhoto.getBlobPath());
+                } catch (Exception ex) {
+                    log.warn("No fue posible eliminar la fotografía biométrica anterior en Azure tras commit (ruta: {}, causa: {}). La nueva fotografía permanece activa.",
+                            previousPhoto.getBlobPath(), ex.getClass().getSimpleName());
+                }
+            };
+
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        cleanupTask.run();
+                    }
+                });
+            } else {
+                cleanupTask.run();
             }
         });
 

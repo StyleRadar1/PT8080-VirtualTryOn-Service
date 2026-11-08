@@ -105,8 +105,9 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         if (storageBaseUrl == null || storageBaseUrl.isBlank()) {
             throw new IllegalStateException("AZURE_STORAGE_BASE_URL es obligatoria y debe configurarse por variables de entorno");
         }
-        if (!storageBaseUrl.startsWith("https://") && !storageBaseUrl.startsWith("http://")) {
-            throw new IllegalStateException("AZURE_STORAGE_BASE_URL debe iniciar con protocolo http:// o https://");
+        if (!storageBaseUrl.startsWith("https://")) {
+            throw new IllegalStateException(
+                    "AZURE_STORAGE_BASE_URL debe iniciar con protocolo seguro https:// para garantizar el cifrado en tránsito de datos biométricos");
         }
         if (containerName == null || containerName.isBlank()) {
             throw new IllegalStateException("AZURE_STORAGE_CONTAINER es obligatorio");
@@ -135,6 +136,7 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         String blobName = userId.value() + "/silhouette-" + UUID.randomUUID() + "." + extension;
         String writeUrl = buildWriteSignedBlobUrl(blobName);
         SasSignedUrl readOnlySignedUrl = generateReadOnlySignedUrl(blobName);
+        boolean uploadSucceeded = false;
 
         try {
             restClient.put()
@@ -145,10 +147,12 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                     .body(photoBytes)
                     .retrieve()
                     .toBodilessEntity();
+            uploadSucceeded = true;
 
             // Verificación inmediata de lectura real mediante el token SAS por recurso generado
             Optional<byte[]> verifiedBytes = retrieveBlobBytes(readOnlySignedUrl.value());
             if (verifiedBytes.isEmpty()) {
+                compensateOrphanedBlob(blobName);
                 throw new IllegalStateException("La verificación de lectura del archivo en Azure Blob Storage no retornó contenido");
             }
 
@@ -156,9 +160,28 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                     containerName, blobName);
             return blobName;
         } catch (RestClientException ex) {
+            if (uploadSucceeded) {
+                compensateOrphanedBlob(blobName);
+            }
             log.error("Error al almacenar fotografía biométrica en Azure Blob Storage (ruta: {}/{}, causa: {})",
                     containerName, blobName, ex.getClass().getSimpleName());
             throw new IllegalStateException("No fue posible almacenar la fotografía biométrica en Azure Blob Storage", ex);
+        }
+    }
+
+    private void compensateOrphanedBlob(String blobName) {
+        try {
+            String deleteTargetUrl = buildDeleteSignedBlobUrl(blobName);
+            restClient.delete()
+                    .uri(URI.create(deleteTargetUrl))
+                    .header(HEADER_MS_VERSION, apiVersion)
+                    .header(HEADER_DELETE_SNAPSHOTS, "include")
+                    .retrieve()
+                    .toBodilessEntity();
+            log.info("Compensación ejecutada: archivo huérfano eliminado de Azure Blob Storage (blob: {})", blobName);
+        } catch (Exception ex) {
+            log.warn("Fallo en compensación de archivo huérfano en Azure (blob: {}, causa: {})",
+                    blobName, ex.getClass().getSimpleName());
         }
     }
 
