@@ -29,7 +29,7 @@ public class OpenApiConfig {
                 .info(new Info()
                         .title("STYLE RADAR · PT8080-VirtualTryOn-Service API")
                         .version("v1.0.0")
-                        .description("API REST oficial del microservicio de Probador Virtual con IA (ms-probador-virtual · Puerto 8092).\n\n" +
+                        .description("API REST oficial del microservicio de Probador Virtual con IA (ms-probador-virtual · Puerto 8500).\n\n" +
                                 "**Squad Portal8080 (DOSW 2026)**.\n\n" +
                                 "Responsable de la orquestación asíncrona de ensayos de prendas mediante modelos generativos " +
                                 "(Virtual Try-On), control estricto de cuotas mensuales de usuario y cumplimiento riguroso de " +
@@ -43,10 +43,10 @@ public class OpenApiConfig {
                                 .url("https://www.apache.org/licenses/LICENSE-2.0.html")))
                 .servers(List.of(
                         new Server()
-                                .url("http://localhost:8092")
+                                .url("http://localhost:8500")
                                 .description("Servidor Local de Desarrollo (Acceso Directo)"),
                         new Server()
-                                .url("http://localhost:8080/api/v1/probador")
+                                .url("http://localhost:8080/api/v1/try-on")
                                 .description("Acceso a través del API Gateway Central")
                 ))
                 .addSecurityItem(new SecurityRequirement().addList(SECURITY_SCHEME_NAME))

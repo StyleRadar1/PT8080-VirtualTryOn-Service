@@ -34,7 +34,7 @@
 
   <p align="center">
     <img src="https://img.shields.io/badge/BOUNDED_CONTEXT-VIRTUAL__TRY__ON-12063A?style=for-the-badge" alt="Context" />
-    <img src="https://img.shields.io/badge/PUERTO_OFICIAL-8092-5600EF?style=for-the-badge" alt="Port" />
+    <img src="https://img.shields.io/badge/PUERTO_OFICIAL-8500-5600EF?style=for-the-badge" alt="Port" />
     <img src="https://img.shields.io/badge/ARQUITECTURA-HEXAGONAL-16A34A?style=for-the-badge" alt="Hexagonal" />
     <img src="https://img.shields.io/badge/SQUAD-PORTAL8080-12063A?style=for-the-badge" alt="Squad" />
   </p>
@@ -101,7 +101,7 @@
 
 * **Identificador de Servicio:** `PT8080-VirtualTryOn-Service` (`ms-probador-virtual`)
 * **Paquete Arquitectónico:** Paquete 5: Experiencia y Probador Virtual AI
-* **Puerto de Escucha Oficial:** `8092` (asignado en la matriz sin colisiones de StyleRadar)
+* **Puerto de Escucha Oficial:** `8500` (asignado en la matriz sin colisiones de StyleRadar)
 * **Base de Datos Asignada:** `PostgreSQL 16` (`probador_db` en puerto host `5442`), aislada bajo el patrón *Database-per-Service*.
 * **Caché en Memoria:** `Redis 7.2` (puerto host `6389`) para control de cuotas y limitación de tasa.
 * **Bounded Context:** `Virtual Try-On (Probador Virtual con IA)`
@@ -114,7 +114,7 @@ Este microservicio encapsula exclusivamente la lógica de negocio correspondient
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
 | • Orquesta la solicitud y ejecución asíncrona de pruebas virtuales de prendas sobre fotografías de usuarios (`SR-RF-23`, `SR-RF-24`, `SR-RF-25`).                              | • NO autentica usuarios ni emite tokens JWT (delegado a `ms-auth` en `:8081`).                                                           |
 | • Valida el consentimiento explícito y la autorización de tratamiento de datos biométricos según Ley 1581 de 2012 / Habeas Data antes de procesar cualquier imagen (`SR-RNF-02`). | • NO gestiona el catálogo maestro de prendas ni administra tiendas (delegado a `ms-catalogo` en `:8084` e `ms-tiendas` en `:8082`). |
-| • Gestiona y hace cumplir la cuota diaria de pruebas virtuales por usuario (3 pruebas diarias para usuarios estándar) con control en Redis y PostgreSQL.                               | • NO gestiona transacciones monetarias ni pasarelas de cobro (delegado a `ms-pagos` en `:8090`).                                         |
+| • Gestiona y hace cumplir la cuota mensual y diaria de pruebas virtuales por usuario (`monthly_limit`, plan estándar vs. Radar+) con control en Redis y PostgreSQL.                     | • NO gestiona transacciones monetarias ni pasarelas de cobro (delegado a `ms-pagos` en `:8090`).                                         |
 | • Consulta y entrega los resultados de inferencia generados (URLs firmadas seguras de imagen renderizada con caducidad) (`SR-RF-26`).                                                 | • NO envía correos, SMS ni notificaciones push directas al usuario final (delegado a `ms-notificaciones` en `:8091`).                   |
 | • Garantiza el derecho al olvido y la eliminación definitiva de fotografías de silueta y resultados renderizados a solicitud del usuario (`SR-RF-27`).                              | • NO accede directamente a bases de datos de otros microservicios bajo el principio *Database-per-Service*.                                |
 
@@ -131,6 +131,7 @@ Este microservicio da vida al arquetipo **Aura (Futuro)**, la embajadora de inno
 Desarrollado y mantenido por el **Squad Portal8080 (`PT8080`)** para la asignatura DOSW 2026.
 
 <div align="center">
+  <img src="docs/images/portal8080-bus-logo.png" alt="Logo Oficial Squad Portal8080" width="220" style="border-radius: 10px; margin-bottom: 12px;" />
 
 | Rol | Nombre Completo | Usuario GitHub |
 | :---: | :---: | :---: |
@@ -157,15 +158,15 @@ El microservicio implementa estrictamente **Arquitectura Hexagonal (Puertos y Ad
   <img src="docs/uml/CompGeneral.png" alt="Diagrama de Componentes General StyleRadar" width="100%" />
 </div>
 
-Este diagrama sirve para ubicar nuestro servicio dentro de todo StyleRadar. Todo lo que llega del Frontend pasa primero por el API Gateway. Desde ahí se reparte a los microservicios, que están agrupados en los mismos paquetes de la distribución oficial (Identidad y Tiendas; Catálogo; Pagos y Suscripciones; Notificaciones y Chat; Probador Virtual y Comunidad). En el paquete 5 está el nuestro, `ms-probador-virtual` en el puerto 8092. Nos importaba dejar claras tres cosas. La primera es que cada servicio tiene su propia base de datos (`probador_db` es solo nuestra y ningún otro servicio la toca), porque así no quedamos amarrados al esquema de otro equipo. La segunda es que la comunicación entre servicios va por RabbitMQ y no por llamadas directas: si el catálogo o las notificaciones se caen, el probador sigue funcionando y los mensajes quedan en cola. La tercera es que los proveedores externos (FASHN AI, Azure Blob Storage, Mercado Pago, correo) quedan separados en su propia capa, para que se vea qué depende de internet y qué no.
+Este diagrama sirve para ubicar nuestro servicio dentro de todo StyleRadar. Todo lo que llega del Frontend pasa primero por el API Gateway. Desde ahí se reparte a los microservicios, que están agrupados en los mismos paquetes de la distribución oficial (Identidad y Tiendas; Catálogo; Pagos y Suscripciones; Notificaciones y Chat; Probador Virtual y Comunidad). En el paquete 5 está el nuestro, `ms-probador-virtual` en el puerto 8500. Nos importaba dejar claras tres cosas. La primera es que cada servicio tiene su propia base de datos (`probador_db` es solo nuestra y ningún otro servicio la toca), porque así no quedamos amarrados al esquema de otro equipo. La segunda es que la comunicación entre servicios va por RabbitMQ y no por llamadas directas: si el catálogo o las notificaciones se caen, el probador sigue funcionando y los mensajes quedan en cola. La tercera es que los proveedores externos (FASHN AI, Azure Blob Storage, Mercado Pago, correo) quedan separados en su propia capa, para que se vea qué depende de internet y qué no.
 
 #### 3.2 Diagrama de Componentes Específico (Arquitectura Hexagonal PT8080)
 
 <div align="center">
-  <img src="docs/uml/CompEspecificTryOnVirtual.png" alt="Diagrama de Componentes Específico Probador Virtual" width="100%" />
+  <img src="docs/uml/DiagramEspecificComponent.png" alt="Diagrama de Componentes Específico Probador Virtual" width="100%" />
 </div>
 
-Aquí entramos al servicio por dentro y se ve cómo aplicamos puertos y adaptadores. Se lee de izquierda a derecha. La petición entra por el Gateway y llega a los adaptadores de entrada (`VirtualTryOnController` y `BiometricConsentController`). El `Mapper` convierte los DTO en objetos de dominio, y de ahí se llama a los puertos de entrada (`CrearTryOnJobInPort`, `ConsultarEstadoJobInPort`, `RegistrarConsentimientoInPort`), que implementan los servicios de aplicación. Antes de crear un job, `CrearTryOnJobService` pasa la solicitud por la cadena de validadores (consentimiento Habeas Data, cuota mensual, categoría de la prenda y formato/resolución de la imagen). Así, si algo falla, se corta temprano y no gastamos créditos de la IA. Por el lado derecho están los adaptadores de salida: `FashnAiClientAdapter` habla con la API de FASHN, `AzureBlobStorageAdapter` guarda la foto, y el adaptador JPA persiste en PostgreSQL 16 a través del `MapperOut`. Abajo está `TryOnEventPublisherAdapter`, que publica en RabbitMQ para que Catálogo, Notificaciones y Auditoría se enteren del resultado. La gracia de este diseño es que el dominio no conoce ni Spring, ni FASHN, ni Azure. Si mañana toca cambiar de proveedor de IA, solo se cambia un adaptador.
+Aquí entramos al servicio por dentro y se ve cómo aplicamos puertos y adaptadores. Se lee de izquierda a derecha. La petición entra por el Gateway y llega a los adaptadores de entrada (`VirtualTryOnRestController`, `BiometricConsentController` y `TryOnEventListenerAdapter`). El `MapperIn` (`VirtualTryOnDtoMapper`) convierte los DTO en objetos de dominio, y de ahí se llama a los puertos de entrada (`CreateTryOnJobUseCase`, `GetJobStatusUseCase`, `GetJobHistoryUseCase`, `GetUserQuotaUseCase` y `DeleteBiometricPhotoUseCase`), que son implementados por los servicios de aplicación (`CreateTryOnJobService`, `QueryTryOnJobsService` y `DeleteBiometricDataService`). Antes de crear un job, `CreateTryOnJobService` pasa la solicitud por la cadena de 5 validadores de dominio (`BiometricConsentValidator`, `MonthlyUserQuotaValidator`, `GarmentCategoryValidator`, `ImageFormatResolutionValidator` y `PoseReferenceValidator`). Así, si algo falla, se corta temprano y no gastamos créditos de la IA. Por el lado derecho están los adaptadores de salida: `FashnAiRestClientAdapter` habla con la API de FASHN, `AzureBlobStorageAdapter` guarda la foto, `RedisQuotaCacheAdapter` controla las cuotas en caché, y `TryOnRepositoryAdapter` persiste en PostgreSQL 16 a través del `MapperOut` (`TryOnPersistenceMapper`) y `TryOnJpaRepository`. Abajo está `TryOnEventPublisherAdapter`, que publica de forma asíncrona en el broker RabbitMQ 3.13 (`q.tryon.* + DLQ`) para que Catálogo (`Catalog & Stores Service`), Notificaciones (`Notifications & Email Service`) y Auditoría (`Audit & Analytics Service`) consuman los eventos del resultado sin acoplamiento directo.
 
 #### 3.3 Diagrama de Clases del Modelo de Dominio
 
@@ -173,19 +174,19 @@ Aquí entramos al servicio por dentro y se ve cómo aplicamos puertos y adaptado
   <img src="docs/uml/DiagramClassTryOnVirtual.png" alt="Diagrama de Clases del Dominio Probador Virtual" width="100%" />
 </div>
 
-En el diagrama de clases dejamos el modelo de dominio y los patrones que usamos. El centro es `TryOnJob`, que representa una prueba virtual. Tiene su ciclo de vida con el enum `EstadoJob` (QUEUED -> PROCESSING -> COMPLETED / FAILED / CANCELLED) y métodos como `iniciarInferencia()`, `completar()` y `purgarDatosBiometricos()`. Alrededor están `CuotaIaUsuario`, que controla cuántas pruebas lleva el usuario en el mes y si es Radar+; `ConsentimientoBiometrico`, sin el cual no se puede generar ningún job por la Ley 1581; y `OutfitProbador`, para guardar los resultados que le gustaron al usuario. Para no pasar UUID sueltos por todo el código usamos value objects (`UsuarioId`, `PrendaId`, `PeriodoMes`, `SasSignedUrl`). En la parte de abajo están los tres patrones:
+En el diagrama de clases dejamos el modelo de dominio y los patrones que usamos (código e identificadores técnicos en inglés y notas/comentarios en español). El centro es `TryOnJob`, que representa una prueba virtual. Tiene su ciclo de vida con el enum `JobStatus` (`QUEUED` -> `PROCESSING` -> `COMPLETED` / `FAILED` / `CANCELLED`) y métodos como `startAiProcessing()`, `complete()`, `markFailed()` y `purgeBiometricPhoto()`. Alrededor están `UserQuota`, que controla cuántas pruebas lleva el usuario en el mes y si es Radar+; `BiometricConsent`, sin el cual no se puede generar ningún job por la Ley 1581; y `TryOnOutfit`, para guardar los resultados que le gustaron al usuario (`finalRenderUrl: SasSignedUrl`). Para no pasar UUID o URLs sueltas por todo el código usamos value objects (`UserId`, `GarmentId`, `BillingPeriod`, `SasSignedUrl`). En la parte de abajo están los tres patrones:
 
-- **Chain of Responsibility:** cada validador hace una sola cosa y le pasa el contexto al siguiente, así agregar una validación nueva no obliga a tocar las demás.
+- **Chain of Responsibility:** la interfaz `TryOnValidatorHandler` y la clase base `AbstractTryOnValidatorHandler` encadenan los 5 validadores (`BiometricConsentValidator`, `MonthlyUserQuotaValidator`, `GarmentCategoryValidator`, `ImageFormatResolutionValidator` y `PoseReferenceValidator`) operando sobre `TryOnValidationContext`. Cada validador hace una sola cosa y le pasa el contexto al siguiente, así agregar una validación nueva no obliga a tocar las demás.
 - **Strategy:** `AiInferenceStrategy` tiene dos implementaciones, `FashnAiStrategy` (la real) y `MockAiStrategy` (simulada, sin costo). Con eso corremos las pruebas y el pipeline sin gastar créditos.
 - **Builder:** `TryOnJobBuilder` arma el job paso a paso y evita constructores con muchos parámetros que se confunden fácil.
 
-#### 3.4 Diagrama Entidad-Relación (`probador_db` · PostgreSQL 16)
+#### 3.4 Diagrama de Base de Datos (`probador_db` · PostgreSQL 16, Redis 7.2 y Azure Blob Storage)
 
 <div align="center">
   <img src="docs/uml/DiagramBDTryOnVirtual.png" alt="Diagrama Entidad Relación probador_db" width="100%" />
 </div>
 
-Este es el modelo físico de `probador_db`, siguiendo el patrón database-per-service. La tabla principal es `try_on_jobs`: ahí se guarda cada prueba con su estado, la ruta del blob, la URL SAS del resultado, el proveedor que la procesó, la duración de la inferencia y un campo `eliminado_fisicamente` para dejar constancia de que la foto se borró. `usuario_id` y `prenda_id` aparecen como FK externas, pero no tienen llave foránea real porque esos datos son de otros microservicios (usuarios y catálogo); solo guardamos el UUID. `cuotas_ia_usuario` lleva el conteo mensual por usuario y `consentimientos_biometricos` guarda la versión de términos aceptada, la fecha, la IP y una posible revocación. Eso es lo que nos pide la Ley 1581 para poder demostrar el consentimiento. `outfits_probador` cuelga de un job (1 a 0..N). `auditoria_jobs_log` registra cada cambio de estado (anterior -> nuevo con motivo), lo que nos sirve para depurar cuando un job falla y para tener trazabilidad. Usamos UUID en casi todas las llaves para no exponer IDs secuenciales y `TIMESTAMPTZ` para no tener líos de zona horaria.
+Este es el modelo físico de persistencia de nuestro microservicio, siguiendo el patrón database-per-service con todas las tablas y columnas en `snake_case` en inglés. En **PostgreSQL 16 (`probador_db`)**, la tabla principal es `try_on_jobs`: ahí se guarda cada prueba con su estado (`status`), la URL firmada del blob (`photo_url: TEXT`), la URL SAS del resultado (`result_image_url: TEXT`), el proveedor que la procesó (`ai_provider`), la duración de la inferencia (`execution_time_ms`) y el campo `photo_purged` para dejar constancia de que la foto se borró. `user_id` y `garment_id` aparecen como FK lógicas externas sin llave foránea física porque esos datos pertenecen a otros microservicios (`ms-usuarios` y `ms-item-catalogo`); solo guardamos el UUID. `user_quotas` lleva el conteo mensual por usuario (`monthly_limit`, `used_count`, `billing_period`, `is_radar_plus`) con restricción única compuesta `UNIQUE (user_id, billing_period)`, y `biometric_consents` guarda la versión de términos aceptada (`terms_version`), las finalidades (`purposes`), las fechas (`consented_at`, `revoked_at`) y la IP (`ip_address`), tal como exige la Ley 1581 para demostrar el consentimiento. `try_on_outfits` cuelga de un job (1 a 0..1, guardando `final_render_url: TEXT`) y `job_audit_logs` registra cada cambio de estado (`previous_status` -> `new_status` con `transition_reason`), lo que sirve para depurar cuando un job falla y mantener trazabilidad completa. Usamos UUID en las llaves de dominio y `TIMESTAMPTZ` en UTC. Al lado derecho del diagrama dejamos también los otros dos motores que apoyan a la base relacional: **Redis 7.2** (para consultar rápido el contador de cuotas mensuales/diarias, el semáforo de jobs concurrentes y las llaves de idempotencia sin golpear PostgreSQL en cada petición) y **Azure Blob Storage** (donde viven los archivos binarios reales en los contenedores privados `biometric-silhouettes` y `tryon-renders`, mientras que en PostgreSQL solo guardamos las URLs firmadas con SAS Token tipo `TEXT`).
 
 ### Estructura Oficial de Paquetes en `src/main/java/edu/dosw/styleradar/virtualtryon/`
 
@@ -193,32 +194,32 @@ Este es el modelo físico de `probador_db`, siguiendo el patrón database-per-se
 src/main/java/edu/dosw/styleradar/virtualtryon/
 ├── VirtualTryOnApplication.java                     <-- Punto de entrada Spring Boot
 ├── domain/                                          <-- NÚCLEO DE DOMINIO (Java Puro, cero dependencias)
-│   ├── model/                                       <-- Entidades y Agregados raíz (TryOnJob, CuotaUsuario)
-│   ├── valueobject/                                 <-- Value Objects inmutables (JobId, UsuarioId, CategoriaPrenda)
+│   ├── model/                                       <-- Entidades y Agregados raíz (TryOnJob, UserQuota, BiometricConsent, TryOnOutfit)
+│   ├── valueobject/                                 <-- Value Objects inmutables (UserId, GarmentId, BillingPeriod, SasSignedUrl)
 │   ├── port/
-│   │   ├── in/                                      <-- Puertos de entrada de dominio
+│   │   ├── in/                                      <-- Puertos de entrada de dominio (CreateTryOnJobUseCase, GetJobStatusUseCase, etc.)
 │   │   └── out/                                     <-- Puertos de salida de dominio
-│   ├── exception/                                   <-- Excepciones de negocio (ConsentRequired, QuotaExceeded)
-│   └── event/                                       <-- Eventos de dominio puros
+│   ├── exception/                                   <-- Excepciones de negocio (ConsentRequiredException, QuotaExceededException, etc.)
+│   └── event/                                       <-- Eventos de dominio puros (TryOnJobDomainEvent)
 ├── application/                                     <-- CAPA DE APLICACIÓN (Orquestación de Casos de Uso)
 │   ├── port/
 │   │   ├── in/                                      <-- Input Ports (Casos de uso consumidos por adaptadores)
 │   │   └── out/                                     <-- Output Ports (Contratos para repositorios, broker, IA)
-│   ├── usecase/                                     <-- Implementación de casos de uso (IniciarTryOn, ConsultarJob)
-│   ├── service/                                     <-- Servicios de aplicación transversales
+│   ├── usecase/                                     <-- Implementación de casos de uso
+│   ├── service/                                     <-- Servicios de aplicación (CreateTryOnJobService, QueryTryOnJobsService, DeleteBiometricDataService)
 │   └── dto/                                         <-- Data Transfer Objects (Java Records inmutables)
-│       ├── request/                                 <-- IniciarTryOnRequest
-│       └── response/                                <-- TryOnJobResponse, CuotasUsuarioResponse
+│       ├── request/                                 <-- StartTryOnRequest
+│       └── response/                                <-- TryOnJobResponse, UserQuotaResponse
 └── infrastructure/                                  <-- CAPA DE INFRAESTRUCTURA (Detalles tecnológicos)
     ├── adapter/
     │   ├── in/
     │   │   ├── rest/                                <-- Controladores Spring REST (VirtualTryOnRestController)
     │   │   │   └── doc/                             <-- Contratos OpenAPI / Swagger (VirtualTryOnOpenApiDoc)
-    │   │   └── event/                               <-- Consumidores AMQP RabbitMQ
+    │   │   └── event/                               <-- Consumidores AMQP RabbitMQ (TryOnEventListenerAdapter)
     │   └── out/
-    │       ├── persistence/                         <-- Adaptadores Spring Data JPA y repositorios PostgreSQL
-    │       ├── client/                              <-- Clientes WebClient hacia motor externo FASHN AI
-    │       └── event/                               <-- Productores de eventos RabbitMQ (AmqpTemplate)
+    │       ├── persistence/                         <-- Adaptadores Spring Data JPA (TryOnRepositoryAdapter, TryOnPersistenceMapper, TryOnJpaRepository)
+    │       ├── client/                              <-- Clientes WebClient hacia motor externo FASHN AI (FashnAiRestClientAdapter)
+    │       └── event/                               <-- Productores de eventos RabbitMQ (TryOnEventPublisherAdapter)
     ├── config/                                      <-- Beans de configuración (OpenApiConfig, RabbitConfig, RedisConfig)
     └── exception/                                   <-- Manejo global de excepciones RFC 7807 (GlobalExceptionHandler)
 ```
@@ -235,15 +236,15 @@ La documentación interactiva OpenAPI 3.0 y los contratos de ejecución se encue
 
 | Entorno                          | Estado | Propósito                              | URL Base del Servicio                                 | Swagger OpenAPI UI                                                                        | Health Check                                                                             |
 | :------------------------------- | :----: | :-------------------------------------- | :---------------------------------------------------- | :---------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------- |
-| **Desarrollo Local (DEV)** | Active | Entorno local de desarrollo y Docker Compose (Sprint 1) | `http://localhost:8092`                             | [Swagger UI Local](http://localhost:8092/swagger-ui/index.html)                            | [`/actuator/health`](http://localhost:8092/actuator/health)                             |
+| **Desarrollo Local (DEV)** | Active | Entorno local de desarrollo y Docker Compose (Sprint 1) | `http://localhost:8500`                             | [Swagger UI Local](http://localhost:8500/swagger-ui/index.html)                            | [`/actuator/health`](http://localhost:8500/actuator/health)                             |
 | **Calidad / Pruebas (QA)** | *Planeado (Sprint 2)* | Pruebas integradas de Sprint y QA en nube       | `https://styleradar-backend-qa.azurewebsites.net` *(Por aprovisionar)*   | *Pendiente de despliegue en nube (Sprint 2)*     | *Pendiente de despliegue en nube (Sprint 2)*   |
 | **Producción (PROD)**     | *Planeado (Sprint 2)* | Despliegue productivo de StyleRadar en nube     | `https://styleradar-backend-prod.azurewebsites.net` *(Por aprovisionar)* | *Pendiente de despliegue en nube (Sprint 2)* | *Pendiente de despliegue en nube (Sprint 2)* |
 
-* **Especificación OpenAPI (JSON Contrato):** `http://localhost:8092/v3/api-docs`
+* **Especificación OpenAPI (JSON Contrato):** `http://localhost:8500/v3/api-docs`
 
 <div align="center">
   <img src="docs/images/SwaggerEvidence.png" alt="Evidencia 01 - Swagger UI OpenAPI Activa" width="100%" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
-  <p><sub><b>Figura 4.1:</b> Documentación interactiva Swagger OpenAPI UI activa en <code>http://localhost:8092/swagger-ui/index.html</code> evidenciando contratos REST de orquestación VTON, endpoints de cuotas, privacidad y autenticación Bearer JWT.</sub></p>
+  <p><sub><b>Figura 4.1:</b> Documentación interactiva Swagger OpenAPI UI activa en <code>http://localhost:8500/swagger-ui/index.html</code> evidenciando contratos REST de orquestación VTON, endpoints de cuotas, privacidad y autenticación Bearer JWT.</sub></p>
 </div>
 
 ### Tabla de Endpoints Expuestos
@@ -251,9 +252,9 @@ La documentación interactiva OpenAPI 3.0 y los contratos de ejecución se encue
 |  Método  | Endpoint                     | Descripción                                                 | Rol Requerido |           Códigos HTTP           |
 | :--------: | :--------------------------- | :----------------------------------------------------------- | :------------ | :--------------------------------: |
 |  `POST`  | `/api/v1/try-on/jobs`      | Inicia una solicitud de prueba virtual VTON asíncrona       | Autenticado   | `202`, `400`, `422`, `429` |
-|  `GET`  | `/api/v1/try-on/jobs/{id}` | Consulta el estado o resultado renderizado del job           | Autenticado   |          `200`, `404`          |
-| `DELETE` | `/api/v1/try-on/jobs/{id}` | Elimina silueta y resultado por derecho al olvido (Ley 1581) | Autenticado   |          `204`, `404`          |
-|  `GET`  | `/api/v1/try-on/cuotas`    | Consulta cuotas diarias disponibles y consumidas             | Autenticado   |              `200`              |
+|  `GET`  | `/api/v1/try-on/jobs/{jobId}` | Consulta el estado o resultado renderizado del job           | Autenticado   |          `200`, `404`          |
+| `DELETE` | `/api/v1/try-on/personal-photos/{jobId}` | Elimina silueta y resultado por derecho al olvido (Ley 1581) | Autenticado   |          `204`, `404`          |
+|  `GET`  | `/api/v1/try-on/quotas`    | Consulta cuotas disponibles y consumidas del usuario         | Autenticado   |              `200`              |
 |  `GET`  | `/actuator/health`         | Health Check y estado operativo de BD, Redis y RabbitMQ      | Público      |              `200`              |
 
 <details>
@@ -264,11 +265,14 @@ La documentación interactiva OpenAPI 3.0 y los contratos de ejecución se encue
 #### Ejemplo 1: Iniciar Prueba Virtual (`POST /api/v1/try-on/jobs`)
 
 ```bash
-curl -X POST "http://localhost:8092/api/v1/try-on/jobs"   -H "Content-Type: application/json"   -H "Authorization: Bearer <JWT_TOKEN>"   -d '{
-    "fotoSiluetaUrl": "https://storage.styleradar.co/silhouettes/user-123.jpg",
-    "prendaId": "018e3a2b-1111-7000-8000-000000000001",
-    "categoria": "SUPERIOR",
-    "consentimientoBiometrico": true
+curl -X POST "http://localhost:8500/api/v1/try-on/jobs" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <JWT_TOKEN>" \
+  -d '{
+    "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "garmentId": "f1e2d3c4-b5a6-7890-1234-567890abcdef",
+    "photoUrl": "https://styleradarblob.blob.core.windows.net/photos/user-pose-01.jpg",
+    "biometricConsent": true
   }'
 ```
 
@@ -279,28 +283,31 @@ curl -X POST "http://localhost:8092/api/v1/try-on/jobs"   -H "Content-Type: appl
 ```json
 {
   "jobId": "018e3a2b-3333-7000-8000-000000000001",
-  "estado": "EN_PROCESO",
-  "mensaje": "Solicitud de prueba virtual aceptada para procesamiento asíncrono.",
-  "resultadoUrl": null,
-  "fechaCreacion": "2026-11-02T12:00:00Z"
+  "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "garmentId": "f1e2d3c4-b5a6-7890-1234-567890abcdef",
+  "status": "QUEUED",
+  "resultImageUrl": null,
+  "executionTimeMs": null,
+  "createdAt": "2026-11-02T12:00:00Z"
 }
 ```
 
-#### Ejemplo 2: Consultar Cuotas Diarias (`GET /api/v1/try-on/cuotas`)
+#### Ejemplo 2: Consultar Cuotas del Usuario (`GET /api/v1/try-on/quotas`)
 
 ```bash
-curl -X GET "http://localhost:8092/api/v1/try-on/cuotas"   -H "Authorization: Bearer <JWT_TOKEN>"
+curl -X GET "http://localhost:8500/api/v1/try-on/quotas?userId=a1b2c3d4-e5f6-7890-abcd-ef1234567890" \
+  -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
 ##### Respuesta (`200 OK`):
 
 ```json
 {
-  "usuarioId": "018e3a2b-9999-7000-8000-000000000001",
-  "cuotaMaximaDiaria": 3,
-  "cuotasConsumidasHoy": 1,
-  "cuotasDisponibles": 2,
-  "esUsuarioPremium": false
+  "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "monthlyLimit": 10,
+  "usedCount": 3,
+  "remainingCount": 7,
+  "billingPeriod": "2026-11"
 }
 ```
 
@@ -308,10 +315,10 @@ curl -X GET "http://localhost:8092/api/v1/try-on/cuotas"   -H "Authorization: Be
 
 ```json
 {
-  "type": "https://styleradar.co/errors/quota-exceeded",
+  "type": "https://styleradar.edu.dosw/errors/quota-exceeded",
   "title": "Cuota de Pruebas Excedida",
   "status": 429,
-  "detail": "El usuario ha alcanzado el límite diario de 3 pruebas virtuales gratuitas.",
+  "detail": "El usuario ha alcanzado el límite de pruebas virtuales permitido en su plan.",
   "instance": "/api/v1/try-on/jobs"
 }
 ```
@@ -327,19 +334,19 @@ curl -X GET "http://localhost:8092/api/v1/try-on/cuotas"   -H "Authorization: Be
 La comunicación asíncrona entre microservicios se realiza a través de **RabbitMQ 3.13** utilizando Topic Exchanges durables.
 
 * **Exchange Principal de Dominio:** `styleradar.events` (`topic`, durable)
-* **Exchange de Try-On:** `styleradar.tryon.exchange` (`topic`, durable)
-* **Dead Letter Exchange (DLX):** `styleradar.dlx`
+* **Exchange de Try-On:** `styleradar.tryon.events` (`topic`, durable)
+* **Colas Asíncronas y DLQ:** `q.tryon.*` + `tryon.dlq` (`styleradar.dlx`)
 
 ### Matriz de Eventos AMQP
 
 |       Tipo       | Routing Key                 | Cola (Queue)                       | Microservicio Emisor / Receptor                | Cuándo se Dispara / Acción                                                          |
 | :---------------: | :-------------------------- | :--------------------------------- | :--------------------------------------------- | :------------------------------------------------------------------------------------ |
-| **PUBLICA** | `tryon.job.created`       | N/A (Exchange)                     | `ms-probador-virtual` &rarr; Bus             | Se publica cuando un job de prueba virtual es encolado satisfactoriamente.            |
-| **PUBLICA** | `tryon.job.completed`     | N/A (Exchange)                     | `ms-probador-virtual` &rarr; Bus             | Se emite cuando el motor de IA finaliza la renderización de la imagen.               |
-| **PUBLICA** | `tryon.job.failed`        | N/A (Exchange)                     | `ms-probador-virtual` &rarr; Bus             | Se emite si la silueta no cumple parámetros antropométricos o falla el motor de IA. |
-| **PUBLICA** | `user.photo.deleted`      | N/A (Exchange)                     | `ms-probador-virtual` &rarr; Bus             | Notifica a storage y auditoría la eliminación irreversible de la foto biométrica.  |
-| **CONSUME** | `catalog.garment.updated` | `q.virtualtryon.garment-updated` | `ms-catalogo` &rarr; `ms-probador-virtual` | Invalida cachés de imágenes de prendas modificadas o descontinuadas.                |
-| **CONSUME** | `user.account.deleted`    | `q.virtualtryon.user-deleted`    | `ms-auth` &rarr; `ms-probador-virtual`     | Purga de forma inmediata todas las siluetas e históricos de jobs del usuario.        |
+| **PUBLICA** | `tryon.job.created`       | `q.tryon.jobs`                     | `ms-probador-virtual` &rarr; Bus             | Se publica cuando un job de prueba virtual es encolado satisfactoriamente.            |
+| **PUBLICA** | `tryon.job.completed`     | `q.tryon.completed`                | `ms-probador-virtual` &rarr; Bus             | Se emite cuando el motor de IA finaliza la renderización de la imagen.               |
+| **PUBLICA** | `tryon.job.failed`        | `q.tryon.failed`                   | `ms-probador-virtual` &rarr; Bus             | Se emite si la silueta no cumple parámetros antropométricos o falla el motor de IA. |
+| **PUBLICA** | `user.photo.deleted`      | `q.tryon.privacy`                  | `ms-probador-virtual` &rarr; Bus             | Notifica a storage y auditoría la eliminación irreversible de la foto biométrica.  |
+| **CONSUME** | `catalog.garment.updated` | `q.tryon.garment-updated`          | `ms-item-catalogo` &rarr; `ms-probador-virtual` | Invalida cachés de imágenes de prendas modificadas o descontinuadas.                |
+| **CONSUME** | `user.account.deleted`    | `q.tryon.user-deleted`             | `ms-auth` &rarr; `ms-probador-virtual`     | Purga de forma inmediata todas las siluetas e históricos de jobs del usuario.        |
 
 <details>
 <summary><b>Click para ver Esquema JSON del Evento Publicado (con Idempotencia y UUIDv7)</b></summary>
@@ -355,11 +362,11 @@ La comunicación asíncrona entre microservicios se realiza a través de **Rabbi
   "correlationId": "corr-uuid-7777",
   "data": {
     "jobId": "018e3a2b-3333-7000-8000-000000000001",
-    "usuarioId": "018e3a2b-9999-7000-8000-000000000001",
-    "prendaId": "018e3a2b-1111-7000-8000-000000000001",
-    "resultadoUrl": "https://storage.styleradar.co/tryon-results/render-018e3a2b.jpg",
-    "estado": "COMPLETADO",
-    "tiempoInferenciaMs": 14200
+    "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "garmentId": "f1e2d3c4-b5a6-7890-1234-567890abcdef",
+    "resultImageUrl": "https://styleradarblob.blob.core.windows.net/renders/render-018e3a2b.jpg",
+    "status": "COMPLETED",
+    "executionTimeMs": 2100
   }
 }
 ```
@@ -380,7 +387,7 @@ El stack tecnológico de `PT8080-VirtualTryOn-Service` cumple con el estándar u
 | **Framework Base**          | Spring Boot                | `3.2.5`  | Ecosistema empresarial con soporte nativo para Spring Data JPA, Web y Spring AMQP.                  |
 | **Base de Datos**           | PostgreSQL                 | `16`     | Integridad transaccional ACID, llaves UUIDv7 e indexación optimizada de jobs e históricos.        |
 | **Control de Esquema**      | Flyway                     | `10.10.0` | Migraciones versionadas reproducibles de base de datos (`V1__init.sql`).                          |
-| **Caché & Cuotas**         | Redis                      | `7.2`    | Gestión atómica en memoria de cuotas diarias por usuario e idempotencia.                          |
+| **Caché & Cuotas**         | Redis                      | `7.2`    | Gestión atómica en memoria de cuotas mensuales/diarias por usuario e idempotencia.                 |
 | **Broker de Eventos**       | RabbitMQ                   | `3.13`   | Protocolo AMQP 0-9-1 para comunicación asíncrona desacoplada mediante Topic Exchanges.            |
 | **Cliente HTTP IA**         | Spring WebFlux             | `3.2.5`  | `WebClient` reactivo para consumo no bloqueante de la API externa de inferencia VTON (FASHN AI).  |
 | **Documentación API**      | SpringDoc OpenAPI          | `2.5.0`  | Generación automática de especificación OpenAPI 3.0 y Swagger UI con esquema JWT Bearer.         |
@@ -411,7 +418,7 @@ cd PT8080-VirtualTryOn-Service
 # 2. Levantar la infraestructura auxiliar con Docker Compose (PostgreSQL, Redis, RabbitMQ)
 docker compose up -d postgres redis rabbitmq
 
-# 3. Ejecutar el microservicio localmente en el puerto 8092
+# 3. Ejecutar el microservicio localmente en el puerto 8500
 ./mvnw clean spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
@@ -440,7 +447,7 @@ docker compose down
 
 #### Puertos Expuestos en la Red Docker:
 
-* **Microservicio Virtual Try-On:** `http://localhost:8092`
+* **Microservicio Virtual Try-On:** `http://localhost:8500`
 * **PostgreSQL (probador_db):** `localhost:5442` (mapeado a 5432 interno)
 * **Redis Server:** `localhost:6389` (mapeado a 6379 interno)
 * **RabbitMQ AMQP Broker:** `localhost:5672`
@@ -451,13 +458,13 @@ docker compose down
 ### Comprobación de Salud (Health Check)
 
 ```bash
-curl -s http://localhost:8092/actuator/health
+curl -s http://localhost:8500/actuator/health
 # Esperado: {"status":"UP"}
 ```
 
 <div align="center">
   <img src="docs/images/DockerEvidence.png" alt="Evidencia 02 - Contenedores OCI en Ejecución (docker compose ps)" width="100%" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
-  <p><sub><b>Figura 7.1:</b> Ejecución de <code>docker compose ps</code> verificando los 4 contenedores OCI levantados y en estado saludable (healthy): <code>sr-probador-virtual</code> (:8092), <code>sr-probador-postgres</code> (:5442), <code>sr-probador-redis</code> (:6389) y <code>sr-probador-rabbitmq</code> (:5672/15672).</sub></p>
+  <p><sub><b>Figura 7.1:</b> Ejecución de <code>docker compose ps</code> verificando los 4 contenedores OCI levantados y en estado saludable (healthy): <code>sr-probador-virtual</code> (:8500), <code>sr-probador-postgres</code> (:5442), <code>sr-probador-redis</code> (:6389) y <code>sr-probador-rabbitmq</code> (:5672/15672).</sub></p>
 </div>
 
 ---
@@ -470,7 +477,7 @@ Todas las configuraciones dependientes de entorno se gestionan mediante variable
 
 | Variable                   | Descripción                                 | Valor por Defecto (`dev`)       | Requerido en Prod |
 | :------------------------- | :------------------------------------------- | :-------------------------------- | :---------------: |
-| `SERVER_PORT`            | Puerto HTTP del microservicio                | `8092`                          |        Sí        |
+| `SERVER_PORT`            | Puerto HTTP del microservicio                | `8500`                          |        Sí        |
 | `SPRING_PROFILES_ACTIVE` | Perfil activo de Spring Boot                 | `dev`                           |        Sí        |
 | `DB_HOST`                | Hostname del servidor PostgreSQL             | `localhost`                     |        Sí        |
 | `DB_PORT`                | Puerto de PostgreSQL                         | `5442` (`5432` en docker)     |        Sí        |
@@ -497,9 +504,9 @@ Todas las configuraciones dependientes de entorno se gestionan mediante variable
 ```dotenv
 # ==============================================================================
 # STYLERADAR · VARIABLES DE ENTORNO LOCALES (.env)
-# Microservicio: PT8080-VirtualTryOn-Service (ms-probador-virtual) · Puerto 8092
+# Microservicio: PT8080-VirtualTryOn-Service (ms-probador-virtual) · Puerto 8500
 # ==============================================================================
-SERVER_PORT=8092
+SERVER_PORT=8500
 SPRING_PROFILES_ACTIVE=dev
 
 # Persistencia PostgreSQL (probador_db)
@@ -555,9 +562,9 @@ El proyecto exige una cobertura de código mínima del **85%** verificada autom�
 
 ### Métricas Actuales de Cobertura en el Repositorio (Chassis de Scaffolding)
 
-* **Pruebas Totales Ejecutadas:** 14 pruebas automatizadas.
+* **Pruebas Totales Ejecutadas:** 16 pruebas automatizadas.
 * **Fallos y Errores:** 0 fallos, 0 errores.
-* **Cobertura de Líneas:** **89%** (supera el umbral mínimo del 85%).
+* **Cobertura de Líneas:** **90%** (supera el umbral mínimo del 85%).
 * **Cobertura de Ramas:** **100%**.
 * **Resultado del Build:** `BUILD SUCCESS`.
 
@@ -622,7 +629,7 @@ flowchart LR
 
 <div align="center">
   <img src="docs/images/pipeline-ci-cd.png" alt="Evidencia 04 - Pipeline CI/CD en GitHub Actions" width="100%" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
-  <p><sub><b>Figura 10.1:</b> Ejecución exitosa del pipeline automatizado de CI en GitHub Actions para el Pull Request hacia <code>develop</code> (#1), verificando compilación con JDK 21 Temurin, suite completa de 14 pruebas unitarias/integración, Quality Gate JaCoCo al 90% y construcción de la imagen OCI multi-stage en Docker.</sub></p>
+  <p><sub><b>Figura 10.1:</b> Ejecución exitosa del pipeline automatizado de CI en GitHub Actions para el Pull Request hacia <code>develop</code> (#1), verificando compilación con JDK 21 Temurin, suite completa de 16 pruebas unitarias/integración, Quality Gate JaCoCo al 90% y construcción de la imagen OCI multi-stage en Docker.</sub></p>
 </div>
 
 ---
@@ -653,8 +660,8 @@ Todo mensaje de commit debe seguir la estructura estándar:
 
 Ejemplos válidos en ms-probador-virtual:
 feat(vton): orquestar solicitud asíncrona de prueba virtual con FASHN AI [#PT8080-25]
-fix(cuotas): validar saldo atómico de pruebas diarias en Redis antes de encolar [#PT8080-25]
-test(dominio): pruebas unitarias sobre agregado EnsayoVirtual y consentimientos [#PT8080-38]
+fix(cuotas): validar saldo atómico de cuotas mensuales y diarias en Redis antes de encolar [#PT8080-25]
+test(dominio): pruebas unitarias sobre agregado TryOnOutfit y consentimientos [#PT8080-38]
 docs(readme): actualizar matriz de enlaces y badges conectados para Sprint 1
 ```
 
@@ -682,12 +689,12 @@ El seguimiento de requerimientos, historias de usuario del Sprint 1 y artefactos
 * **Organización Oficial de StyleRadar:** [https://github.com/StyleRadar1](https://github.com/StyleRadar1)
 * **Épica Oficial del Microservicio (Jira):** [https://mail-team-nyjtgqcj.atlassian.net/browse/PT8080-1?atlOrigin=eyJpIjoiMWE0NjAzMTdkODI5NDFmN2I2ODdhOGYzNjJjMTU4ZTkiLCJwIjoiaiJ9](https://mail-team-nyjtgqcj.atlassian.net/browse/PT8080-1?atlOrigin=eyJpIjoiMWE0NjAzMTdkODI5NDFmN2I2ODdhOGYzNjJjMTU4ZTkiLCJwIjoiaiJ9)
 * **Tablero Scrum del Squad (Jira):** [https://mail-team-nyjtgqcj.atlassian.net/jira/software/projects/PT8080/boards/74/backlog?epics=visible&selectedIssue=PT8080-38&atlOrigin=eyJpIjoiMjRlZW](https://mail-team-nyjtgqcj.atlassian.net/jira/software/projects/PT8080/boards/74/backlog?epics=visible&selectedIssue=PT8080-38&atlOrigin=eyJpIjoiMjRlZW)
-* **Swagger UI Local (Puerto 8092):** [http://localhost:8092/swagger-ui/index.html](http://localhost:8092/swagger-ui/index.html)
-* **Especificación OpenAPI JSON:** [http://localhost:8092/v3/api-docs](http://localhost:8092/v3/api-docs)
+* **Swagger UI Local (Puerto 8500):** [http://localhost:8500/swagger-ui/index.html](http://localhost:8500/swagger-ui/index.html)
+* **Especificación OpenAPI JSON:** [http://localhost:8500/v3/api-docs](http://localhost:8500/v3/api-docs)
 
 <div align="center">
   <img src="docs/images/JiraEvidence.png" alt="Evidencia 05 - Épica PT8080-1 en Jira" width="100%" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
-  <p><sub><b>Figura 12.1:</b> Épica oficial <code>PT8080-1</code> en Atlassian Jira para <code>ms-probador-virtual</code> (puerto 8092), detallando los requerimientos funcionales SR-RF-23 al 27, RNF asociados y el desglose de historias de usuario y tareas técnicas del Sprint 1.</sub></p>
+  <p><sub><b>Figura 12.1:</b> Épica oficial <code>PT8080-1</code> en Atlassian Jira para <code>ms-probador-virtual</code> (puerto 8500), detallando los requerimientos funcionales SR-RF-23 al 27, RNF asociados y el desglose de historias de usuario y tareas técnicas del Sprint 1.</sub></p>
 </div>
 
 ### Requerimientos Funcionales Asignados
