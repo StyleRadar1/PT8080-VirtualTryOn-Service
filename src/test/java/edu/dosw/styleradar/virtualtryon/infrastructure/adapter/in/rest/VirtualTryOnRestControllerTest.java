@@ -3,11 +3,14 @@ package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.dosw.styleradar.virtualtryon.application.dto.request.StartTryOnRequest;
 import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMapper;
+import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
@@ -68,6 +71,9 @@ class VirtualTryOnRestControllerTest {
     private JwtTokenProvider jwtTokenProvider;
 
     @MockBean
+    private CreateTryOnJobService createTryOnJobService;
+
+    @MockBean
     private QueryTryOnJobsService queryTryOnJobsService;
 
     private String bearerTokenFor(UUID userId, String role) {
@@ -75,15 +81,30 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25 (V04): Dado una solicitud válida con foto y prenda compatible, Cuando se envía POST /api/v1/try-on/jobs, Entonces responde 202 Accepted con cabecera Location y estado QUEUED")
+    @DisplayName("HU SR-RF-25 (V04): Dado una solicitud válida con foto y prenda compatible, Cuando se envía POST /api/v1/try-on/jobs, Entonces responde 202 Accepted con cabecera Location y estado del job")
     void testStartTryOnSuccess() throws Exception {
         UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+        String photoUrl = "https://styleradar.blob.core.windows.net/photos/user-test.jpg";
         StartTryOnRequest request = new StartTryOnRequest(
                 userId,
-                UUID.randomUUID(),
-                "https://styleradar.blob.core.windows.net/photos/user-test.jpg",
+                garmentId,
+                photoUrl,
                 true
         );
+
+        TryOnJob createdJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(userId))
+                .withGarmentId(GarmentId.of(garmentId))
+                .withCategory(GarmentCategory.TOPS)
+                .withPhotoUrl(photoUrl)
+                .build();
+        when(createTryOnJobService.createTryOnJob(
+                UserId.of(userId),
+                GarmentId.of(garmentId),
+                photoUrl,
+                true
+        )).thenReturn(createdJob);
 
         mockMvc.perform(post("/api/v1/try-on/jobs")
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
@@ -91,7 +112,7 @@ class VirtualTryOnRestControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isAccepted())
                 .andExpect(header().exists("Location"))
-                .andExpect(jsonPath("$.jobId", notNullValue()))
+                .andExpect(jsonPath("$.jobId", is(createdJob.getId().toString())))
                 .andExpect(jsonPath("$.status", is("QUEUED")));
     }
 
@@ -255,6 +276,7 @@ class VirtualTryOnRestControllerTest {
     @DisplayName("HU SR-RF-24: Dado invocación directa del controlador con UserDetails, sin autenticación o con rol inválido, Cuando se invocan los endpoints, Entonces valida todos los caminos de seguridad y titularidad")
     void testDirectControllerPrincipalBranches() {
         VirtualTryOnRestController directController = new VirtualTryOnRestController(
+                createTryOnJobService,
                 queryTryOnJobsService,
                 new VirtualTryOnDtoMapper()
         );
