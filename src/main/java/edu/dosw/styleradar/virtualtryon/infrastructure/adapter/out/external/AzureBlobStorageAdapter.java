@@ -30,9 +30,10 @@ import java.util.UUID;
 
 /**
  * Adaptador de salida para la integración real con Azure Blob Storage REST API
- * dentro del contenedor privado de siluetas biométricas mediante URLs firmadas (SAS Token).
- * Genera tokens SAS de solo lectura (sp=r, sr=b, spr=https) firmados criptográficamente (HMAC-SHA256)
- * por cada recurso individual sin alterar parámetros firmados posteriormente, y verifica la lectura del archivo.
+ * dentro del contenedor privado de siluetas biométricas.
+ * Exige la firma criptográfica HMAC-SHA256 de tokens SAS exclusivos por cada blob individual (sr=b, sp=r, spr=https),
+ * impidiendo el uso de tokens reutilizados o de alcance de contenedor (sr=c), y registra en logs únicamente la ruta
+ * del recurso sin parámetros de autenticación.
  */
 @Component
 public class AzureBlobStorageAdapter implements BlobStoragePort {
@@ -52,7 +53,6 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
     private final String containerName;
     private final String accountKey;
     private final String sasToken;
-    private final String readOnlySasToken;
     private final Duration readSasDuration;
     private final String apiVersion;
 
@@ -60,9 +60,8 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
     public AzureBlobStorageAdapter(
             @Value("${styleradar.tryon.blob-base-url}") String storageBaseUrl,
             @Value("${styleradar.tryon.blob-container:biometric-silhouettes}") String containerName,
-            @Value("${styleradar.tryon.blob-account-key:}") String accountKey,
+            @Value("${styleradar.tryon.blob-account-key}") String accountKey,
             @Value("${styleradar.tryon.blob-sas-token:}") String sasToken,
-            @Value("${styleradar.tryon.blob-read-sas-token:}") String readOnlySasToken,
             @Value("${styleradar.tryon.blob-read-sas-duration:PT60M}") Duration readSasDuration,
             @Value("${styleradar.tryon.blob-api-version:2024-11-04}") String apiVersion
     ) {
@@ -72,7 +71,6 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                 containerName,
                 accountKey,
                 sasToken,
-                readOnlySasToken,
                 readSasDuration,
                 apiVersion
         );
@@ -82,35 +80,17 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
             RestClient.Builder restClientBuilder,
             String storageBaseUrl,
             String containerName,
-            String sasToken,
-            String apiVersion
-    ) {
-        this(restClientBuilder, storageBaseUrl, containerName, "", sasToken, "", Duration.ofMinutes(60), apiVersion);
-    }
-
-    public AzureBlobStorageAdapter(
-            RestClient.Builder restClientBuilder,
-            String storageBaseUrl,
-            String containerName,
-            String sasToken,
-            String readOnlySasToken,
-            String apiVersion
-    ) {
-        this(restClientBuilder, storageBaseUrl, containerName, "", sasToken, readOnlySasToken, Duration.ofMinutes(60), apiVersion);
-    }
-
-    public AzureBlobStorageAdapter(
-            RestClient.Builder restClientBuilder,
-            String storageBaseUrl,
-            String containerName,
             String accountKey,
             String sasToken,
-            String readOnlySasToken,
             Duration readSasDuration,
             String apiVersion
     ) {
         if (storageBaseUrl == null || storageBaseUrl.isBlank()) {
             throw new IllegalStateException("AZURE_STORAGE_BASE_URL es obligatoria y debe configurarse por variables de entorno");
+        }
+        if (accountKey == null || accountKey.isBlank()) {
+            throw new IllegalStateException(
+                    "AZURE_STORAGE_ACCOUNT_KEY es obligatoria para generar firmas SAS exclusivas por blob individual (sr=b, sp=r)");
         }
         this.restClient = restClientBuilder.build();
         String trimmedBaseUrl = storageBaseUrl.trim();
@@ -119,9 +99,8 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                 : trimmedBaseUrl;
         this.accountName = extractAccountName(this.storageBaseUrl);
         this.containerName = containerName;
-        this.accountKey = accountKey == null ? "" : accountKey.trim();
+        this.accountKey = accountKey.trim();
         this.sasToken = normalizeSasToken(sasToken);
-        this.readOnlySasToken = validatePreSignedReadOnlyToken(normalizeSasToken(readOnlySasToken));
         this.readSasDuration = readSasDuration == null ? Duration.ofMinutes(60) : readSasDuration;
         this.apiVersion = apiVersion;
     }
@@ -144,24 +123,25 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                     .retrieve()
                     .toBodilessEntity();
 
-            // Verificación de lectura real del archivo en Azure mediante la URL SAS de solo lectura generada
+            // Verificación de lectura real del archivo en Azure mediante la URL SAS por recurso (sr=b, sp=r)
             Optional<byte[]> verifiedBytes = retrieveBlobBytes(readOnlySignedUrl);
             if (verifiedBytes.isEmpty()) {
                 throw new IllegalStateException("La verificación de lectura del archivo en Azure Blob Storage no retornó contenido");
             }
 
-            log.info("Fotografía biométrica cargada y verificada en lectura en Azure Blob Storage (contenedor: {}, usuario: {})",
-                    containerName, userId.value());
+            log.info("Fotografía biométrica cargada y verificada en lectura en Azure Blob Storage (ruta: {}/{})",
+                    containerName, blobName);
             return readOnlySignedUrl;
         } catch (RestClientException ex) {
-            log.error("Error al almacenar fotografía biométrica en Azure Blob Storage para usuario {}: {}",
-                    userId.value(), ex.getMessage());
+            log.error("Error al almacenar fotografía biométrica en Azure Blob Storage para ruta {}/{}: {}",
+                    containerName, blobName, ex.getMessage());
             throw new IllegalStateException("No fue posible almacenar la fotografía biométrica en Azure Blob Storage", ex);
         }
     }
 
     @Override
     public Optional<byte[]> retrieveBlobBytes(SasSignedUrl blobUrl) {
+        String safeBlobPath = stripQueryParametersForLog(blobUrl.value());
         try {
             byte[] content = restClient.get()
                     .uri(URI.create(blobUrl.value()))
@@ -171,13 +151,14 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
             return content == null || content.length == 0 ? Optional.empty() : Optional.of(content);
         } catch (RestClientException ex) {
             log.warn("No fue posible recuperar el blob desde Azure Blob Storage ({}): {}",
-                    blobUrl.value(), ex.getMessage());
+                    safeBlobPath, ex.getMessage());
             return Optional.empty();
         }
     }
 
     @Override
     public void deleteBlob(SasSignedUrl blobUrl) {
+        String safeBlobPath = stripQueryParametersForLog(blobUrl.value());
         try {
             String deleteTargetUrl = buildDeleteTargetUrl(blobUrl.value());
             restClient.delete()
@@ -186,10 +167,10 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                     .header(HEADER_DELETE_SNAPSHOTS, "include")
                     .retrieve()
                     .toBodilessEntity();
-            log.info("Objeto binario eliminado de Azure Blob Storage: {}", blobUrl.value());
+            log.info("Objeto binario eliminado de Azure Blob Storage: {}", safeBlobPath);
         } catch (RestClientException ex) {
             log.warn("Error al eliminar objeto binario en Azure Blob Storage ({}): {}",
-                    blobUrl.value(), ex.getMessage());
+                    safeBlobPath, ex.getMessage());
         }
     }
 
@@ -198,34 +179,21 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         if (!sasToken.isEmpty()) {
             return basePath + "?" + sasToken;
         }
-        if (!accountKey.isEmpty()) {
-            return basePath + "?" + generatePerBlobSasToken(blobName, "racw", Instant.now().plus(readSasDuration));
-        }
-        return basePath;
+        return basePath + "?" + generatePerBlobSasToken(blobName, "racw", Instant.now().plus(readSasDuration));
     }
 
     private String buildReadOnlySignedBlobUrl(String blobName) {
         String basePath = String.format("%s/%s/%s", storageBaseUrl, containerName, blobName);
-        if (!accountKey.isEmpty()) {
-            return basePath + "?" + generatePerBlobReadOnlySasToken(blobName, Instant.now().plus(readSasDuration));
-        }
-        if (!readOnlySasToken.isEmpty()) {
-            return basePath + "?" + readOnlySasToken;
-        }
-        return basePath;
+        return basePath + "?" + generatePerBlobReadOnlySasToken(blobName, Instant.now().plus(readSasDuration));
     }
 
     private String buildDeleteTargetUrl(String rawBlobUrl) {
-        int queryIdx = rawBlobUrl.indexOf('?');
-        String basePath = queryIdx >= 0 ? rawBlobUrl.substring(0, queryIdx) : rawBlobUrl;
+        String basePath = stripQueryParametersForLog(rawBlobUrl);
         if (!sasToken.isEmpty()) {
             return basePath + "?" + sasToken;
         }
-        if (!accountKey.isEmpty()) {
-            String blobName = extractBlobNameFromUrl(basePath);
-            return basePath + "?" + generatePerBlobSasToken(blobName, "d", Instant.now().plus(readSasDuration));
-        }
-        return rawBlobUrl;
+        String blobName = extractBlobNameFromUrl(basePath);
+        return basePath + "?" + generatePerBlobSasToken(blobName, "d", Instant.now().plus(readSasDuration));
     }
 
     /**
@@ -238,9 +206,6 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
     }
 
     String generatePerBlobSasToken(String blobName, String permissions, Instant expiry) {
-        if (accountKey.isEmpty()) {
-            throw new IllegalStateException("Se requiere AZURE_STORAGE_ACCOUNT_KEY para firmar un SAS por recurso");
-        }
         String formattedExpiry = ISO_UTC_FORMATTER.format(expiry.truncatedTo(ChronoUnit.SECONDS));
         String canonicalizedResource = String.format("/blob/%s/%s/%s", accountName, containerName, blobName);
         String stringToSign = String.join("\n",
@@ -284,20 +249,15 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
     }
 
     /**
-     * Valida que un token SAS pre-firmado sea estrictamente de solo lectura (sp=r) sin modificar
-     * ninguno de sus parámetros firmados para preservar la integridad de su firma (&sig=...).
+     * Remueve todos los parámetros query (?se=...&sig=...) de una URL SAS para que en los logs
+     * solo se registre la ruta del archivo sin exponer credenciales de autenticación.
      */
-    static String validatePreSignedReadOnlyToken(String rawReadSas) {
-        if (rawReadSas == null || rawReadSas.isBlank()) {
+    public static String stripQueryParametersForLog(String rawUrl) {
+        if (rawUrl == null || rawUrl.isBlank()) {
             return "";
         }
-        for (String param : rawReadSas.split("&")) {
-            if (param.startsWith("sp=") && !"sp=r".equals(param)) {
-                throw new IllegalArgumentException(
-                        "El token AZURE_READ_SAS_TOKEN debe estar firmado originalmente con permisos exclusivos de lectura (sp=r)");
-            }
-        }
-        return rawReadSas;
+        int queryIdx = rawUrl.indexOf('?');
+        return queryIdx >= 0 ? rawUrl.substring(0, queryIdx) : rawUrl;
     }
 
     private String extractBlobNameFromUrl(String basePath) {
