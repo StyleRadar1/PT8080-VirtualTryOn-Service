@@ -33,6 +33,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.URI;
@@ -137,6 +139,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         BillingPeriod currentPeriod = BillingPeriod.current();
 
         // 4. Creación atómica del TryOnJob, consumo de cuota y persistencia en Outbox dentro de la misma transacción JDBC
+        int[] updatedUsedCount = new int[1];
         TryOnJob savedQueuedJob = executeInTransaction(() -> {
             UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)
                     .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
@@ -167,7 +170,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
 
             quota.consumeQuota();
             quotaRepositoryPort.saveQuota(quota);
-            quotaCachePort.cacheUsedCount(userId, currentPeriod, quota.getUsedCount());
+            updatedUsedCount[0] = quota.getUsedCount();
 
             TryOnJob queuedJob = new TryOnJobBuilder()
                     .withUserId(userId)
@@ -191,7 +194,11 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             return saved;
         });
 
-        // 5. Despacho asíncrono inmediato opcional (si el broker falla, el Outbox periódico garantiza la entrega At-Least-Once)
+        // 5. Actualización de cuota en Redis estrictamente POST-COMMIT de PostgreSQL
+        // Evita inconsistencias de saldo o créditos cuando la persistencia del trabajo o del Outbox falla
+        syncQuotaCachePostCommit(userId, currentPeriod, updatedUsedCount[0]);
+
+        // 6. Despacho asíncrono inmediato opcional (si el broker falla, el Outbox periódico garantiza la entrega At-Least-Once)
         try {
             outboxPublisherPort.publishPendingEvents();
         } catch (Exception ex) {
@@ -200,6 +207,30 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         }
 
         return savedQueuedJob;
+    }
+
+    private void syncQuotaCachePostCommit(UserId userId, BillingPeriod period, int usedCount) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    safeUpdateQuotaCache(userId, period, usedCount);
+                }
+            });
+        } else {
+            safeUpdateQuotaCache(userId, period, usedCount);
+        }
+    }
+
+    private void safeUpdateQuotaCache(UserId userId, BillingPeriod period, int usedCount) {
+        try {
+            quotaCachePort.cacheUsedCount(userId, period, usedCount);
+            log.debug("Caché de cuota en Redis actualizada exitosamente post-commit para usuario {}: {}",
+                    userId.value(), usedCount);
+        } catch (Exception ex) {
+            log.warn("Fallo no bloqueante al actualizar cuota en Redis post-commit para usuario {}: {}",
+                    userId.value(), ex.getMessage());
+        }
     }
 
     private <T> T executeInTransaction(Supplier<T> action) {

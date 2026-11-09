@@ -540,4 +540,119 @@ class CreateTryOnJobServiceImplTest {
 
         Mockito.verify(failingOutbox, Mockito.never()).publishPendingEvents();
     }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Si falla la transacción en PostgreSQL, la cuota en Redis NUNCA se actualiza (evita inconsistencias pre-commit)")
+    void shouldNeverUpdateRedisQuotaCacheWhenPostgresTransactionFails() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort mockQuotaCache =
+                Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort.class);
+
+        org.springframework.transaction.support.TransactionTemplate mockTemplate = Mockito.mock(
+                org.springframework.transaction.support.TransactionTemplate.class
+        );
+        when(mockTemplate.execute(any())).thenThrow(new RuntimeException("PostgreSQL connection lost during commit"));
+
+        CreateTryOnJobServiceImpl service = new CreateTryOnJobServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                mockQuotaCache,
+                repositoryAdapter,
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "mock",
+                mockTemplate,
+                outboxPublisherPort
+        );
+
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
+
+        assertThatThrownBy(() -> service.createTryOnJob(userId, garmentId, photoUrl, true))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("PostgreSQL connection lost");
+
+        // Verificación crítica: Redis NUNCA debe haber recibido la llamada a cacheUsedCount
+        Mockito.verify(mockQuotaCache, Mockito.never()).cacheUsedCount(any(), any(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Si la transacción confirma exitosamente, la cuota en Redis se actualiza post-commit")
+    void shouldUpdateRedisQuotaCachePostCommitWhenTransactionSucceeds() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort mockQuotaCache =
+                Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort.class);
+
+        org.springframework.transaction.support.TransactionTemplate mockTemplate = Mockito.mock(
+                org.springframework.transaction.support.TransactionTemplate.class
+        );
+        when(mockTemplate.execute(any())).thenAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
+            return cb.doInTransaction(null);
+        });
+
+        CreateTryOnJobServiceImpl service = new CreateTryOnJobServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                mockQuotaCache,
+                repositoryAdapter,
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "mock",
+                mockTemplate,
+                outboxPublisherPort
+        );
+
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
+
+        service.createTryOnJob(userId, garmentId, photoUrl, true);
+
+        Mockito.verify(mockQuotaCache, Mockito.times(1))
+                .cacheUsedCount(eq(userId), eq(BillingPeriod.current()), eq(1));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Un fallo en la actualización de cuota en Redis post-commit es no bloqueante y no revierte el trabajo ya confirmado")
+    void shouldNotFailJobCreationWhenRedisCacheUpdateThrowsException() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort mockQuotaCache =
+                Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort.class);
+        Mockito.doThrow(new RuntimeException("Redis cluster unreachable"))
+                .when(mockQuotaCache).cacheUsedCount(any(), any(), org.mockito.ArgumentMatchers.anyInt());
+
+        org.springframework.transaction.support.TransactionTemplate mockTemplate = Mockito.mock(
+                org.springframework.transaction.support.TransactionTemplate.class
+        );
+        when(mockTemplate.execute(any())).thenAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
+            return cb.doInTransaction(null);
+        });
+
+        CreateTryOnJobServiceImpl service = new CreateTryOnJobServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                mockQuotaCache,
+                repositoryAdapter,
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "mock",
+                mockTemplate,
+                outboxPublisherPort
+        );
+
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
+
+        TryOnJob job = service.createTryOnJob(userId, garmentId, photoUrl, true);
+
+        assertThat(job).isNotNull();
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+    }
 }

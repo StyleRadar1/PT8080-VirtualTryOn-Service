@@ -75,4 +75,11 @@ styleradar:
     blob-account-key: ${AZURE_STORAGE_ACCOUNT_KEY}
     blob-read-sas-duration: ${AZURE_READ_SAS_DURATION:PT60M}
     blob-api-version: ${AZURE_STORAGE_API_VERSION:2024-11-04}
+    outbox:
+      poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
+    stale-job:
+      enabled: ${STALE_JOB_SWEEP_ENABLED:true}
+      sweep-interval-ms: ${STALE_JOB_SWEEP_INTERVAL_MS:60000}
+      initial-delay-ms: ${STALE_JOB_INITIAL_DELAY_MS:10000}
+      max-processing-age-minutes: ${STALE_JOB_MAX_PROCESSING_AGE_MINUTES:10}
 
