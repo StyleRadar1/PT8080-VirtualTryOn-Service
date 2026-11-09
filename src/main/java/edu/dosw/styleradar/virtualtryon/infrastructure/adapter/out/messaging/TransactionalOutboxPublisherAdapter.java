@@ -100,6 +100,10 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
                         || "tryon.job.failed".equals(event.getEventType())) {
                     TryOnJobDomainEvent domainEvent = objectMapper.readValue(event.getPayload(), TryOnJobDomainEvent.class);
                     tryOnEventPublisherPort.publishJobEvent(domainEvent);
+                } else if ("tryon.photo.purged".equals(event.getEventType())) {
+                    edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent domainEvent =
+                            objectMapper.readValue(event.getPayload(), edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.class);
+                    tryOnEventPublisherPort.publishPhotoPurgedEvent(domainEvent);
                 }
 
                 // Confirmación exitosa en broker: marcar como PUBLISHED en base de datos

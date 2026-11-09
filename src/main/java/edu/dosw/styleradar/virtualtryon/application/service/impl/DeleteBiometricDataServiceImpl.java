@@ -1,6 +1,7 @@
 package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
+import edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
@@ -10,16 +11,16 @@ import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnEventPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
-import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -27,18 +28,44 @@ import java.util.UUID;
 /**
  * Implementación del servicio de aplicación para el Derecho al Olvido y eliminación física
  * de fotografías biométricas en Azure Blob Storage y PostgreSQL (Ley 1581 de 2012 · SR-RF-27).
+ * Utiliza Transactional Outbox para publicar el evento tryon.photo.purged de forma consistente.
  */
 @Service
 @Transactional
 public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataService {
 
     private static final Logger log = LoggerFactory.getLogger(DeleteBiometricDataServiceImpl.class);
-    public static final String EVENT_PHOTO_PURGED = "tryon.photo.purged";
+    public static final String EVENT_PHOTO_PURGED = PhotoPurgedDomainEvent.ROUTING_KEY;
 
     private final TryOnJobRepositoryPort jobRepositoryPort;
     private final BiometricDataRepositoryPort biometricDataRepositoryPort;
     private final BlobStoragePort blobStoragePort;
+    private final OutboxPublisherPort outboxPublisherPort;
     private final TryOnEventPublisherPort eventPublisherPort;
+
+    @Autowired
+    public DeleteBiometricDataServiceImpl(
+            TryOnJobRepositoryPort jobRepositoryPort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            BlobStoragePort blobStoragePort,
+            OutboxPublisherPort outboxPublisherPort,
+            @Autowired(required = false) TryOnEventPublisherPort eventPublisherPort
+    ) {
+        this.jobRepositoryPort = jobRepositoryPort;
+        this.biometricDataRepositoryPort = biometricDataRepositoryPort;
+        this.blobStoragePort = blobStoragePort;
+        this.outboxPublisherPort = outboxPublisherPort;
+        this.eventPublisherPort = eventPublisherPort;
+    }
+
+    public DeleteBiometricDataServiceImpl(
+            TryOnJobRepositoryPort jobRepositoryPort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            BlobStoragePort blobStoragePort,
+            OutboxPublisherPort outboxPublisherPort
+    ) {
+        this(jobRepositoryPort, biometricDataRepositoryPort, blobStoragePort, outboxPublisherPort, null);
+    }
 
     public DeleteBiometricDataServiceImpl(
             TryOnJobRepositoryPort jobRepositoryPort,
@@ -46,10 +73,7 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
             BlobStoragePort blobStoragePort,
             TryOnEventPublisherPort eventPublisherPort
     ) {
-        this.jobRepositoryPort = jobRepositoryPort;
-        this.biometricDataRepositoryPort = biometricDataRepositoryPort;
-        this.blobStoragePort = blobStoragePort;
-        this.eventPublisherPort = eventPublisherPort;
+        this(jobRepositoryPort, biometricDataRepositoryPort, blobStoragePort, null, eventPublisherPort);
     }
 
     @Override
@@ -79,7 +103,20 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
             }
             blobStoragePort.deleteBlob(photo.getPhotoUrl());
             biometricDataRepositoryPort.deletePhotoByUserId(photo.getUserId());
-            log.info("Fotografía biométrica {} del usuario {} purgada físicamente (Ley 1581)",
+
+            // Limpiar y purgar todos los trabajos del usuario para no dejar referencias biométricas pendientes
+            List<TryOnJob> userJobs = jobRepositoryPort.findJobsByUserId(photo.getUserId());
+            for (TryOnJob userJob : userJobs) {
+                if (!userJob.isPhotoPurged()) {
+                    purgeSingleJobAndUserPhoto(userJob);
+                }
+            }
+
+            if (userJobs.isEmpty()) {
+                publishPurgeEvent(null, photo.getUserId().value(), photo.getPhotoId());
+            }
+
+            log.info("Fotografía biométrica {} del usuario {} purgada físicamente y referencias en trabajos limpiadas (Ley 1581)",
                     photo.getPhotoId(), photo.getUserId().value());
             return;
         }
@@ -100,24 +137,40 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
                 purgeSingleJobAndUserPhoto(job);
             }
         }
+
+        if (userJobs.isEmpty()) {
+            publishPurgeEvent(null, userId.value(), UUID.randomUUID());
+        }
+
         log.info("Purga total de datos biométricos ejecutada para usuario {} ({} trabajos afectados)",
                 userId.value(), userJobs.size());
     }
 
     private void purgeSingleJobAndUserPhoto(TryOnJob job) {
-        if (!job.isPhotoPurged() && job.getPhotoUrl() != null && job.getPhotoUrl().startsWith("http")) {
+        // 1. Borrado físico de la fotografía frontal (URL absoluta o ruta relativa en Azure Blob Storage)
+        if (!job.isPhotoPurged() && job.getPhotoUrl() != null && !job.getPhotoUrl().isBlank() && !job.getPhotoUrl().startsWith("PURGED")) {
             try {
-                blobStoragePort.deleteBlob(SasSignedUrl.of(job.getPhotoUrl()));
-            } catch (IllegalArgumentException ignored) {
-                log.debug("URL de foto original omitida en borrado directo: {}", job.getPhotoUrl());
+                blobStoragePort.deleteBlob(job.getPhotoUrl());
+            } catch (Exception ex) {
+                log.warn("Advertencia al eliminar silueta directa {} de Azure Blob Storage: {}", job.getPhotoUrl(), ex.getMessage());
             }
         }
+
+        // 2. Borrado físico de imagen de resultado generada
         if (job.getResultImageUrl() != null) {
-            blobStoragePort.deleteBlob(job.getResultImageUrl());
+            try {
+                blobStoragePort.deleteBlob(job.getResultImageUrl());
+            } catch (Exception ex) {
+                log.warn("Advertencia al eliminar render de Azure Blob Storage para trabajo {}: {}", job.getId(), ex.getMessage());
+            }
         }
 
+        // 3. Eliminar fotografía de perfil biométrico si existe
         biometricDataRepositoryPort.findPhotoByUserId(job.getUserId()).ifPresent(photo -> {
-            blobStoragePort.deleteBlob(photo.getPhotoUrl());
+            try {
+                blobStoragePort.deleteBlob(photo.getPhotoUrl());
+            } catch (Exception ignored) {
+            }
             biometricDataRepositoryPort.deletePhotoByUserId(job.getUserId());
         });
 
@@ -132,6 +185,24 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
                 "PHOTO_PURGED: Fotografía biométrica y render eliminados físicamente por solicitud del titular (Ley 1581)"
         ));
 
-        eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(job));
+        publishPurgeEvent(job.getId(), job.getUserId().value(), job.getId());
+    }
+
+    private void publishPurgeEvent(UUID jobId, UUID userId, UUID aggregateId) {
+        PhotoPurgedDomainEvent purgeEvent = PhotoPurgedDomainEvent.of(jobId, userId);
+        if (outboxPublisherPort != null) {
+            outboxPublisherPort.saveOutboxEvent(aggregateId, PhotoPurgedDomainEvent.ROUTING_KEY, purgeEvent);
+            try {
+                outboxPublisherPort.publishPendingEvents();
+            } catch (Exception ex) {
+                log.warn("Fallo temporal al despachar evento outbox de purga inmediatamente: {}", ex.getMessage());
+            }
+        } else if (eventPublisherPort != null) {
+            try {
+                eventPublisherPort.publishPhotoPurgedEvent(purgeEvent);
+            } catch (Exception ex) {
+                log.warn("Fallo al publicar evento de purga directo: {}", ex.getMessage());
+            }
+        }
     }
 }

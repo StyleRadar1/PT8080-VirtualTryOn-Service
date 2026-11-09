@@ -120,6 +120,30 @@ class TransactionalOutboxPublisherAdapterTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-27: Despacha evento tryon.photo.purged mediante publishPhotoPurgedEvent y confirma como PUBLISHED")
+    void shouldPublishPhotoPurgedEventFromOutbox() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent purgeEvent =
+                edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.of(jobId, userId);
+        String jsonPayload = objectMapper.writeValueAsString(purgeEvent);
+
+        OutboxEventJpaEntity pendingEntity = OutboxEventJpaEntity.pending(
+                UUID.randomUUID(), "TRY_ON_JOB", jobId.toString(), "tryon.photo.purged", jsonPayload
+        );
+
+        when(outboxEventRepository.findClaimableEventsForUpdate(any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(pendingEntity));
+        when(outboxEventRepository.findById(pendingEntity.getId()))
+                .thenReturn(Optional.of(pendingEntity));
+
+        outboxPublisher.publishPendingEvents();
+
+        verify(tryOnEventPublisherPort).publishPhotoPurgedEvent(any(edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.class));
+        assertThat(pendingEntity.getStatus()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
     @DisplayName("HU SR-RF-25: Evento en PROCESSING con lease expirado tras caída de worker es recuperado y publicado")
     void shouldRecoverAbandonedProcessingEventAfterLeaseExpiration() throws Exception {
         UUID jobId = UUID.randomUUID();

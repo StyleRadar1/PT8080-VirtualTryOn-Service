@@ -99,4 +99,52 @@ public class TryOnEventPublisherAdapter implements TryOnEventPublisherPort {
             throw ex;
         }
     }
+
+    @Override
+    public void publishPhotoPurgedEvent(edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent event) {
+        if (event == null) {
+            return;
+        }
+        String routingKey = event.routingKey() != null ? event.routingKey() : edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.ROUTING_KEY;
+        if (rabbitTemplate == null) {
+            throw new IllegalStateException(
+                    "RabbitTemplate no está disponible en este entorno. No es posible publicar ni confirmar el evento " + routingKey
+            );
+        }
+
+        try {
+            CorrelationData correlationData = new CorrelationData(
+                    event.eventId() != null ? event.eventId().toString() : UUID.randomUUID().toString()
+            );
+            rabbitTemplate.convertAndSend(exchangeName, routingKey, event, correlationData);
+
+            CompletableFuture<CorrelationData.Confirm> future = correlationData.getFuture();
+            if (requirePublisherConfirms && future != null) {
+                try {
+                    CorrelationData.Confirm confirm = future.get(5, TimeUnit.SECONDS);
+                    if (confirm == null || !confirm.isAck()) {
+                        String reason = confirm != null ? confirm.getReason() : "timeout";
+                        throw new IllegalStateException("RabbitMQ rechazó con NACK la entrega del evento " + routingKey + ": " + reason);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupción esperando confirmación de RabbitMQ para evento " + routingKey, e);
+                } catch (ExecutionException | TimeoutException e) {
+                    throw new IllegalStateException("Timeout o error esperando confirmación (ACK) de RabbitMQ para evento " + routingKey, e);
+                }
+            } else if (future != null && future.isDone()) {
+                CorrelationData.Confirm confirm = future.getNow(null);
+                if (confirm != null && !confirm.isAck()) {
+                    throw new IllegalStateException("RabbitMQ devolvió NACK para el evento " + routingKey + ": " + confirm.getReason());
+                }
+            }
+
+            log.info("Evento AMQP {} publicado y confirmado en exchange {} para usuario {}",
+                    routingKey, exchangeName, event.userId());
+        } catch (RuntimeException ex) {
+            log.error("Fallo al publicar o confirmar evento {} en RabbitMQ para usuario {}: {}",
+                    routingKey, event.userId(), ex.getMessage(), ex);
+            throw ex;
+        }
+    }
 }

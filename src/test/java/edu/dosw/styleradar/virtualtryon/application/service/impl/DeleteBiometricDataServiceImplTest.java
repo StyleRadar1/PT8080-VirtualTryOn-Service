@@ -3,6 +3,7 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 import edu.dosw.styleradar.virtualtryon.application.dto.event.UserAccountDeletedEvent;
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
+import edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
@@ -10,6 +11,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnEventPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
@@ -77,6 +79,9 @@ class DeleteBiometricDataServiceImplTest {
     private BlobStoragePort blobStoragePort;
 
     @Mock
+    private OutboxPublisherPort outboxPublisherPort;
+
+    @Mock
     private TryOnEventPublisherPort eventPublisherPort;
 
     @Mock
@@ -104,6 +109,7 @@ class DeleteBiometricDataServiceImplTest {
                 repositoryAdapter,
                 repositoryAdapter,
                 blobStoragePort,
+                outboxPublisherPort,
                 eventPublisherPort
         );
         eventListenerAdapter = new TryOnEventListenerAdapter(queryTryOnJobsService, deleteService);
@@ -115,7 +121,7 @@ class DeleteBiometricDataServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-27 (Ley 1581): Dado un TryOnJob existente y el titular autenticado, Cuando invoca deleteBiometricPhoto, Entonces purga los blobs en Azure, marca photoPurged=true, elimina el outfit, guarda auditoría PHOTO_PURGED y publica evento")
+    @DisplayName("HU SR-RF-27 (Ley 1581): Dado un TryOnJob existente y el titular autenticado, Cuando invoca deleteBiometricPhoto, Entonces purga los blobs en Azure, marca photoPurged=true, elimina el outfit, guarda auditoría PHOTO_PURGED y publica evento mediante Transactional Outbox")
     void shouldPurgeJobAndBiometricPhotoWhenOwnerRequestsDeletion() {
         UserId ownerId = UserId.of(UUID.randomUUID());
         UUID jobId = UUID.randomUUID();
@@ -150,7 +156,12 @@ class DeleteBiometricDataServiceImplTest {
         verify(tryOnOutfitJpaRepository).deleteByJobId(jobId);
         verify(photoJpaRepository).deleteByUserId(ownerId.value());
         verify(jobAuditLogJpaRepository).save(any(JobAuditLogJpaEntity.class));
-        verify(eventPublisherPort).publishJobEvent(any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort).saveOutboxEvent(
+                org.mockito.ArgumentMatchers.eq(jobId),
+                org.mockito.ArgumentMatchers.eq(PhotoPurgedDomainEvent.ROUTING_KEY),
+                any(PhotoPurgedDomainEvent.class)
+        );
+        verify(outboxPublisherPort).publishPendingEvents();
     }
 
     @Test
@@ -225,6 +236,76 @@ class DeleteBiometricDataServiceImplTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-27: Soporta rutas relativas de Azure Blob Storage y purga el trabajo aun cuando no existe registro en biometric_photos")
+    void shouldSupportRelativeBlobPathAndPurgeEvenWhenBiometricPhotoEntityIsMissing() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID jobId = UUID.randomUUID();
+        String relativeBlobPath = "biometric-silhouettes/" + ownerId.value() + "/silhouette-123.png";
+
+        TryOnJob job = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(relativeBlobPath)
+                .build();
+        TryOnJobJpaEntity jobEntity = mapper.toJobJpaEntity(job);
+
+        when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(jobEntity));
+        when(photoJpaRepository.findByUserId(ownerId.value())).thenReturn(Optional.empty()); // No existe registro en biometric_photos
+
+        deleteService.deleteBiometricPhoto(jobId, ownerId, false);
+
+        verify(blobStoragePort).deleteBlob(relativeBlobPath);
+        verify(tryOnOutfitJpaRepository).deleteByJobId(jobId);
+        verify(tryOnJobJpaRepository).save(any(TryOnJobJpaEntity.class));
+        verify(outboxPublisherPort).saveOutboxEvent(
+                org.mockito.ArgumentMatchers.eq(jobId),
+                org.mockito.ArgumentMatchers.eq(PhotoPurgedDomainEvent.ROUTING_KEY),
+                any(PhotoPurgedDomainEvent.class)
+        );
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Eliminación directa por photoId purga los trabajos asociados del usuario sin dejar referencias pendientes")
+    void shouldPurgeUserJobsWhenDeletedByDirectPhotoIdWithoutLeavingPendingReferences() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID photoId = UUID.randomUUID();
+        UUID userJobId = UUID.randomUUID();
+
+        BiometricPhoto photo = new BiometricPhoto(
+                photoId,
+                ownerId,
+                "image/png",
+                400,
+                600,
+                4096L,
+                SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/p.png?sr=b&sp=r&spr=https"),
+                Instant.now()
+        );
+
+        TryOnJob activeJob = new TryOnJobBuilder()
+                .withId(userJobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("biometric-silhouettes/active.png")
+                .build();
+
+        when(tryOnJobJpaRepository.findById(photoId)).thenReturn(Optional.empty());
+        when(photoJpaRepository.findById(photoId)).thenReturn(Optional.of(mapper.toPhotoJpaEntity(photo)));
+        when(tryOnJobJpaRepository.findByUserIdOrderByCreatedAtDesc(ownerId.value())).thenReturn(List.of(
+                mapper.toJobJpaEntity(activeJob)
+        ));
+
+        deleteService.deleteBiometricPhoto(photoId, ownerId, false);
+
+        verify(photoJpaRepository).deleteByUserId(ownerId.value());
+        verify(blobStoragePort).deleteBlob(any(SasSignedUrl.class));
+        verify(blobStoragePort).deleteBlob("biometric-silhouettes/active.png");
+        verify(tryOnOutfitJpaRepository).deleteByJobId(userJobId);
+        verify(tryOnJobJpaRepository).save(any(TryOnJobJpaEntity.class));
+    }
+
+    @Test
     @DisplayName("HU SR-RF-27: Dado el evento AMQP user.account.deleted, Cuando TryOnEventListenerAdapter lo recibe, Entonces purga todas las fotografías y trabajos del usuario")
     void shouldPurgeAllBiometricDataWhenUserAccountDeletedEventReceived() {
         UserId userId = UserId.of(UUID.randomUUID());
@@ -266,6 +347,10 @@ class DeleteBiometricDataServiceImplTest {
         listenerWithoutDeleteService.onUserAccountDeleted(new UserAccountDeletedEvent(userId.value(), Instant.now()));
 
         assertTrue(alreadyPurgedJob.isPhotoPurged());
-        verify(eventPublisherPort).publishJobEvent(any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort, org.mockito.Mockito.atLeastOnce()).saveOutboxEvent(
+                any(),
+                org.mockito.ArgumentMatchers.eq(PhotoPurgedDomainEvent.ROUTING_KEY),
+                any(PhotoPurgedDomainEvent.class)
+        );
     }
 }

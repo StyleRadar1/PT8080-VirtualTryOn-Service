@@ -58,7 +58,24 @@ class TryOnEventPublisherAdapterTest {
     @DisplayName("HU SR-RF-25: publishJobEvent no realiza acciones si el evento es nulo")
     void shouldDoNothingWhenEventIsNull() {
         adapter.publishJobEvent(null);
+        adapter.publishPhotoPurgedEvent(null);
         verify(rabbitTemplate, never()).convertAndSend(any(String.class), any(String.class), any(TryOnJobDomainEvent.class), any(CorrelationData.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: publishPhotoPurgedEvent publica evento tryon.photo.purged con CorrelationData en el exchange")
+    void shouldPublishPhotoPurgedEventSuccessfully() {
+        edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent event =
+                edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.of(UUID.randomUUID(), UUID.randomUUID());
+
+        adapter.publishPhotoPurgedEvent(event);
+
+        verify(rabbitTemplate).convertAndSend(
+                eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE),
+                eq("tryon.photo.purged"),
+                eq(event),
+                any(CorrelationData.class)
+        );
     }
 
     @Test
