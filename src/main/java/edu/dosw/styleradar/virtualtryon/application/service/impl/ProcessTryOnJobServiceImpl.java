@@ -12,6 +12,7 @@ import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
+import edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.strategy.AiInferenceStrategy;
@@ -144,8 +145,8 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
             }
 
             log.info("Trabajo de prueba virtual {} finalizado con éxito en {} ms", jobId, elapsed);
-        } catch (ConsentRequiredException | InvalidPhotoException ex) {
-            log.error("Fallo definitivo de validación biométrica para el trabajo {}: {}", jobId, ex.getMessage());
+        } catch (ConsentRequiredException | InvalidPhotoException | AiInferencePermanentException ex) {
+            log.error("Fallo definitivo no reintentable para el trabajo {}: {}", jobId, ex.getMessage());
             markFailedAfterRetries(jobId, ex.getMessage());
             throw ex;
         } catch (Exception ex) {

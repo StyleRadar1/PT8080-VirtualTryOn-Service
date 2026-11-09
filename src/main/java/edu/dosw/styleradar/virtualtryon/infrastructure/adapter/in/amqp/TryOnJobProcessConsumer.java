@@ -1,6 +1,7 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp;
 
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
+import edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
@@ -43,7 +44,7 @@ public class TryOnJobProcessConsumer {
         try {
             processTryOnJobUseCase.processJob(event.jobId());
             log.info("Consumidor AMQP: trabajo {} procesado exitosamente o descartado de forma idempotente", event.jobId());
-        } catch (JobNotFoundException | ConsentRequiredException | InvalidPhotoException | IllegalArgumentException ex) {
+        } catch (JobNotFoundException | ConsentRequiredException | InvalidPhotoException | AiInferencePermanentException | IllegalArgumentException ex) {
             log.error("Error permanente/no-reintentable para trabajo {} en consumidor AMQP. Desviando mensaje a DLQ: {}",
                     event.jobId(), ex.getMessage());
             throw new AmqpRejectAndDontRequeueException(

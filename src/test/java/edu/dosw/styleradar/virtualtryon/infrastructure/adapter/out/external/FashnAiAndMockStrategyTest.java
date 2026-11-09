@@ -133,12 +133,21 @@ class FashnAiAndMockStrategyTest {
         server.verify();
         server.reset();
 
-        // Caso 2: FASHN AI devuelve status=failed
+        // Caso 2: FASHN AI devuelve status=failed -> lanza AiInferencePermanentException
         server.expect(requestTo(FASHN_URL + "/run"))
                 .andRespond(withSuccess("{\"id\":\"abc\"}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(FASHN_URL + "/status/abc"))
                 .andRespond(withSuccess("{\"status\":\"failed\",\"error\":\"imagen invalida\"}", MediaType.APPLICATION_JSON));
-        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.ONE_PIECES)).isEmpty();
+        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.ONE_PIECES))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
+        server.verify();
+        server.reset();
+
+        // Caso 2b: FASHN AI devuelve 401 Unauthorized -> lanza AiInferencePermanentException
+        server.expect(requestTo(FASHN_URL + "/run"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withUnauthorizedRequest());
+        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
         server.verify();
         server.reset();
 
@@ -353,7 +362,7 @@ class FashnAiAndMockStrategyTest {
                 .build();
 
         assertThatThrownBy(() -> strategyNoStorage.submitTryOn(directPhotoJob))
-                .isInstanceOf(AiProviderTimeoutException.class);
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
         server.verify();
     }
 }
