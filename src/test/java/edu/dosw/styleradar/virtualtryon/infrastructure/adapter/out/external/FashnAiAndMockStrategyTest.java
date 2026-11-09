@@ -65,6 +65,8 @@ class FashnAiAndMockStrategyTest {
         fashnAdapter = new FashnAiRestClientAdapter(builder, "clave-test", Duration.ZERO, 2);
 
         blobStoragePort = Mockito.mock(BlobStoragePort.class);
+        when(blobStoragePort.generateReadOnlySignedUrl(any()))
+                .thenAnswer(inv -> SasSignedUrl.of(inv.getArgument(0).toString() + "?sp=r"));
         when(blobStoragePort.storeRenderedResult(any(), any(), any()))
                 .thenReturn(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/render.png?sv=2024-11-04&sr=b&sp=r&spr=https"));
 
@@ -316,9 +318,43 @@ class FashnAiAndMockStrategyTest {
         server.verify();
         server.reset();
 
-        // Caso 2: checkStatus con null o blanco lanza excepción
+        // Caso 2: checkStatus con null o blanco lanza excepción, y con ID válido consulta el estado
         assertThatThrownBy(() -> fashnAiStrategy.checkStatus(null))
                 .isInstanceOf(AiProviderTimeoutException.class);
+        assertThatThrownBy(() -> fashnAiStrategy.checkStatus("   "))
+                .isInstanceOf(AiProviderTimeoutException.class);
+
+        server.expect(requestTo(FASHN_URL + "/status/ext-123"))
+                .andRespond(withSuccess("{\"status\":\"completed\"}", MediaType.APPLICATION_JSON));
+        assertThat(fashnAiStrategy.checkStatus("ext-123")).isEqualTo(JobStatus.COMPLETED);
+        server.verify();
+        server.reset();
+
+        // Caso 3: supportsProvider
+        assertThat(fashnAiStrategy.supportsProvider(AiProvider.FASHN_AI)).isTrue();
+        assertThat(fashnAiStrategy.supportsProvider(AiProvider.MOCK_LOCAL)).isFalse();
+
+        // Caso 4: FashnAiStrategy con blobStoragePort nulo utiliza directamente job.getPhotoUrl()
+        FashnAiStrategy strategyNoStorage = new FashnAiStrategy(fashnAdapter, null);
+        server.expect(requestTo(FASHN_URL + "/run"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.inputs.model_image").value("https://direct/photo.png"))
+                .andRespond(withSuccess("{\"id\":\"job-no-storage\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(FASHN_URL + "/status/job-no-storage"))
+                .andRespond(withSuccess("{\"status\":\"failed\"}", MediaType.APPLICATION_JSON));
+
+        TryOnJob directPhotoJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://direct/photo.png")
+                .withCategory(GarmentCategory.TOPS)
+                .withGarmentImageUrl(GARMENT_IMAGE_URL)
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+
+        assertThatThrownBy(() -> strategyNoStorage.submitTryOn(directPhotoJob))
+                .isInstanceOf(AiProviderTimeoutException.class);
+        server.verify();
     }
 }
 

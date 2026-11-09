@@ -38,7 +38,8 @@ public record TryOnJobDomainEvent(
                 job.getUserId().value(),
                 job.getGarmentId().value(),
                 job.getStatus(),
-                job.getResultImageUrl() != null ? job.getResultImageUrl().value() : null,
+                // Las URL SAS son credenciales temporales: nunca se propagan por Outbox.
+                null,
                 job.getErrorMessage(),
                 Instant.now()
         );

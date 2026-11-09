@@ -56,7 +56,7 @@ class FlywayMigrationPostgresTest {
 
             MigrateResult result = flyway.migrate();
             assertThat(result.success).isTrue();
-            assertThat(result.migrationsExecuted).isGreaterThanOrEqualTo(4);
+            assertThat(result.migrationsExecuted).isGreaterThanOrEqualTo(6);
 
             try (Connection connection = DriverManager.getConnection(
                     postgres.getJdbcUrl(),
@@ -112,7 +112,7 @@ class FlywayMigrationPostgresTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-24/25: Dado los recursos de Flyway en classpath, Cuando se inspecciona su estructura, Entonces V1, V2, V3 y V4 preservan la inmutabilidad de la historia")
+    @DisplayName("HU SR-RF-24/25: Dado los recursos de Flyway en classpath, Cuando se inspecciona su estructura, Entonces V1 a V6 preservan la inmutabilidad de la historia")
     void shouldValidateFlywayScriptIntegrityAndImmutability() throws Exception {
         ClassLoader classLoader = getClass().getClassLoader();
 
@@ -120,18 +120,21 @@ class FlywayMigrationPostgresTest {
              InputStream v2 = classLoader.getResourceAsStream("db/migration/V2__create_biometric_consent_and_domain_tables.sql");
              InputStream v3 = classLoader.getResourceAsStream("db/migration/V3__create_catalog_garments_and_update_quotas.sql");
              InputStream v4 = classLoader.getResourceAsStream("db/migration/V4__add_try_on_job_rf25_columns.sql");
-             InputStream v5 = classLoader.getResourceAsStream("db/migration/V5__create_outbox_events_table.sql")) {
+             InputStream v5 = classLoader.getResourceAsStream("db/migration/V5__create_outbox_events_table.sql");
+             InputStream v6 = classLoader.getResourceAsStream("db/migration/V6__remove_sas_query_strings.sql")) {
 
             assertThat(v1).as("Script V1 debe existir en classpath").isNotNull();
             assertThat(v2).as("Script V2 debe existir en classpath").isNotNull();
             assertThat(v3).as("Script V3 debe existir en classpath").isNotNull();
             assertThat(v4).as("Script V4 debe existir en classpath").isNotNull();
             assertThat(v5).as("Script V5 debe existir en classpath").isNotNull();
+            assertThat(v6).as("Script V6 debe existir en classpath").isNotNull();
 
             String v2Content = new String(v2.readAllBytes(), StandardCharsets.UTF_8);
             String v3Content = new String(v3.readAllBytes(), StandardCharsets.UTF_8);
             String v4Content = new String(v4.readAllBytes(), StandardCharsets.UTF_8);
             String v5Content = new String(v5.readAllBytes(), StandardCharsets.UTF_8);
+            String v6Content = new String(v6.readAllBytes(), StandardCharsets.UTF_8);
 
             assertThat(v2Content)
                     .as("V2 no debe contener modificaciones posteriores a RF-23")
@@ -149,6 +152,10 @@ class FlywayMigrationPostgresTest {
             assertThat(v5Content)
                     .as("V5 debe contener la creación de outbox_events para Transactional Outbox")
                     .contains("outbox_events", "claimed_at", "claim_expires_at");
+
+            assertThat(v6Content)
+                    .as("V6 debe eliminar los query strings SAS de las rutas persistidas")
+                    .contains("split_part", "try_on_jobs", "biometric_photos");
         }
     }
 }

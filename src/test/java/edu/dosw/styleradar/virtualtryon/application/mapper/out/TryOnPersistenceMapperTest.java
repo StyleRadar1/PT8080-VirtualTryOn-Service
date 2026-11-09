@@ -270,4 +270,44 @@ class TryOnPersistenceMapperTest {
         assertThat(TryOnPersistenceMapper.normalizePersistedBlobPath("http://custom.storage/container-x/userId/photo.png"))
                 .isEqualTo("userId/photo.png");
     }
+
+    @Test
+    @DisplayName("toJobJpaEntity: Debe despojar tokens SAS y query strings de photoUrl y resultImageUrl para que no persistan en BD")
+    void shouldStripSasQueryStringsFromJobEntityUrls() {
+        UUID jobId = UUID.randomUUID();
+        UserId userId = UserId.of(UUID.randomUUID());
+        String photoUrlWithSas = "https://storage.blob.core.windows.net/biometric-silhouettes/user/photo.jpg?se=2026-11-09&sp=r&sig=SecretSig1";
+        String resultUrlWithSas = "https://storage.blob.core.windows.net/tryon-results/user/render.png?se=2026-11-09&sp=r&sig=SecretSig2";
+
+        TryOnJob job = new TryOnJob(
+                jobId,
+                userId,
+                GarmentId.of(UUID.randomUUID()),
+                photoUrlWithSas,
+                GarmentCategory.TOPS,
+                "https://cat.local/shirt.png",
+                JobStatus.COMPLETED,
+                SasSignedUrl.of(resultUrlWithSas),
+                AiProvider.FASHN_AI,
+                1500L,
+                null,
+                false,
+                Instant.now(),
+                Instant.now()
+        );
+
+        TryOnJobJpaEntity entity = mapper.toJobJpaEntity(job);
+
+        assertThat(entity.getPhotoUrl())
+                .isEqualTo("https://storage.blob.core.windows.net/biometric-silhouettes/user/photo.jpg")
+                .doesNotContain("?")
+                .doesNotContain("sig=")
+                .doesNotContain("SecretSig1");
+
+        assertThat(entity.getResultImageUrl())
+                .isEqualTo("https://storage.blob.core.windows.net/tryon-results/user/render.png")
+                .doesNotContain("?")
+                .doesNotContain("sig=")
+                .doesNotContain("SecretSig2");
+    }
 }
