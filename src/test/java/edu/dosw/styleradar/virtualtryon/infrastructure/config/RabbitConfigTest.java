@@ -57,6 +57,22 @@ class RabbitConfigTest {
         assertThat(binding.getExchange()).isEqualTo("test.catalog.events");
         assertThat(binding.getRoutingKey()).isEqualTo("test.catalog.routing.key");
 
+        TopicExchange tryOnExchange = config.tryOnEventsExchange("test.tryon.events");
+        TopicExchange tryOnDlx = config.tryOnDeadLetterExchange("test.tryon.dlx");
+        Queue tryOnDlq = config.tryOnJobProcessDlq("test.tryon.process.dlq");
+        Binding tryOnDlqBinding = config.tryOnJobProcessDlqBinding(tryOnDlq, tryOnDlx, "test.tryon.process.dead");
+        Queue tryOnQueue = config.tryOnJobProcessQueue("test.tryon.process.queue", "test.tryon.dlx", "test.tryon.process.dead");
+        Binding tryOnBinding = config.tryOnJobProcessBinding(tryOnQueue, tryOnExchange, "tryon.job.created");
+
+        assertThat(tryOnExchange.getName()).isEqualTo("test.tryon.events");
+        assertThat(tryOnDlx.getName()).isEqualTo("test.tryon.dlx");
+        assertThat(tryOnDlq.getName()).isEqualTo("test.tryon.process.dlq");
+        assertThat(tryOnDlqBinding.getDestination()).isEqualTo("test.tryon.process.dlq");
+        assertThat(tryOnQueue.getName()).isEqualTo("test.tryon.process.queue");
+        assertThat(tryOnQueue.getArguments()).containsEntry("x-dead-letter-exchange", "test.tryon.dlx");
+        assertThat(tryOnBinding.getDestination()).isEqualTo("test.tryon.process.queue");
+        assertThat(tryOnBinding.getRoutingKey()).isEqualTo("tryon.job.created");
+
         assertThat(converter).isNotNull();
     }
 }

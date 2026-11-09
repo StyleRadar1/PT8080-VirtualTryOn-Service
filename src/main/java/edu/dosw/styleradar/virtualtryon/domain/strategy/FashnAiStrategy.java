@@ -22,6 +22,13 @@ public class FashnAiStrategy implements AiInferenceStrategy {
 
     public FashnAiStrategy(
             AiInferenceClientPort aiInferenceClientPort,
+            BlobStoragePort blobStoragePort
+    ) {
+        this(aiInferenceClientPort, blobStoragePort, null);
+    }
+
+    public FashnAiStrategy(
+            AiInferenceClientPort aiInferenceClientPort,
             BlobStoragePort blobStoragePort,
             MockAiStrategy fallbackStrategy
     ) {
@@ -44,7 +51,9 @@ public class FashnAiStrategy implements AiInferenceStrategy {
         if (renderedBytes.isPresent() && renderedBytes.get().length > 0) {
             return blobStoragePort.storeRenderedResult(job.getUserId(), job.getId(), renderedBytes.get());
         }
-        return fallbackStrategy.submitTryOn(job);
+        throw new AiProviderTimeoutException(
+                "FASHN AI no devolvió una imagen renderizada válida para el trabajo: " + job.getId()
+        );
     }
 
     @Override

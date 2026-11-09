@@ -30,6 +30,11 @@ public class RabbitConfig {
     public static final String DEFAULT_CATALOG_DLQ_ROUTING_KEY = "catalog.garment.updated.dead";
 
     public static final String DEFAULT_TRYON_EXCHANGE = "styleradar.tryon.events";
+    public static final String DEFAULT_TRYON_PROCESS_QUEUE = "q.tryon.job.process";
+    public static final String DEFAULT_TRYON_ROUTING_KEY_CREATED = "tryon.job.created";
+    public static final String DEFAULT_TRYON_DLX = "styleradar.tryon.dlx";
+    public static final String DEFAULT_TRYON_PROCESS_DLQ = "q.tryon.job.process.dlq";
+    public static final String DEFAULT_TRYON_PROCESS_DLQ_ROUTING_KEY = "tryon.job.process.dead";
 
     @Bean
     public TopicExchange catalogEventsExchange(
@@ -87,6 +92,50 @@ public class RabbitConfig {
             @Value("${styleradar.tryon.amqp.exchange:" + DEFAULT_TRYON_EXCHANGE + "}") String exchangeName
     ) {
         return ExchangeBuilder.topicExchange(exchangeName).durable(true).build();
+    }
+
+    @Bean
+    public TopicExchange tryOnDeadLetterExchange(
+            @Value("${styleradar.tryon.amqp.dlx:" + DEFAULT_TRYON_DLX + "}") String dlxName
+    ) {
+        return ExchangeBuilder.topicExchange(dlxName).durable(true).build();
+    }
+
+    @Bean
+    public Queue tryOnJobProcessDlq(
+            @Value("${styleradar.tryon.amqp.process-dlq:" + DEFAULT_TRYON_PROCESS_DLQ + "}") String dlqName
+    ) {
+        return QueueBuilder.durable(dlqName).build();
+    }
+
+    @Bean
+    public Binding tryOnJobProcessDlqBinding(
+            Queue tryOnJobProcessDlq,
+            TopicExchange tryOnDeadLetterExchange,
+            @Value("${styleradar.tryon.amqp.process-dlq-routing-key:" + DEFAULT_TRYON_PROCESS_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return BindingBuilder.bind(tryOnJobProcessDlq).to(tryOnDeadLetterExchange).with(dlqRoutingKey);
+    }
+
+    @Bean
+    public Queue tryOnJobProcessQueue(
+            @Value("${styleradar.tryon.amqp.process-queue:" + DEFAULT_TRYON_PROCESS_QUEUE + "}") String queueName,
+            @Value("${styleradar.tryon.amqp.dlx:" + DEFAULT_TRYON_DLX + "}") String dlxName,
+            @Value("${styleradar.tryon.amqp.process-dlq-routing-key:" + DEFAULT_TRYON_PROCESS_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return QueueBuilder.durable(queueName)
+                .deadLetterExchange(dlxName)
+                .deadLetterRoutingKey(dlqRoutingKey)
+                .build();
+    }
+
+    @Bean
+    public Binding tryOnJobProcessBinding(
+            Queue tryOnJobProcessQueue,
+            TopicExchange tryOnEventsExchange,
+            @Value("${styleradar.tryon.amqp.created-routing-key:" + DEFAULT_TRYON_ROUTING_KEY_CREATED + "}") String routingKey
+    ) {
+        return BindingBuilder.bind(tryOnJobProcessQueue).to(tryOnEventsExchange).with(routingKey);
     }
 
     @Bean

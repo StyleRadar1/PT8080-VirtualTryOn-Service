@@ -106,8 +106,8 @@ class FashnAiAndMockStrategyTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Cuando FASHN AI no tiene API key o falla o termina con failed/timeout/sin id, Entonces retorna vacío y FashnAiStrategy delega en MockAiStrategy")
-    void shouldFallbackToMockAiStrategyWhenFashnAiHasNoKeyOrFails() {
+    @DisplayName("HU SR-RF-25: Cuando FASHN AI falla o no devuelve imagen válida, FashnAiStrategy lanza AiProviderTimeoutException sin recurrir a fallback silencioso")
+    void shouldThrowExceptionWhenFashnAiFailsWithoutSilentFallback() {
         FashnAiRestClientAdapter withoutKey = new FashnAiRestClientAdapter(builder, " ", Duration.ZERO, 2);
         assertThat(withoutKey.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
         assertThat(withoutKey.queryExternalJobStatus("abc")).isEqualTo(JobStatus.COMPLETED);
@@ -115,17 +115,18 @@ class FashnAiAndMockStrategyTest {
         FashnAiRestClientAdapter springConstructed = new FashnAiRestClientAdapter(FASHN_URL, "");
         assertThat(springConstructed.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
 
-        // Caso 1: Error 500 en /run -> FashnAiStrategy hace fallback a MockAiStrategy
+        // Caso 1: Error 500 en /run -> FashnAiStrategy lanza excepción y no entrega resultado falso
         server.expect(requestTo(FASHN_URL + "/run")).andRespond(withServerError());
         TryOnJob job = new TryOnJobBuilder()
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(MODEL_IMAGE_URL)
                 .withCategory(GarmentCategory.BOTTOMS)
+                .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
-        SasSignedUrl fallbackUrl = fashnAiStrategy.submitTryOn(job);
-        assertThat(fallbackUrl.value()).contains("sp=r");
+        assertThatThrownBy(() -> fashnAiStrategy.submitTryOn(job))
+                .isInstanceOf(AiProviderTimeoutException.class);
         server.verify();
         server.reset();
 

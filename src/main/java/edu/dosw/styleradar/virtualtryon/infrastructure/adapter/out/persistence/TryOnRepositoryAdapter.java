@@ -138,6 +138,12 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     }
 
     @Override
+    public Optional<UserQuota> findQuotaByUserIdAndPeriodForUpdate(UserId userId, BillingPeriod billingPeriod) {
+        return quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), billingPeriod.getValue())
+                .map(persistenceMapper::toQuotaDomain);
+    }
+
+    @Override
     public CatalogGarment saveCatalogGarment(CatalogGarment garment) {
         CatalogGarmentJpaEntity saved = catalogGarmentJpaRepository.save(
                 persistenceMapper.toCatalogGarmentJpaEntity(garment)

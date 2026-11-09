@@ -46,8 +46,9 @@ public class TryOnEventPublisherAdapter implements TryOnEventPublisherPort {
             log.info("Evento AMQP {} publicado en exchange {} para el trabajo {}",
                     routingKey, exchangeName, event.jobId());
         } catch (RuntimeException ex) {
-            log.warn("No fue posible publicar el evento {} en RabbitMQ para el trabajo {}: {}",
-                    routingKey, event.jobId(), ex.getMessage());
+            log.error("Fallo crítico al publicar evento {} en RabbitMQ para el trabajo {}: {}",
+                    routingKey, event.jobId(), ex.getMessage(), ex);
+            throw ex;
         }
     }
 }

@@ -134,6 +134,8 @@ class CreateTryOnJobServiceImplTest {
                 RabbitConfig.DEFAULT_TRYON_EXCHANGE
         );
 
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(any(), any())).thenReturn(Optional.empty());
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(any(), any())).thenReturn(Optional.empty());
         lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(tryOnJobJpaRepository.save(any(TryOnJobJpaEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(jobAuditLogJpaRepository.save(any(JobAuditLogJpaEntity.class))).thenAnswer(inv -> {
@@ -185,83 +187,73 @@ class CreateTryOnJobServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Dada solicitud válida con foto, prenda compatible y consentimiento, Cuando se ejecuta createTryOnJob, Entonces valida cadena V01..V03, consume cuota, genera render, guarda JobAuditLog y publica eventos AMQP")
-    void shouldCreateAndCompleteTryOnJobPublishingEventsAndAuditLogs() {
+    @DisplayName("HU SR-RF-25: Dada solicitud válida con foto, prenda compatible y consentimiento, Cuando se ejecuta createTryOnJob, Entonces valida cadena V01..V03, consume cuota, guarda TryOnJob en QUEUED, registra JobAuditLog y publica evento tryon.job.created")
+    void shouldCreateQueuedTryOnJobDeductingQuotaAndPublishingCreatedEvent() {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
         mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
-        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png?sp=r";
 
-        TryOnJob completed = createTryOnJobService.createTryOnJob(
+        TryOnJob queued = createTryOnJobService.createTryOnJob(
                 userId,
                 garmentId,
                 photoUrl,
                 true
         );
 
-        assertThat(completed.getStatus()).isEqualTo(JobStatus.COMPLETED);
-        assertThat(completed.getResultImageUrl()).isNotNull();
-        assertThat(completed.getResultImageUrl().value()).contains("sp=r");
-        assertThat(completed.getExecutionTimeMs()).isGreaterThanOrEqualTo(1L);
-        assertThat(persistedAuditLogs).hasSize(3);
+        assertThat(queued.getStatus()).isEqualTo(JobStatus.QUEUED);
+        assertThat(queued.getResultImageUrl()).isNull();
+        assertThat(persistedAuditLogs).hasSize(1);
         assertThat(persistedAuditLogs.get(0).getNewStatus()).isEqualTo("QUEUED");
-        assertThat(persistedAuditLogs.get(1).getNewStatus()).isEqualTo("PROCESSING");
-        assertThat(persistedAuditLogs.get(2).getNewStatus()).isEqualTo("COMPLETED");
 
         verify(rabbitTemplate).convertAndSend(
                 eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE),
                 eq("tryon.job.created"),
                 any(TryOnJobDomainEvent.class)
         );
-        verify(rabbitTemplate).convertAndSend(
-                eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE),
-                eq("tryon.job.completed"),
-                any(TryOnJobDomainEvent.class)
-        );
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Cuando la estrategia de inferencia lanza error, Entonces marca el job como FAILED, registra auditoría y publica tryon.job.failed en RabbitMQ")
-    void shouldMarkJobFailedAndPublishFailedEventWhenInferenceThrowsException() {
-        UserId userId = UserId.of(UUID.randomUUID());
-        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
-        mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
-        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+    @DisplayName("HU SR-RF-25: Creación con TransactionTemplate, sincronización de cuota desde Redis y validación de photoUrl con blobPath")
+    void shouldCreateQueuedJobWithTransactionTemplateAndCachedRedisCount() {
+        org.springframework.transaction.support.TransactionTemplate mockTemplate = org.mockito.Mockito.mock(
+                org.springframework.transaction.support.TransactionTemplate.class
+        );
+        when(mockTemplate.execute(any())).thenAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
+            return cb.doInTransaction(null);
+        });
 
-        AiInferenceStrategy failingStrategy = Mockito.mock(AiInferenceStrategy.class);
-        when(failingStrategy.supportsProvider(AiProvider.FASHN_AI)).thenReturn(true);
-        when(failingStrategy.submitTryOn(any())).thenThrow(new IllegalStateException("Error de almacenamiento en render"));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<org.springframework.transaction.support.TransactionTemplate> provider =
+                org.mockito.Mockito.mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(mockTemplate);
 
-        CreateTryOnJobServiceImpl failingService = new CreateTryOnJobServiceImpl(
+        CreateTryOnJobServiceImpl serviceWithTx = new CreateTryOnJobServiceImpl(
                 repositoryAdapter,
                 repositoryAdapter,
                 quotaCacheAdapter,
                 repositoryAdapter,
                 eventPublisherAdapter,
-                List.of(failingStrategy),
-                "fashn"
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "mock",
+                provider
         );
+
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        when(valueOperations.get(any())).thenReturn("3");
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
-        assertThatThrownBy(() -> failingService.createTryOnJob(
-                userId,
-                garmentId,
-                photoUrl,
-                true
-        )).isInstanceOf(IllegalStateException.class);
-
-        verify(rabbitTemplate).convertAndSend(
-                eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE),
-                eq("tryon.job.failed"),
-                any(TryOnJobDomainEvent.class)
-        );
-        assertThat(persistedAuditLogs).hasSize(3);
-        assertThat(persistedAuditLogs.get(2).getNewStatus()).isEqualTo("FAILED");
+        TryOnJob job = serviceWithTx.createTryOnJob(userId, garmentId, photoUrl, true);
+        assertThat(job).isNotNull();
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
     }
 
     @Test
@@ -364,7 +356,9 @@ class CreateTryOnJobServiceImplTest {
         eventPublisherAdapter.publishJobEvent(null);
         Mockito.doThrow(new RuntimeException("Rabbit offline"))
                 .when(rabbitTemplate).convertAndSend(any(String.class), any(String.class), any(Object.class));
-        eventPublisherAdapter.publishJobEvent(TryOnJobDomainEvent.fromJob(builtJob));
+        assertThatThrownBy(() -> eventPublisherAdapter.publishJobEvent(TryOnJobDomainEvent.fromJob(builtJob)))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("Rabbit offline");
 
         @SuppressWarnings("unchecked")
         ObjectProvider<RabbitTemplate> emptyRabbitProvider = Mockito.mock(ObjectProvider.class);

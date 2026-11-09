@@ -93,18 +93,10 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @GetMapping("/jobs/{jobId}")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<TryOnJobResponse> getTryOnJob(@PathVariable UUID jobId) {
-        TryOnJobResponse response = new TryOnJobResponse(
-                jobId,
-                UUID.fromString("a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"),
-                UUID.fromString("f8e7d6c5-b4a3-2109-8765-43210fedcba9"),
-                "COMPLETED",
-                "https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png",
-                2100L,
-                null,
-                Instant.now().minusSeconds(10),
-                Instant.now()
-        );
-        return ResponseEntity.ok(response);
+        UUID callerUserId = resolveAndVerifyCallerUserId(null);
+        boolean isAdmin = isAdminCaller();
+        TryOnJob job = queryTryOnJobsService.getTryOnJob(jobId, UserId.of(callerUserId), isAdmin);
+        return ResponseEntity.ok(dtoMapper.toJobResponse(job));
     }
 
     @Override
@@ -192,5 +184,12 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
                     "Identidad de usuario autenticado inválida para validar titularidad en el Probador Virtual"
             );
         }
+    }
+
+    private boolean isAdminCaller() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(ADMIN_ROLES::contains);
     }
 }

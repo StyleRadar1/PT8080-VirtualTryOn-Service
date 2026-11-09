@@ -301,5 +301,61 @@ class QueryTryOnJobsServiceImplTest {
         when(redisTemplate.delete(any(String.class))).thenThrow(new RuntimeException("Redis delete error"));
         redisQuotaCacheAdapter.evictQuota(userId, period);
     }
+
+    @Test
+    @DisplayName("HU SR-RF-25 / SR-RF-26: Consulta de TryOnJob por ID con verificación de titularidad y prevención de IDOR")
+    void shouldGetTryOnJobWithTitularityCheck() {
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UserId otherUser = UserId.of(UUID.randomUUID());
+
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob job = new edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder()
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://storage/photo.png")
+                .withCategory(GarmentCategory.TOPS)
+                .build();
+
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo = org.mockito.Mockito.mock(
+                edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class
+        );
+        QueryTryOnJobsServiceImpl serviceWithJobs = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo
+        );
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(job));
+
+        // 1. Dueño legítimo consulta su job -> 200 OK
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob found = serviceWithJobs.getTryOnJob(jobId, ownerId, false);
+        assertEquals(ownerId, found.getUserId());
+
+        // 2. Administrador consulta cualquier job -> 200 OK
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob adminFound = serviceWithJobs.getTryOnJob(jobId, otherUser, true);
+        assertEquals(ownerId, adminFound.getUserId());
+
+        // 3. Otro usuario no administrador intenta consultar job ajeno o usuario nulo -> 403 Forbidden (prevención IDOR)
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> serviceWithJobs.getTryOnJob(jobId, otherUser, false));
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> serviceWithJobs.getTryOnJob(jobId, null, false));
+
+        // 4. Job inexistente -> 404 Not Found
+        UUID nonExistent = UUID.randomUUID();
+        when(jobRepo.findJobById(nonExistent)).thenReturn(Optional.empty());
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException.class,
+                () -> serviceWithJobs.getTryOnJob(nonExistent, ownerId, false));
+
+        // 5. Servicio sin repositorio de jobs inyectado -> 404 Not Found
+        QueryTryOnJobsServiceImpl serviceWithoutJobRepo = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort
+        );
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException.class,
+                () -> serviceWithoutJobRepo.getTryOnJob(jobId, ownerId, false));
+    }
 }
 

@@ -9,6 +9,7 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
@@ -37,6 +38,8 @@ import java.util.UUID;
 
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -135,6 +138,24 @@ class VirtualTryOnRestControllerTest {
     void testGetTryOnJob() throws Exception {
         UUID userId = UUID.randomUUID();
         UUID jobId = UUID.randomUUID();
+
+        TryOnJob completedJob = new TryOnJob(
+                jobId,
+                UserId.of(userId),
+                GarmentId.of(UUID.randomUUID()),
+                "https://styleradar.blob.core.windows.net/photos/user-test.jpg",
+                GarmentCategory.TOPS,
+                JobStatus.COMPLETED,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png"),
+                edu.dosw.styleradar.virtualtryon.domain.model.AiProvider.MOCK_LOCAL,
+                2100L,
+                null,
+                false,
+                java.time.Instant.now().minusSeconds(10),
+                java.time.Instant.now()
+        );
+        when(queryTryOnJobsService.getTryOnJob(eq(jobId), eq(UserId.of(userId)), anyBoolean()))
+                .thenReturn(completedJob);
 
         mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))

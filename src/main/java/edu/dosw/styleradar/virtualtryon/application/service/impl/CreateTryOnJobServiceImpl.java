@@ -150,21 +150,36 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                         "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
 
         BillingPeriod currentPeriod = BillingPeriod.current();
-        UserQuota quota = resolveCurrentQuota(userId, currentPeriod);
 
-        TryOnValidationContext validationContext = new TryOnValidationContext(
-                userId,
-                garment.getGarmentId(),
-                garment.getCategory(),
-                garment.getImageUrl(),
-                garment.isVisible(),
-                true,
-                quota
-        );
-        validationChain.validate(validationContext);
-
-        // 4. Fase 1: Creación atómica del TryOnJob y consumo de cuota (transacción confirmada en BD)
+        // 4. Creación atómica del TryOnJob y consumo concurrente seguro con bloqueo pesimista en PostgreSQL
         TryOnJob savedQueuedJob = executeInTransaction(() -> {
+            UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)
+                    .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
+
+            OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
+            if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
+                quota = new UserQuota(
+                        quota.getId(),
+                        quota.getUserId(),
+                        quota.getMonthlyLimit(),
+                        cachedUsed.getAsInt(),
+                        quota.getBillingPeriod(),
+                        quota.isRadarPlus(),
+                        quota.getLastResetAt()
+                );
+            }
+
+            TryOnValidationContext validationContext = new TryOnValidationContext(
+                    userId,
+                    garment.getGarmentId(),
+                    garment.getCategory(),
+                    garment.getImageUrl(),
+                    garment.isVisible(),
+                    true,
+                    quota
+            );
+            validationChain.validate(validationContext);
+
             quota.consumeQuota();
             quotaRepositoryPort.saveQuota(quota);
             quotaCachePort.cacheUsedCount(userId, currentPeriod, quota.getUsedCount());
@@ -185,55 +200,12 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                     JobStatus.QUEUED,
                     "Trabajo de prueba virtual creado y encolado tras superar validaciones V01..V03"
             ));
-            eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(saved));
             return saved;
         });
 
-        // 5. Fase 2: Ejecución de inferencia externa (I/O HTTP fuera de transacción JDBC)
-        long startNanos = System.nanoTime();
-        runInTransaction(() -> {
-            savedQueuedJob.startAiProcessing();
-            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                    savedQueuedJob.getId(),
-                    JobStatus.QUEUED,
-                    JobStatus.PROCESSING,
-                    "Iniciando procesamiento de inferencia IA con proveedor " + configuredProvider
-            ));
-        });
-
-        AiInferenceStrategy selectedStrategy = selectStrategy(configuredProvider);
-        try {
-            SasSignedUrl renderUrl = selectedStrategy.submitTryOn(savedQueuedJob);
-            long elapsedMs = Math.max(1L, (System.nanoTime() - startNanos) / 1_000_000L);
-
-            // 6. Fase 3a: Actualización a COMPLETED (transacción confirmada de forma atómica)
-            return executeInTransaction(() -> {
-                savedQueuedJob.complete(renderUrl, elapsedMs);
-                TryOnJob completedJob = jobRepositoryPort.saveJob(savedQueuedJob);
-                jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                        completedJob.getId(),
-                        JobStatus.PROCESSING,
-                        JobStatus.COMPLETED,
-                        "Renderizado de prueba virtual completado exitosamente en " + elapsedMs + " ms"
-                ));
-                eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(completedJob));
-                return completedJob;
-            });
-        } catch (RuntimeException ex) {
-            // 7. Fase 3b: Registro garantizado del fallo en BD en transacción confirmada antes de relanzar
-            runInTransaction(() -> {
-                savedQueuedJob.markFailed(ex.getMessage());
-                TryOnJob failedJob = jobRepositoryPort.saveJob(savedQueuedJob);
-                jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                        failedJob.getId(),
-                        JobStatus.PROCESSING,
-                        JobStatus.FAILED,
-                        "Error durante la generación de prueba virtual: " + failedJob.getErrorMessage()
-                ));
-                eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(failedJob));
-            });
-            throw ex;
-        }
+        // 5. Publicación asíncrona en RabbitMQ para que el consumidor desacoplado ejecute la inferencia
+        eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(savedQueuedJob));
+        return savedQueuedJob;
     }
 
     private <T> T executeInTransaction(Supplier<T> action) {
@@ -243,36 +215,10 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         return action.get();
     }
 
-    private void runInTransaction(Runnable action) {
-        if (transactionTemplate != null) {
-            transactionTemplate.executeWithoutResult(status -> action.run());
-        } else {
-            action.run();
-        }
-    }
-
-    private UserQuota resolveCurrentQuota(UserId userId, BillingPeriod currentPeriod) {
-        UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
-                .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
-        OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
-        if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
-            quota = new UserQuota(
-                    quota.getId(),
-                    quota.getUserId(),
-                    quota.getMonthlyLimit(),
-                    cachedUsed.getAsInt(),
-                    quota.getBillingPeriod(),
-                    quota.isRadarPlus(),
-                    quota.getLastResetAt()
-            );
-        }
-        return quota;
-    }
-
     private AiInferenceStrategy selectStrategy(AiProvider provider) {
         return inferenceStrategies.stream()
                 .filter(strategy -> strategy.supportsProvider(provider))
                 .findFirst()
-                .orElseGet(() -> inferenceStrategies.get(0));
+                .orElse(null);
     }
 }

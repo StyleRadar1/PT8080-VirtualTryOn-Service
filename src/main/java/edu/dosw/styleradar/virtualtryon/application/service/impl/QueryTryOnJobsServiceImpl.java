@@ -2,10 +2,13 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.validation.BiometricConsentValidator;
@@ -16,10 +19,13 @@ import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidatorHandler;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.OptionalInt;
+import java.util.UUID;
 
 /**
  * Implementación del servicio de aplicación para la consulta y sincronización de cuotas mensuales
@@ -32,22 +38,34 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     private final UserQuotaRepositoryPort quotaRepositoryPort;
     private final UserQuotaCachePort quotaCachePort;
     private final BiometricDataRepositoryPort biometricDataRepositoryPort;
+    private final TryOnJobRepositoryPort jobRepositoryPort;
     private final TryOnValidatorHandler eligibilityValidationChain;
 
+    @Autowired
     public QueryTryOnJobsServiceImpl(
             UserQuotaRepositoryPort quotaRepositoryPort,
             UserQuotaCachePort quotaCachePort,
-            BiometricDataRepositoryPort biometricDataRepositoryPort
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            TryOnJobRepositoryPort jobRepositoryPort
     ) {
         this.quotaRepositoryPort = quotaRepositoryPort;
         this.quotaCachePort = quotaCachePort;
         this.biometricDataRepositoryPort = biometricDataRepositoryPort;
+        this.jobRepositoryPort = jobRepositoryPort;
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
         TryOnValidatorHandler garmentValidator = new GarmentCategoryValidator();
         consentValidator.setNext(quotaValidator).setNext(garmentValidator);
         this.eligibilityValidationChain = consentValidator;
+    }
+
+    public QueryTryOnJobsServiceImpl(
+            UserQuotaRepositoryPort quotaRepositoryPort,
+            UserQuotaCachePort quotaCachePort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort
+    ) {
+        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, null);
     }
 
     @Override
@@ -121,6 +139,20 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     @Override
     public CatalogGarment syncCatalogGarment(CatalogGarment garment) {
         return quotaRepositoryPort.saveCatalogGarment(garment);
+    }
+
+    @Override
+    public TryOnJob getTryOnJob(UUID jobId, UserId callerUserId, boolean isAdmin) {
+        if (jobRepositoryPort == null) {
+            throw new JobNotFoundException(jobId);
+        }
+        TryOnJob job = jobRepositoryPort.findJobById(jobId)
+                .orElseThrow(() -> new JobNotFoundException(jobId));
+
+        if (!isAdmin && (callerUserId == null || !job.getUserId().equals(callerUserId))) {
+            throw new AccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
+        }
+        return job;
     }
 }
 
