@@ -15,22 +15,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.AbstractPlatformTransactionManager;
-import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
- * Servicio de aplicación que procesa de forma asíncrona los trabajos de prueba virtual (SR-RF-25).
- * Se ejecuta desacoplado de la petición HTTP inicial, activado por eventos AMQP en RabbitMQ:
- * 1. Pasa el trabajo a PROCESSING en PostgreSQL y registra JobAuditLog.
- * 2. Ejecuta la inferencia generativa (FASHN AI o Mock) fuera de transacciones de BD para no retener conexiones JDBC.
- * 3. Actualiza de forma atómica en PostgreSQL el estado final (COMPLETED o FAILED) con su auditoría.
- * 4. Publica en RabbitMQ POSTERIOR al commit de PostgreSQL para evitar inconsistencias Dual-Write.
+ * Servicio de aplicación que procesa trabajos encolados de prueba virtual invocando la estrategia de IA
+ * correspondiente y actualizando su estado a COMPLETED o FAILED de manera atómica (SR-RF-25).
+ * Emplea bloqueo pesimista en PostgreSQL para evitar condiciones de carrera por mensajes duplicados
+ * y publica eventos en RabbitMQ estrictamente posterior al commit de la transacción JDBC.
  */
 @Service
 public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
@@ -55,58 +53,33 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
         this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate es obligatorio para garantizar atomicidad transaccional");
     }
 
-    public ProcessTryOnJobServiceImpl(
-            TryOnJobRepositoryPort jobRepositoryPort,
-            TryOnEventPublisherPort eventPublisherPort,
-            List<AiInferenceStrategy> inferenceStrategies
-    ) {
-        this(jobRepositoryPort, eventPublisherPort, inferenceStrategies, createNoOpTransactionTemplate());
-    }
-
-    private static TransactionTemplate createNoOpTransactionTemplate() {
-        return new TransactionTemplate(new AbstractPlatformTransactionManager() {
-            @Override
-            protected Object doGetTransaction() {
-                return new Object();
-            }
-
-            @Override
-            protected void doBegin(Object transaction, org.springframework.transaction.TransactionDefinition definition) {
-            }
-
-            @Override
-            protected void doCommit(DefaultTransactionStatus status) {
-            }
-
-            @Override
-            protected void doRollback(DefaultTransactionStatus status) {
-            }
-        });
-    }
-
     @Override
     public void processJob(UUID jobId) {
-        TryOnJob job = jobRepositoryPort.findJobById(jobId)
-                .orElseThrow(() -> new JobNotFoundException(jobId));
+        // 1. Bloqueo pesimista y transición atómica a PROCESSING registrada en PostgreSQL
+        TryOnJob job = executeInTransaction(() -> {
+            TryOnJob lockedJob = jobRepositoryPort.findJobByIdForUpdate(jobId)
+                    .orElseThrow(() -> new JobNotFoundException(jobId));
 
-        if (job.getStatus() != JobStatus.QUEUED) {
-            log.warn("El trabajo de prueba virtual {} no se encuentra en estado QUEUED (estado actual: {}), se omite procesamiento duplicado o fuera de secuencia",
-                    jobId, job.getStatus());
-            return;
-        }
+            if (lockedJob.getStatus() != JobStatus.QUEUED) {
+                log.warn("El trabajo de prueba virtual {} no se encuentra en estado QUEUED (estado actual: {}), se omite procesamiento duplicado o fuera de secuencia",
+                        jobId, lockedJob.getStatus());
+                return null;
+            }
 
-        // 1. Transición a PROCESSING registrada en PostgreSQL
-        executeInTransaction(() -> {
-            job.startAiProcessing();
-            jobRepositoryPort.saveJob(job);
+            lockedJob.startAiProcessing();
+            TryOnJob saved = jobRepositoryPort.saveJob(lockedJob);
             jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                    job.getId(),
+                    lockedJob.getId(),
                     JobStatus.QUEUED,
                     JobStatus.PROCESSING,
-                    "Iniciando inferencia generativa de prueba virtual con proveedor " + job.getAiProvider()
+                    "Iniciando inferencia generativa de prueba virtual con proveedor " + lockedJob.getAiProvider()
             ));
-            return null;
+            return saved != null ? saved : lockedJob;
         });
+
+        if (job == null) {
+            return;
+        }
 
         // 2. Inferencia generativa ejecutada fuera del contexto transaccional JDBC
         long startTime = System.currentTimeMillis();
@@ -163,6 +136,32 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
             }
             throw ex;
         }
+    }
+
+    @Override
+    public int sweepStaleProcessingJobs(Duration maxProcessingAge) {
+        Instant threshold = Instant.now().minus(maxProcessingAge != null ? maxProcessingAge : Duration.ofMinutes(10));
+        List<TryOnJob> staleJobs = jobRepositoryPort.findStaleProcessingJobs(threshold);
+        int recovered = 0;
+        for (TryOnJob staleJob : staleJobs) {
+            try {
+                executeInTransaction(() -> {
+                    staleJob.markFailed("Timeout de procesamiento: trabajo interrumpido por caída de worker");
+                    jobRepositoryPort.saveJob(staleJob);
+                    jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                            staleJob.getId(),
+                            JobStatus.PROCESSING,
+                            JobStatus.FAILED,
+                            "Recuperación automática de trabajo bloqueado por caída de nodo ejecutor"
+                    ));
+                    return null;
+                });
+                recovered++;
+            } catch (Exception ex) {
+                log.warn("Error al recuperar trabajo huérfano {}: {}", staleJob.getId(), ex.getMessage());
+            }
+        }
+        return recovered;
     }
 
     private AiInferenceStrategy selectStrategy(AiProvider provider) {

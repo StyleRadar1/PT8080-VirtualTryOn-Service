@@ -4,6 +4,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,10 +19,13 @@ public interface TryOnJobRepositoryPort {
 
     Optional<TryOnJob> findJobById(UUID jobId);
 
+    Optional<TryOnJob> findJobByIdForUpdate(UUID jobId);
+
     List<TryOnJob> findJobsByUserId(UserId userId);
+
+    List<TryOnJob> findStaleProcessingJobs(Instant threshold);
 
     JobAuditLog saveAuditLog(JobAuditLog auditLog);
 
     List<JobAuditLog> findAuditLogsByJobId(UUID jobId);
 }
-

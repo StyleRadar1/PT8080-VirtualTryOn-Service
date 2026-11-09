@@ -151,6 +151,13 @@ class CreateTryOnJobServiceImplTest {
         );
 
         MockAiStrategy mockAiStrategy = new MockAiStrategy(blobStoragePort);
+        org.springframework.transaction.support.TransactionTemplate defaultTxTemplate =
+                org.mockito.Mockito.mock(org.springframework.transaction.support.TransactionTemplate.class);
+        lenient().when(defaultTxTemplate.execute(any())).thenAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
+            return cb.doInTransaction(null);
+        });
+
         createTryOnJobService = new CreateTryOnJobServiceImpl(
                 repositoryAdapter,
                 repositoryAdapter,
@@ -158,7 +165,9 @@ class CreateTryOnJobServiceImplTest {
                 repositoryAdapter,
                 eventPublisherAdapter,
                 List.of(mockAiStrategy),
-                "mock"
+                "mock",
+                defaultTxTemplate,
+                null
         );
     }
 
@@ -237,7 +246,8 @@ class CreateTryOnJobServiceImplTest {
                 eventPublisherAdapter,
                 List.of(new MockAiStrategy(blobStoragePort)),
                 "mock",
-                mockTemplate
+                mockTemplate,
+                null
         );
 
         UserId userId = UserId.of(UUID.randomUUID());
@@ -424,5 +434,73 @@ class CreateTryOnJobServiceImplTest {
         verify(quotaJpaRepository, Mockito.atLeast(2)).save(quotaCaptor.capture());
         UserQuotaJpaEntity lastSavedQuota = quotaCaptor.getAllValues().get(quotaCaptor.getAllValues().size() - 1);
         assertThat(lastSavedQuota.getUsedCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Rechaza URL de silueta con intentos de Directory Traversal")
+    void shouldRejectCandidatePhotoWithDirectoryTraversal() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        String maliciousUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/../other-user/photo.png";
+
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(userId, garmentId, maliciousUrl, true))
+                .isInstanceOf(InvalidPhotoException.class)
+                .hasMessageContaining("no corresponde a la silueta biométrica");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Acepta URL de silueta con barras redundantes y URL encoding válido")
+    void shouldAcceptCandidatePhotoWithTrailingSlashesAndUrlEncoding() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        String validUrlWithTrailingSlash = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png/";
+
+        TryOnJob created = createTryOnJobService.createTryOnJob(userId, garmentId, validUrlWithTrailingSlash, true);
+        assertThat(created).isNotNull();
+        assertThat(created.getStatus()).isEqualTo(JobStatus.QUEUED);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Persiste y despacha a través de OutboxPublisherPort cuando está configurado")
+    void shouldSaveAndPublishOutboxEventWhenOutboxPortPresent() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort mockOutbox =
+                Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort.class);
+        org.springframework.transaction.support.TransactionTemplate mockTemplate = Mockito.mock(
+                org.springframework.transaction.support.TransactionTemplate.class
+        );
+        when(mockTemplate.execute(any())).thenAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
+            return cb.doInTransaction(null);
+        });
+
+        CreateTryOnJobServiceImpl serviceWithOutbox = new CreateTryOnJobServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                quotaCacheAdapter,
+                repositoryAdapter,
+                eventPublisherAdapter,
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "mock",
+                mockTemplate,
+                mockOutbox
+        );
+
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
+        TryOnJob job = serviceWithOutbox.createTryOnJob(userId, garmentId, photoUrl, true);
+
+        assertThat(job).isNotNull();
+        verify(mockOutbox).saveOutboxEvent(eq(job.getId()), eq("tryon.job.created"), any());
+        verify(mockOutbox).publishPendingEvents();
     }
 }

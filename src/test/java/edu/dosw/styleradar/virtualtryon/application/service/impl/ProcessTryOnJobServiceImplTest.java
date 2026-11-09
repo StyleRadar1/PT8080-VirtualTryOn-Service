@@ -20,8 +20,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,12 +34,13 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Pruebas unitarias para el procesador asíncrono de inferencia de IA (SR-RF-25).
+ * Pruebas unitarias para ProcessTryOnJobServiceImpl (SR-RF-25) con TransactionTemplate y bloqueo pesimista.
  */
 @ExtendWith(MockitoExtension.class)
 class ProcessTryOnJobServiceImplTest {
@@ -48,14 +54,23 @@ class ProcessTryOnJobServiceImplTest {
     @Mock
     private AiInferenceStrategy fashnStrategy;
 
+    @Mock
+    private TransactionTemplate transactionTemplate;
+
     private ProcessTryOnJobServiceImpl processTryOnJobService;
 
     @BeforeEach
     void setUp() {
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(inv -> {
+            TransactionCallback<?> cb = inv.getArgument(0);
+            return cb.doInTransaction(null);
+        });
+
         processTryOnJobService = new ProcessTryOnJobServiceImpl(
                 jobRepositoryPort,
                 eventPublisherPort,
-                List.of(fashnStrategy)
+                List.of(fashnStrategy),
+                transactionTemplate
         );
     }
 
@@ -73,7 +88,7 @@ class ProcessTryOnJobServiceImplTest {
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
 
-        when(jobRepositoryPort.findJobById(jobId)).thenReturn(Optional.of(job));
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId)).thenReturn(Optional.of(job));
         when(fashnStrategy.supportsProvider(AiProvider.FASHN_AI)).thenReturn(true);
         when(fashnStrategy.submitTryOn(job)).thenReturn(
                 SasSignedUrl.of("https://storage/render.png?sp=r")
@@ -106,7 +121,7 @@ class ProcessTryOnJobServiceImplTest {
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
 
-        when(jobRepositoryPort.findJobById(jobId)).thenReturn(Optional.of(job));
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId)).thenReturn(Optional.of(job));
         when(fashnStrategy.supportsProvider(AiProvider.FASHN_AI)).thenReturn(true);
         when(fashnStrategy.submitTryOn(job)).thenThrow(
                 new AiProviderTimeoutException("FASHN AI excedió el tiempo límite de generación")
@@ -138,7 +153,7 @@ class ProcessTryOnJobServiceImplTest {
                 .build();
         completedJob.complete(SasSignedUrl.of("https://storage/done.png"), 1500L);
 
-        when(jobRepositoryPort.findJobById(jobId)).thenReturn(Optional.of(completedJob));
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId)).thenReturn(Optional.of(completedJob));
         processTryOnJobService.processJob(jobId);
 
         completedJob.markFailed("Fallo previo");
@@ -154,21 +169,6 @@ class ProcessTryOnJobServiceImplTest {
     @Test
     @DisplayName("HU SR-RF-25: Ejecución a través de TransactionTemplate y manejo de proveedor no soportado")
     void shouldExecuteWithTransactionTemplateAndHandleUnsupportedProvider() {
-        org.springframework.transaction.support.TransactionTemplate mockTemplate = org.mockito.Mockito.mock(
-                org.springframework.transaction.support.TransactionTemplate.class
-        );
-        when(mockTemplate.execute(any())).thenAnswer(inv -> {
-            org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
-            return cb.doInTransaction(null);
-        });
-
-        ProcessTryOnJobServiceImpl serviceWithTx = new ProcessTryOnJobServiceImpl(
-                jobRepositoryPort,
-                eventPublisherPort,
-                List.of(fashnStrategy),
-                mockTemplate
-        );
-
         UUID jobId = UUID.randomUUID();
         TryOnJob job = new TryOnJobBuilder()
                 .withUserId(UserId.of(UUID.randomUUID()))
@@ -178,11 +178,11 @@ class ProcessTryOnJobServiceImplTest {
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
 
-        when(jobRepositoryPort.findJobById(jobId)).thenReturn(Optional.of(job));
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId)).thenReturn(Optional.of(job));
         when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
         when(fashnStrategy.supportsProvider(AiProvider.MOCK_LOCAL)).thenReturn(false);
 
-        assertThatThrownBy(() -> serviceWithTx.processJob(jobId))
+        assertThatThrownBy(() -> processTryOnJobService.processJob(jobId))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -190,10 +190,31 @@ class ProcessTryOnJobServiceImplTest {
     @DisplayName("HU SR-RF-25: Cuando el trabajo no existe, lanza JobNotFoundException")
     void shouldThrowJobNotFoundExceptionWhenJobDoesNotExist() {
         UUID nonExistentId = UUID.randomUUID();
-        when(jobRepositoryPort.findJobById(nonExistentId)).thenReturn(Optional.empty());
+        when(jobRepositoryPort.findJobByIdForUpdate(nonExistentId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> processTryOnJobService.processJob(nonExistentId))
                 .isInstanceOf(JobNotFoundException.class);
     }
-}
 
+    @Test
+    @DisplayName("HU SR-RF-25: Recuperación de trabajos bloqueados en PROCESSING tras caída de worker")
+    void shouldSweepStaleProcessingJobs() {
+        TryOnJob staleJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://storage/photo.png")
+                .withCategory(GarmentCategory.TOPS)
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+        staleJob.startAiProcessing();
+
+        when(jobRepositoryPort.findStaleProcessingJobs(any())).thenReturn(List.of(staleJob));
+        when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        int recovered = processTryOnJobService.sweepStaleProcessingJobs(Duration.ofMinutes(10));
+
+        assertThat(recovered).isEqualTo(1);
+        assertThat(staleJob.getStatus()).isEqualTo(JobStatus.FAILED);
+        assertThat(staleJob.getErrorMessage()).contains("Timeout de procesamiento");
+    }
+}
