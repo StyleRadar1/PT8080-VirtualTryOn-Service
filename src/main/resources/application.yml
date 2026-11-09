@@ -82,7 +82,7 @@ styleradar:
     amqp:
       retry:
         max-attempts: ${TRYON_AMQP_RETRY_MAX_ATTEMPTS:4}
-        initial-interval-ms: ${TRYON_AMQP_RETRY_INITIAL_INTERVAL_MS:1000}
+        initial-interval-ms: ${TRYON_AMQP_RETRY_INITIAL_INTERVAL_MS:2000}
         multiplier: ${TRYON_AMQP_RETRY_MULTIPLIER:2.0}
         max-interval-ms: ${TRYON_AMQP_RETRY_MAX_INTERVAL_MS:10000}
     stale-job:
