@@ -5,13 +5,20 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      run_live_qa_smoke:
+        description: 'Ejecutar smoke test con FASHN AI real y credenciales de QA'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   build-and-test:
-    name: Build, Test & JaCoCo Coverage
+    name: Build, Test & JaCoCo Coverage (PR Pipeline)
     runs-on: ubuntu-latest
 
     steps:
@@ -28,9 +35,7 @@ jobs:
       - name: Grant execute permission for Maven Wrapper
         run: chmod +x mvnw
 
-      - name: Execute Maven Clean Verify (Tests & JaCoCo >= 85%)
-        env:
-          AZURE_LIVE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_ACCOUNT_KEY }}
+      - name: Execute Maven Clean Verify (Unit, Contract & Testcontainers)
         run: ./mvnw clean verify -B
 
       - name: Upload JaCoCo Coverage Report
@@ -60,4 +65,28 @@ jobs:
           file: ./Dockerfile
           push: false
           tags: styleradar/pt8080-virtualtryon-service:ci-test
+
+  qa-live-smoke:
+    name: QA Protected · FASHN AI Live Smoke Test
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live_qa_smoke == true }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Grant execute permission for Maven Wrapper
+        run: chmod +x mvnw
+
+      - name: Execute FASHN AI Live Smoke Test
+        env:
+          FASHN_LIVE_API_KEY: ${{ secrets.FASHN_LIVE_API_KEY }}
+        run: ./mvnw test -Dtest=FashnAiLiveIntegrationTest -B
 
