@@ -231,6 +231,10 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             throw new JobAccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
         }
 
+        if (job.isPhotoPurged() && job.getResultImageUrl() == null) {
+            throw new JobNotFoundException(jobId);
+        }
+
         if (blobStoragePort == null) {
             throw new IllegalStateException(
                     "No es posible ejecutar la purga biométrica bajo la Ley 1581 de 2012 porque el conector de almacenamiento físico (BlobStoragePort) no está configurado o disponible"

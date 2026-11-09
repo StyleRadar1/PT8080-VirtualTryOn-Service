@@ -387,6 +387,47 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-27: Borrado de fotografía por un usuario que no es el propietario ni administrador retorna 403 Forbidden")
+    void testDeleteBiometricPhotoForbiddenForNonOwnerNonAdmin() throws Exception {
+        UUID authenticatedUserId = UUID.randomUUID();
+        UUID otherUserJobId = UUID.randomUUID();
+
+        org.mockito.Mockito.doThrow(new edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException("No tiene permisos para eliminar la fotografía biométrica de otro usuario"))
+                .when(deleteBiometricDataService)
+                .deleteBiometricPhoto(eq(otherUserJobId), eq(UserId.of(authenticatedUserId)), eq(false));
+
+        mockMvc.perform(delete("/api/v1/try-on/personal-photos/{jobId}", otherUserJobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "COMPRADOR")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Borrado de fotografía inexistente o ya purgada retorna 404 Not Found")
+    void testDeleteBiometricPhotoNotFoundWhenAlreadyPurgedOrMissing() throws Exception {
+        UUID authenticatedUserId = UUID.randomUUID();
+        UUID missingJobId = UUID.randomUUID();
+
+        org.mockito.Mockito.doThrow(new edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException(missingJobId))
+                .when(deleteBiometricDataService)
+                .deleteBiometricPhoto(eq(missingJobId), eq(UserId.of(authenticatedUserId)), eq(false));
+
+        mockMvc.perform(delete("/api/v1/try-on/personal-photos/{jobId}", missingJobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "COMPRADOR")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode", is("JOB_NOT_FOUND")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Borrado de fotografía sin cabecera de autenticación retorna 401 Unauthorized")
+    void testDeleteBiometricPhotoUnauthorizedWithoutToken() throws Exception {
+        UUID jobId = UUID.randomUUID();
+
+        mockMvc.perform(delete("/api/v1/try-on/personal-photos/{jobId}", jobId))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     @DisplayName("HU SR-RF-25: Consulta de trabajo por un usuario que no es el propietario ni administrador retorna 403 Forbidden sin exponer información biométrica")
     void testGetTryOnJobForbiddenForNonOwnerNonAdmin() throws Exception {
         UUID authenticatedUserId = UUID.randomUUID();

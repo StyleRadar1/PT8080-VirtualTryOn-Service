@@ -119,13 +119,17 @@ public interface VirtualTryOnOpenApiDoc {
     );
 
     @Operation(
-            summary = "Derecho al olvido: Borrado físico de fotografía biométrica",
-            description = "En cumplimiento de la Ley 1581 de Habeas Data, ejecuta la purga criptográfica inmediata de la fotografía frontal " +
-                    "del usuario en el almacenamiento de objetos, revocando cualquier enlace temporal de acceso."
+            summary = "Derecho al olvido: Borrado físico de fotografía biométrica (SR-RF-27)",
+            description = "En cumplimiento de la Ley 1581 de Habeas Data, ejecuta la purga física inmediata e irreversible de la fotografía frontal " +
+                    "del usuario y resultados generados en Azure Blob Storage y base de datos relacional."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Fotografía purgada físicamente de manera irreversible"),
-            @ApiResponse(responseCode = "404", description = "Fotografía o trabajo no encontrado",
+            @ApiResponse(responseCode = "401", description = "Usuario no autenticado (token JWT requerido)",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado: el usuario no es el titular de la fotografía ni administrador",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = "Fotografía o trabajo inexistente o ya purgado previamente",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
     ResponseEntity<Void> deleteBiometricPhoto(

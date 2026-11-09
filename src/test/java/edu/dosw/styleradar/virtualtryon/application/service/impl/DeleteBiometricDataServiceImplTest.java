@@ -4,6 +4,7 @@ import edu.dosw.styleradar.virtualtryon.application.dto.event.UserAccountDeleted
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
@@ -31,7 +32,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.access.AccessDeniedException;
 
 import java.time.Instant;
 import java.util.List;
@@ -169,8 +169,8 @@ class DeleteBiometricDataServiceImplTest {
                 .build();
         when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(mapper.toJobJpaEntity(job)));
 
-        // Intruso intentando borrar job de otro usuario -> AccessDeniedException
-        assertThrows(AccessDeniedException.class,
+        // Intruso intentando borrar job de otro usuario -> JobAccessDeniedException
+        assertThrows(JobAccessDeniedException.class,
                 () -> deleteService.deleteBiometricPhoto(jobId, intruderId, false));
 
         // Admin puede borrar job de otro usuario (incluso si photoUrl original tenía permisos no-lectura)
@@ -191,7 +191,7 @@ class DeleteBiometricDataServiceImplTest {
         when(tryOnJobJpaRepository.findById(photoId)).thenReturn(Optional.empty());
         when(photoJpaRepository.findById(photoId)).thenReturn(Optional.of(photoEntity));
 
-        assertThrows(AccessDeniedException.class,
+        assertThrows(JobAccessDeniedException.class,
                 () -> deleteService.deleteBiometricPhoto(photoId, intruderId, false));
 
         deleteService.deleteBiometricPhoto(photoId, ownerId, false);
@@ -203,6 +203,25 @@ class DeleteBiometricDataServiceImplTest {
         when(photoJpaRepository.findById(missingId)).thenReturn(Optional.empty());
         assertThrows(JobNotFoundException.class,
                 () -> deleteService.deleteBiometricPhoto(missingId, ownerId, false));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27 (Escenario 3): Dado un trabajo cuya fotografía ya fue purgada previamente (photo_purged = true), Cuando el usuario solicita DELETE, Entonces responde con JobNotFoundException (404)")
+    void shouldThrowJobNotFoundExceptionWhenJobWasAlreadyPurged() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID jobId = UUID.randomUUID();
+        TryOnJob purgedJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("PURGED_BY_USER_REQUEST")
+                .build();
+        purgedJob.purgeBiometricPhoto();
+
+        when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(mapper.toJobJpaEntity(purgedJob)));
+
+        assertThrows(JobNotFoundException.class,
+                () -> deleteService.deleteBiometricPhoto(jobId, ownerId, false));
     }
 
     @Test

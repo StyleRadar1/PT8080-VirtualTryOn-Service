@@ -2,6 +2,7 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
@@ -15,7 +16,6 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,9 +58,12 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
         if (maybeJob.isPresent()) {
             TryOnJob job = maybeJob.get();
             if (!callerIsAdmin && !job.getUserId().equals(callerUserId)) {
-                throw new AccessDeniedException(
+                throw new JobAccessDeniedException(
                         "No tiene permisos para eliminar la fotografía biométrica de otro usuario"
                 );
+            }
+            if (job.isPhotoPurged() && job.getResultImageUrl() == null) {
+                throw new JobNotFoundException(jobOrPhotoId);
             }
             purgeSingleJobAndUserPhoto(job);
             return;
@@ -70,7 +73,7 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
         if (maybePhoto.isPresent()) {
             BiometricPhoto photo = maybePhoto.get();
             if (!callerIsAdmin && !photo.getUserId().equals(callerUserId)) {
-                throw new AccessDeniedException(
+                throw new JobAccessDeniedException(
                         "No tiene permisos para eliminar la fotografía biométrica de otro usuario"
                 );
             }
