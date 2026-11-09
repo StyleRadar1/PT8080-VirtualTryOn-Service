@@ -11,18 +11,20 @@ import org.springframework.context.annotation.Profile;
 /**
  * Configuración de infraestructura para la instanciación de beans de estrategias de IA (Patrón Strategy).
  * Permite mantener las clases de estrategia en el dominio como POJOs puros sin anotaciones del framework Spring (SR-RF-25).
- * El bean MockAiStrategy está estrictamente excluido del perfil de producción (!prod).
+ * Los perfiles dev/test/swagger usan exclusivamente el mock; qa y prod usan la
+ * integración real. Así no existe un fallback silencioso entre ambientes.
  */
 @Configuration
 public class AiStrategyConfig {
 
     @Bean
-    @Profile("!prod")
+    @Profile("dev | test | swagger")
     public MockAiStrategy mockAiStrategy(BlobStoragePort blobStoragePort) {
         return new MockAiStrategy(blobStoragePort);
     }
 
     @Bean
+    @Profile("qa | prod")
     public FashnAiStrategy fashnAiStrategy(
             AiInferenceClientPort aiInferenceClientPort,
             BlobStoragePort blobStoragePort

@@ -10,6 +10,8 @@ import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -19,6 +21,15 @@ import java.time.Instant;
  */
 @Component
 public class VirtualTryOnDtoMapper {
+
+    private BlobStoragePort blobStoragePort;
+
+    public VirtualTryOnDtoMapper() { }
+
+    @Autowired(required = false)
+    public VirtualTryOnDtoMapper(BlobStoragePort blobStoragePort) {
+        this.blobStoragePort = blobStoragePort;
+    }
 
     public BiometricConsentResponse toConsentResponse(BiometricConsent consent) {
         return new BiometricConsentResponse(
@@ -75,11 +86,17 @@ public class VirtualTryOnDtoMapper {
                 job.getUserId().value(),
                 job.getGarmentId().value(),
                 job.getStatus().name(),
-                job.getResultImageUrl() != null ? job.getResultImageUrl().value() : null,
+                temporaryResultUrl(job),
                 job.getExecutionTimeMs(),
                 job.getErrorMessage(),
                 job.getCreatedAt(),
                 job.getUpdatedAt()
         );
+    }
+
+    private String temporaryResultUrl(TryOnJob job) {
+        if (job.getResultImageUrl() == null) return null;
+        if (blobStoragePort == null) return job.getResultImageUrl().value();
+        return blobStoragePort.generateReadOnlySignedUrl(job.getResultImageUrl().value()).value();
     }
 }

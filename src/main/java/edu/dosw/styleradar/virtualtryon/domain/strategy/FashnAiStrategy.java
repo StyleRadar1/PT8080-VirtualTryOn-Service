@@ -33,8 +33,14 @@ public class FashnAiStrategy implements AiInferenceStrategy {
         String garmentReferenceUrl = (job.getGarmentImageUrl() != null && !job.getGarmentImageUrl().isBlank())
                 ? job.getGarmentImageUrl()
                 : "https://styleradar.dosw.edu/catalog/garments/" + job.getGarmentId().value() + ".png";
+        SasSignedUrl photoSignedUrl = blobStoragePort != null
+                ? blobStoragePort.generateReadOnlySignedUrl(job.getPhotoUrl())
+                : null;
+        String effectivePhotoUrl = (photoSignedUrl != null && photoSignedUrl.value() != null)
+                ? photoSignedUrl.value()
+                : job.getPhotoUrl();
         Optional<byte[]> renderedBytes = aiInferenceClientPort.generateTryOnRender(
-                job.getPhotoUrl(),
+                effectivePhotoUrl,
                 garmentReferenceUrl,
                 category
         );

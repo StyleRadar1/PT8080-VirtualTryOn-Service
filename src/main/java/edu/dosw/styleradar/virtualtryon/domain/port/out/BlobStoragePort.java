@@ -40,6 +40,13 @@ public interface BlobStoragePort {
      */
     SasSignedUrl generateReadOnlySignedUrl(String blobPath);
 
+    /** Removes a temporary SAS query string before a storage reference is persisted. */
+    default String normalizeBlobReference(String blobPathOrUrl) {
+        if (blobPathOrUrl == null) return null;
+        int queryIndex = blobPathOrUrl.indexOf('?');
+        return queryIndex >= 0 ? blobPathOrUrl.substring(0, queryIndex) : blobPathOrUrl;
+    }
+
     /**
      * Recupera los bytes binarios de una fotografía almacenada a partir de su ruta de blob o URL firmada.
      */

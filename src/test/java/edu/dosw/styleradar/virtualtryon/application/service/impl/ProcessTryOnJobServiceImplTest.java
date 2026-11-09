@@ -102,7 +102,7 @@ class ProcessTryOnJobServiceImplTest {
 
         assertThat(job.getStatus()).isEqualTo(JobStatus.COMPLETED);
         assertThat(job.getResultImageUrl()).isNotNull();
-        assertThat(job.getResultImageUrl().value()).contains("sp=r");
+        assertThat(job.getResultImageUrl().value()).doesNotContain("sp=r").isEqualTo("https://storage/render.png");
 
         ArgumentCaptor<TryOnJobDomainEvent> eventCaptor = ArgumentCaptor.forClass(TryOnJobDomainEvent.class);
         verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), eventCaptor.capture());
@@ -112,8 +112,8 @@ class ProcessTryOnJobServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Cuando la estrategia de IA falla, marca el job como FAILED, registra auditoría y guarda tryon.job.failed en Outbox")
-    void shouldMarkJobFailedWhenAiStrategyThrowsException() {
+    @DisplayName("HU SR-RF-25: Cuando la estrategia de IA falla transitoriamente, reencola a QUEUED y propaga excepción para reintentos AMQP")
+    void shouldKeepJobInProcessingWhenAiStrategyThrowsTransientException() {
         UUID jobId = UUID.randomUUID();
         UserId userId = UserId.of(UUID.randomUUID());
         TryOnJob job = new TryOnJobBuilder()
@@ -136,8 +136,31 @@ class ProcessTryOnJobServiceImplTest {
         assertThatThrownBy(() -> processTryOnJobService.processJob(jobId))
                 .isInstanceOf(AiProviderTimeoutException.class);
 
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+        verify(outboxPublisherPort, never()).saveOutboxEvent(any(), eq("tryon.job.failed"), any());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: markFailedAfterRetries marca el trabajo como FAILED, registra auditoría y guarda tryon.job.failed en Outbox")
+    void shouldMarkJobFailedAfterRetriesExhausted() {
+        UUID jobId = UUID.randomUUID();
+        TryOnJob job = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://storage/photo.png")
+                .withCategory(GarmentCategory.TOPS)
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+        job.startAiProcessing();
+
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId)).thenReturn(Optional.of(job));
+        when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        processTryOnJobService.markFailedAfterRetries(jobId, "AiProviderTimeoutException");
+
         assertThat(job.getStatus()).isEqualTo(JobStatus.FAILED);
-        assertThat(job.getErrorMessage()).contains("FASHN AI excedió el tiempo límite");
+        assertThat(job.getErrorMessage()).contains("AiProviderTimeoutException");
 
         ArgumentCaptor<TryOnJobDomainEvent> eventCaptor = ArgumentCaptor.forClass(TryOnJobDomainEvent.class);
         verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.job.failed"), eventCaptor.capture());
@@ -146,7 +169,7 @@ class ProcessTryOnJobServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Si el trabajo ya está en estado terminal (COMPLETED, FAILED, PROCESSING), omite la inferencia por idempotencia")
+    @DisplayName("HU SR-RF-25: Si el trabajo ya está en estado terminal (COMPLETED, FAILED, CANCELLED), omite la inferencia por idempotencia")
     void shouldSkipExecutionWhenJobAlreadyInTerminalStatus() {
         UUID jobId = UUID.randomUUID();
         TryOnJob completedJob = new TryOnJobBuilder()
@@ -164,7 +187,7 @@ class ProcessTryOnJobServiceImplTest {
         completedJob.markFailed("Fallo previo");
         processTryOnJobService.processJob(jobId);
 
-        completedJob.startAiProcessing();
+        completedJob.cancel("Cancelado por usuario");
         processTryOnJobService.processJob(jobId);
 
         verify(fashnStrategy, never()).submitTryOn(any());

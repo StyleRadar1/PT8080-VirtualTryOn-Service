@@ -1,0 +1,35 @@
+# ===================================================================
+# Perfil de homologación (qa)
+# Usa FASHN AI y servicios de QA reales. Las credenciales se inyectan
+# exclusivamente mediante secretos/variables del entorno de despliegue.
+# ===================================================================
+
+spring:
+  config:
+    activate:
+      on-profile: qa
+  datasource:
+    url: ${DB_URL:?DB_URL debe configurarse en QA}
+    username: ${DB_USER:?DB_USER debe configurarse en QA}
+    password: ${DB_PASSWORD:?DB_PASSWORD debe configurarse en QA}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  data:
+    redis:
+      host: ${REDIS_HOST:?REDIS_HOST debe configurarse en QA}
+      port: ${REDIS_PORT:6379}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:?RABBITMQ_HOST debe configurarse en QA}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:?RABBITMQ_USER debe configurarse en QA}
+    password: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD debe configurarse en QA}
+
+styleradar:
+  tryon:
+    ai-provider: fashn
+    fashn-api-key: ${FASHN_API_KEY:?FASHN_API_KEY debe configurarse explícitamente en QA}
+    blob-container: ${AZURE_STORAGE_CONTAINER:?AZURE_STORAGE_CONTAINER debe configurarse explícitamente en QA}
+    amqp:
+      publisher-confirms: true

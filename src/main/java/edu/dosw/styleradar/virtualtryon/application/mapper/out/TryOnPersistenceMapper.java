@@ -141,15 +141,19 @@ public class TryOnPersistenceMapper {
     }
 
     public TryOnJobJpaEntity toJobJpaEntity(TryOnJob domain) {
+        String cleanPhotoUrl = domain.getPhotoUrl() != null ? domain.getPhotoUrl().split("\\?", 2)[0] : null;
+        String cleanResultUrl = domain.getResultImageUrl() != null && domain.getResultImageUrl().value() != null
+                ? domain.getResultImageUrl().value().split("\\?", 2)[0]
+                : null;
         return new TryOnJobJpaEntity(
                 domain.getId(),
                 domain.getUserId().value(),
                 domain.getGarmentId().value(),
-                domain.getPhotoUrl(),
+                cleanPhotoUrl,
                 domain.getGarmentCategory().name(),
                 domain.getGarmentImageUrl(),
                 domain.getStatus().name(),
-                domain.getResultImageUrl() != null ? domain.getResultImageUrl().value() : null,
+                cleanResultUrl,
                 domain.getAiProvider().name(),
                 domain.getExecutionTimeMs(),
                 domain.getErrorMessage(),

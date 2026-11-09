@@ -1,6 +1,9 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp;
 
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
+import edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.port.in.ProcessTryOnJobUseCase;
 import edu.dosw.styleradar.virtualtryon.infrastructure.config.RabbitConfig;
@@ -41,18 +44,16 @@ public class TryOnJobProcessConsumer {
         try {
             processTryOnJobUseCase.processJob(event.jobId());
             log.info("Consumidor AMQP: trabajo {} procesado exitosamente o descartado de forma idempotente", event.jobId());
-        } catch (JobNotFoundException | IllegalArgumentException ex) {
+        } catch (JobNotFoundException | ConsentRequiredException | InvalidPhotoException | AiInferencePermanentException | IllegalArgumentException ex) {
             log.error("Error permanente/no-reintentable para trabajo {} en consumidor AMQP. Desviando mensaje a DLQ: {}",
                     event.jobId(), ex.getMessage());
             throw new AmqpRejectAndDontRequeueException(
                     "Error definitivo al procesar prueba virtual en consumidor AMQP. Desviado a DLQ", ex
             );
-        } catch (Exception ex) {
-            log.error("Fallo durante el procesamiento del trabajo {} en consumidor AMQP. Desviando mensaje a DLQ: {}",
-                    event.jobId(), ex.getMessage());
-            throw new AmqpRejectAndDontRequeueException(
-                    "Error al procesar prueba virtual en consumidor AMQP. Desviado a DLQ", ex
-            );
+        } catch (RuntimeException ex) {
+            log.warn("Fallo transitorio para trabajo {}; AMQP aplicará reintento con backoff: {}",
+                    event.jobId(), ex.getClass().getSimpleName());
+            throw ex;
         }
     }
 }
