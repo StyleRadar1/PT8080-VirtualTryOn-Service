@@ -127,6 +127,9 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @DeleteMapping("/personal-photos/{jobId}")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<Void> deleteBiometricPhoto(@PathVariable UUID jobId) {
+        UUID callerUserId = resolveAndVerifyCallerUserId(null);
+        boolean isAdmin = isAdminCaller();
+        queryTryOnJobsService.purgeJobBiometricPhoto(jobId, UserId.of(callerUserId), isAdmin);
         return ResponseEntity.noContent().build();
     }
 

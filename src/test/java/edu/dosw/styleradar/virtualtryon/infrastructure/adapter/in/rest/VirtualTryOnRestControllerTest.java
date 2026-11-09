@@ -370,5 +370,11 @@ class VirtualTryOnRestControllerTest {
         mockMvc.perform(delete("/api/v1/try-on/personal-photos/{jobId}", jobId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR")))
                 .andExpect(status().isNoContent());
+
+        org.mockito.Mockito.verify(queryTryOnJobsService).purgeJobBiometricPhoto(
+                eq(jobId),
+                eq(edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId.of(userId)),
+                eq(false)
+        );
     }
 }

@@ -162,16 +162,11 @@ class ProcessTryOnJobServiceImplTest {
             return cb.doInTransaction(null);
         });
 
-        @SuppressWarnings("unchecked")
-        org.springframework.beans.factory.ObjectProvider<org.springframework.transaction.support.TransactionTemplate> provider =
-                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(mockTemplate);
-
         ProcessTryOnJobServiceImpl serviceWithTx = new ProcessTryOnJobServiceImpl(
                 jobRepositoryPort,
                 eventPublisherPort,
                 List.of(fashnStrategy),
-                provider
+                mockTemplate
         );
 
         UUID jobId = UUID.randomUUID();

@@ -229,11 +229,6 @@ class CreateTryOnJobServiceImplTest {
             return cb.doInTransaction(null);
         });
 
-        @SuppressWarnings("unchecked")
-        ObjectProvider<org.springframework.transaction.support.TransactionTemplate> provider =
-                org.mockito.Mockito.mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(mockTemplate);
-
         CreateTryOnJobServiceImpl serviceWithTx = new CreateTryOnJobServiceImpl(
                 repositoryAdapter,
                 repositoryAdapter,
@@ -242,7 +237,7 @@ class CreateTryOnJobServiceImplTest {
                 eventPublisherAdapter,
                 List.of(new MockAiStrategy(blobStoragePort)),
                 "mock",
-                provider
+                mockTemplate
         );
 
         UserId userId = UserId.of(UUID.randomUUID());

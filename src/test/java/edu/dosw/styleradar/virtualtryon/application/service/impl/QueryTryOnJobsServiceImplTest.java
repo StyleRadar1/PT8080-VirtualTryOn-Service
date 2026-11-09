@@ -357,5 +357,57 @@ class QueryTryOnJobsServiceImplTest {
         assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException.class,
                 () -> serviceWithoutJobRepo.getTryOnJob(jobId, ownerId, false));
     }
+
+    @Test
+    @DisplayName("HU SR-RF-27: purgeJobBiometricPhoto debe eliminar físicamente fotos de blob storage y marcar photoPurged en BD")
+    void shouldPurgeBiometricPhotoAndLogAudit() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class);
+        edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort blobPort =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort.class);
+
+        QueryTryOnJobsServiceImpl service = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo,
+                blobPort
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        String photoUrl = "https://blob/photo.jpg";
+        edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl resultUrl =
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://blob/render.png?sv=2024");
+
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob job = new edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob(
+                jobId,
+                ownerId,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
+                photoUrl,
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                "https://garment.png",
+                edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
+                resultUrl,
+                edu.dosw.styleradar.virtualtryon.domain.model.AiProvider.FASHN_AI,
+                1500L,
+                null,
+                false,
+                Instant.now(),
+                Instant.now()
+        );
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(job));
+
+        service.purgeJobBiometricPhoto(jobId, ownerId, false);
+
+        org.mockito.Mockito.verify(blobPort).deleteBlob(photoUrl);
+        org.mockito.Mockito.verify(blobPort).deleteBlob(resultUrl.value());
+        org.mockito.Mockito.verify(jobRepo).saveJob(job);
+        org.mockito.Mockito.verify(jobRepo).saveAuditLog(any());
+        assertTrue(job.isPhotoPurged());
+        assertEquals("PURGED_BY_USER_REQUEST", job.getPhotoUrl());
+        org.junit.jupiter.api.Assertions.assertNull(job.getResultImageUrl());
+    }
 }
 

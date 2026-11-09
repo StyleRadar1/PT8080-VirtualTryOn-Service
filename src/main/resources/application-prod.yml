@@ -1,0 +1,6 @@
+# Configuración estricta para el perfil de producción (Spring profile: prod)
+# Previene el uso accidental de contenedores de prueba (QA) o valores por defecto en producción (SR-RF-23).
+styleradar:
+  tryon:
+    blob-container: ${AZURE_STORAGE_CONTAINER:?AZURE_STORAGE_CONTAINER debe ser configurado explícitamente en el entorno de producción}
+

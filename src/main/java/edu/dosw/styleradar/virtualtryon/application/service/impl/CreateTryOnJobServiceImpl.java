@@ -30,15 +30,17 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.URI;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.OptionalInt;
 import java.util.function.Supplier;
 
@@ -74,16 +76,16 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             TryOnEventPublisherPort eventPublisherPort,
             List<AiInferenceStrategy> inferenceStrategies,
             @Value("${styleradar.tryon.ai-provider:fashn}") String configuredProviderName,
-            ObjectProvider<TransactionTemplate> transactionTemplateProvider
+            TransactionTemplate transactionTemplate
     ) {
-        this.jobRepositoryPort = jobRepositoryPort;
-        this.quotaRepositoryPort = quotaRepositoryPort;
-        this.quotaCachePort = quotaCachePort;
-        this.biometricDataRepositoryPort = biometricDataRepositoryPort;
-        this.eventPublisherPort = eventPublisherPort;
-        this.inferenceStrategies = inferenceStrategies;
+        this.jobRepositoryPort = Objects.requireNonNull(jobRepositoryPort, "jobRepositoryPort no puede ser nulo");
+        this.quotaRepositoryPort = Objects.requireNonNull(quotaRepositoryPort, "quotaRepositoryPort no puede ser nulo");
+        this.quotaCachePort = Objects.requireNonNull(quotaCachePort, "quotaCachePort no puede ser nulo");
+        this.biometricDataRepositoryPort = Objects.requireNonNull(biometricDataRepositoryPort, "biometricDataRepositoryPort no puede ser nulo");
+        this.eventPublisherPort = Objects.requireNonNull(eventPublisherPort, "eventPublisherPort no puede ser nulo");
+        this.inferenceStrategies = inferenceStrategies != null ? inferenceStrategies : List.of();
         this.configuredProvider = AiProvider.fromConfigValue(configuredProviderName);
-        this.transactionTemplate = transactionTemplateProvider != null ? transactionTemplateProvider.getIfAvailable() : null;
+        this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate es obligatorio para garantizar atomicidad transaccional");
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
@@ -101,7 +103,28 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             List<AiInferenceStrategy> inferenceStrategies,
             String configuredProviderName
     ) {
-        this(jobRepositoryPort, quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, eventPublisherPort, inferenceStrategies, configuredProviderName, null);
+        this(jobRepositoryPort, quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, eventPublisherPort, inferenceStrategies, configuredProviderName, createNoOpTransactionTemplate());
+    }
+
+    private static TransactionTemplate createNoOpTransactionTemplate() {
+        return new TransactionTemplate(new AbstractPlatformTransactionManager() {
+            @Override
+            protected Object doGetTransaction() {
+                return new Object();
+            }
+
+            @Override
+            protected void doBegin(Object transaction, org.springframework.transaction.TransactionDefinition definition) {
+            }
+
+            @Override
+            protected void doCommit(DefaultTransactionStatus status) {
+            }
+
+            @Override
+            protected void doRollback(DefaultTransactionStatus status) {
+            }
+        });
     }
 
     @Override
@@ -212,10 +235,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
     }
 
     private <T> T executeInTransaction(Supplier<T> action) {
-        if (transactionTemplate != null) {
-            return transactionTemplate.execute(status -> action.get());
-        }
-        return action.get();
+        return transactionTemplate.execute(status -> action.get());
     }
 
     private void compensateFailedPublication(TryOnJob job, UserId userId, BillingPeriod period, String errorReason) {
