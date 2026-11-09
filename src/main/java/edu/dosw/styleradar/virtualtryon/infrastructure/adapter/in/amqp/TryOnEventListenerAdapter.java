@@ -78,7 +78,10 @@ public class TryOnEventListenerAdapter {
         }
     }
 
-    @RabbitListener(queues = USER_ACCOUNT_DELETED_QUEUE, autoStartup = "${styleradar.tryon.amqp.listeners-enabled:false}")
+    @RabbitListener(
+            queues = "${styleradar.tryon.amqp.user-account-deleted-queue:" + USER_ACCOUNT_DELETED_QUEUE + "}",
+            autoStartup = "${styleradar.tryon.amqp.listeners-enabled:true}"
+    )
     public void onUserAccountDeleted(UserAccountDeletedEvent event) {
         if (event == null || event.userId() == null) {
             log.warn("Evento user.account.deleted descartado por carecer de userId válido");
