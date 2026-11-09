@@ -14,6 +14,12 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 
+  # Configuración Multipart para carga de siluetas de hasta 5 MB (SR-RF-23)
+  servlet:
+    multipart:
+      max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:5MB}
+      max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:10MB}
+
   # Configuración de Jackson para JSON estándar
   jackson:
     serialization:
@@ -60,7 +66,7 @@ styleradar:
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
     fashn-api-key: ${FASHN_API_KEY:}
     blob-base-url: ${AZURE_STORAGE_BASE_URL}
-    blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes}
+    blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes-qa}
     blob-account-key: ${AZURE_STORAGE_ACCOUNT_KEY}
     blob-read-sas-duration: ${AZURE_READ_SAS_DURATION:PT60M}
     blob-api-version: ${AZURE_STORAGE_API_VERSION:2024-11-04}
