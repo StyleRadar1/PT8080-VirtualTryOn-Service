@@ -138,9 +138,9 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                     "La fotografía proporcionada no corresponde a la silueta biométrica del usuario autenticado");
         }
 
-        String effectivePhotoUrl = (userPhoto.getPhotoUrl() != null && userPhoto.getPhotoUrl().value() != null)
-                ? userPhoto.getPhotoUrl().value()
-                : photoUrl.trim();
+        String effectivePhotoUrl = (photoUrl != null && !photoUrl.isBlank())
+                ? photoUrl.trim()
+                : ((userPhoto.getPhotoUrl() != null) ? userPhoto.getPhotoUrl().value() : null);
 
         // 3. Validación de existencia real de la prenda en el catálogo
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
