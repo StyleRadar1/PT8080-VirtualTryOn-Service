@@ -26,7 +26,7 @@
         <springdoc.version>2.5.0</springdoc.version>
         <resilience4j.version>2.2.0</resilience4j.version>
         <jjwt.version>0.12.5</jjwt.version>
-        <testcontainers.version>1.19.7</testcontainers.version>
+        <testcontainers.version>1.20.4</testcontainers.version>
         <jacoco.version>0.8.11</jacoco.version>
         <sonar.version>3.11.0.3922</sonar.version>
 
@@ -102,6 +102,12 @@
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Migraciones de Base de Datos Flyway (PostgreSQL) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
         </dependency>
 
         <!-- Redis para caché volátil y TTL de estados de jobs -->
@@ -199,6 +205,12 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>rabbitmq</artifactId>
             <scope>test</scope>
         </dependency>
 

@@ -11,13 +11,20 @@ public enum AiProvider {
 
     public static AiProvider fromConfigValue(String rawProvider) {
         if (rawProvider == null || rawProvider.isBlank()) {
-            return MOCK_LOCAL;
+            throw new IllegalArgumentException(
+                    "El proveedor de IA no esta configurado. Configure 'styleradar.tryon.ai-provider' explicitamente (fashn o mock)"
+            );
         }
         String normalized = rawProvider.trim().toUpperCase(Locale.ROOT);
         if ("FASHN".equals(normalized) || "FASHN_AI".equals(normalized)) {
             return FASHN_AI;
         }
-        return MOCK_LOCAL;
+        if ("MOCK".equals(normalized) || "MOCK_LOCAL".equals(normalized)) {
+            return MOCK_LOCAL;
+        }
+        throw new IllegalArgumentException(
+                "Proveedor de IA no soportado: " + rawProvider + ". Valores permitidos: fashn, mock"
+        );
     }
 }
 

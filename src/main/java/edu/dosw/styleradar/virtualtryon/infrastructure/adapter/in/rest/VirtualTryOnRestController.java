@@ -108,8 +108,8 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<TryOnJobResponse> getTryOnJob(@PathVariable UUID jobId) {
         UUID callerUserId = resolveAndVerifyCallerUserId(null);
-        boolean callerIsAdmin = isCallerAdmin();
-        TryOnJob job = queryTryOnJobsService.getJobStatus(jobId, UserId.of(callerUserId), callerIsAdmin);
+        boolean callerIsAdmin = isAdminCaller();
+        TryOnJob job = queryTryOnJobsService.getTryOnJob(jobId, UserId.of(callerUserId), callerIsAdmin);
         return ResponseEntity.ok(dtoMapper.toJobResponse(job));
     }
 
@@ -153,18 +153,13 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<Void> deleteBiometricPhoto(@PathVariable UUID jobId) {
         UUID callerUserId = resolveAndVerifyCallerUserId(null);
-        boolean callerIsAdmin = isCallerAdmin();
+        boolean isAdmin = isAdminCaller();
         if (deleteBiometricDataService != null) {
-            deleteBiometricDataService.deleteBiometricPhoto(jobId, UserId.of(callerUserId), callerIsAdmin);
+            deleteBiometricDataService.deleteBiometricPhoto(jobId, UserId.of(callerUserId), isAdmin);
+        } else {
+            queryTryOnJobsService.purgeJobBiometricPhoto(jobId, UserId.of(callerUserId), isAdmin);
         }
         return ResponseEntity.noContent().build();
-    }
-
-    private boolean isCallerAdmin() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        return authentication != null && authentication.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .anyMatch(ADMIN_ROLES::contains);
     }
 
     private UUID resolveAndVerifyCallerUserId(UUID requestedUserId) {
@@ -221,5 +216,12 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
                     "Identidad de usuario autenticado inválida para validar titularidad en el Probador Virtual"
             );
         }
+    }
+
+    private boolean isAdminCaller() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(ADMIN_ROLES::contains);
     }
 }

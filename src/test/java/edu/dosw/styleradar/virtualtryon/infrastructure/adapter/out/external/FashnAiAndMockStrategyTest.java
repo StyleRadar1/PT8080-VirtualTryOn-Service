@@ -22,10 +22,13 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
+import javax.imageio.ImageIO;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -62,11 +65,13 @@ class FashnAiAndMockStrategyTest {
         fashnAdapter = new FashnAiRestClientAdapter(builder, "clave-test", Duration.ZERO, 2);
 
         blobStoragePort = Mockito.mock(BlobStoragePort.class);
+        when(blobStoragePort.generateReadOnlySignedUrl(any()))
+                .thenAnswer(inv -> SasSignedUrl.of(inv.getArgument(0).toString() + "?sp=r"));
         when(blobStoragePort.storeRenderedResult(any(), any(), any()))
                 .thenReturn(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/render.png?sv=2024-11-04&sr=b&sp=r&spr=https"));
 
         mockAiStrategy = new MockAiStrategy(blobStoragePort);
-        fashnAiStrategy = new FashnAiStrategy(fashnAdapter, blobStoragePort, mockAiStrategy);
+        fashnAiStrategy = new FashnAiStrategy(fashnAdapter, blobStoragePort);
     }
 
     @Test
@@ -90,6 +95,7 @@ class FashnAiAndMockStrategyTest {
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(MODEL_IMAGE_URL)
                 .withCategory(GarmentCategory.TOPS)
+                .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
 
@@ -103,35 +109,45 @@ class FashnAiAndMockStrategyTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Cuando FASHN AI no tiene API key o falla o termina con failed/timeout/sin id, Entonces retorna vacío y FashnAiStrategy delega en MockAiStrategy")
-    void shouldFallbackToMockAiStrategyWhenFashnAiHasNoKeyOrFails() {
+    @DisplayName("HU SR-RF-25: Cuando FASHN AI falla o no devuelve imagen válida, FashnAiStrategy lanza AiProviderTimeoutException sin recurrir a fallback silencioso")
+    void shouldThrowExceptionWhenFashnAiFailsWithoutSilentFallback() {
         FashnAiRestClientAdapter withoutKey = new FashnAiRestClientAdapter(builder, " ", Duration.ZERO, 2);
         assertThat(withoutKey.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
-        assertThat(withoutKey.queryExternalJobStatus("abc")).isEqualTo(JobStatus.COMPLETED);
+        assertThat(withoutKey.queryExternalJobStatus("abc")).isEqualTo(JobStatus.FAILED);
 
         FashnAiRestClientAdapter springConstructed = new FashnAiRestClientAdapter(FASHN_URL, "");
         assertThat(springConstructed.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
 
-        // Caso 1: Error 500 en /run -> FashnAiStrategy hace fallback a MockAiStrategy
+        // Caso 1: Error 500 en /run -> FashnAiStrategy lanza excepción y no entrega resultado falso
         server.expect(requestTo(FASHN_URL + "/run")).andRespond(withServerError());
         TryOnJob job = new TryOnJobBuilder()
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(MODEL_IMAGE_URL)
                 .withCategory(GarmentCategory.BOTTOMS)
+                .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
-        SasSignedUrl fallbackUrl = fashnAiStrategy.submitTryOn(job);
-        assertThat(fallbackUrl.value()).contains("sp=r");
+        assertThatThrownBy(() -> fashnAiStrategy.submitTryOn(job))
+                .isInstanceOf(AiProviderTimeoutException.class);
         server.verify();
         server.reset();
 
-        // Caso 2: FASHN AI devuelve status=failed
+        // Caso 2: FASHN AI devuelve status=failed -> lanza AiInferencePermanentException
         server.expect(requestTo(FASHN_URL + "/run"))
                 .andRespond(withSuccess("{\"id\":\"abc\"}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(FASHN_URL + "/status/abc"))
                 .andRespond(withSuccess("{\"status\":\"failed\",\"error\":\"imagen invalida\"}", MediaType.APPLICATION_JSON));
-        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.ONE_PIECES)).isEmpty();
+        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.ONE_PIECES))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
+        server.verify();
+        server.reset();
+
+        // Caso 2b: FASHN AI devuelve 401 Unauthorized -> lanza AiInferencePermanentException
+        server.expect(requestTo(FASHN_URL + "/run"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withUnauthorizedRequest());
+        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
         server.verify();
         server.reset();
 
@@ -203,6 +219,151 @@ class FashnAiAndMockStrategyTest {
         assertThat(decoded.getHeight()).isEqualTo(1600);
         assertThat(decoded.getWidth()).isEqualTo(1200);
         assertThat(mockAiStrategy.decodeImage(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Cuando MockAiStrategy recibe URLs de Azure Blob Storage con bytes reales, Entonces decodifica y compone las imágenes del usuario y prenda")
+    void shouldSubmitTryOnWithRealBlobBytesInMockAiStrategy() throws Exception {
+        BufferedImage realUserPhoto = new BufferedImage(300, 500, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream userPhotoStream = new ByteArrayOutputStream();
+        ImageIO.write(realUserPhoto, "png", userPhotoStream);
+
+        BufferedImage realGarment = new BufferedImage(150, 200, BufferedImage.TYPE_INT_ARGB);
+        ByteArrayOutputStream garmentStream = new ByteArrayOutputStream();
+        ImageIO.write(realGarment, "png", garmentStream);
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/user/photo.png";
+        String garmentUrl = "https://styleradarblob.blob.core.windows.net/catalog-garments/garment.png";
+
+        when(blobStoragePort.retrieveBlobBytes(photoUrl)).thenReturn(Optional.of(userPhotoStream.toByteArray()));
+        when(blobStoragePort.retrieveBlobBytes(garmentUrl)).thenReturn(Optional.of(garmentStream.toByteArray()));
+
+        TryOnJob job = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(photoUrl)
+                .withCategory(GarmentCategory.TOPS)
+                .withGarmentImageUrl(garmentUrl)
+                .withProvider(AiProvider.MOCK_LOCAL)
+                .build();
+
+        SasSignedUrl result = mockAiStrategy.submitTryOn(job);
+        assertThat(result).isNotNull();
+        Mockito.verify(blobStoragePort).retrieveBlobBytes(photoUrl);
+        Mockito.verify(blobStoragePort).retrieveBlobBytes(garmentUrl);
+        Mockito.verify(blobStoragePort).storeRenderedResult(eq(job.getUserId()), eq(job.getId()), any(byte[].class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Cuando MockAiStrategy recibe URLs nulas o vacías, o blobs ausentes, utiliza lienzos de contingencia para todas las categorías")
+    void shouldHandleFallbackCanvasesInMockAiStrategy() {
+        // Caso 1: PhotoUrl ausente en blobStorage, GarmentImageUrl nulo, categoría BOTTOMS
+        when(blobStoragePort.retrieveBlobBytes("https://empty/bottoms-user.png")).thenReturn(Optional.empty());
+        TryOnJob nullGarmentJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://empty/bottoms-user.png")
+                .withCategory(GarmentCategory.BOTTOMS)
+                .withGarmentImageUrl(null)
+                .withProvider(AiProvider.MOCK_LOCAL)
+                .build();
+        SasSignedUrl resultBottoms = mockAiStrategy.submitTryOn(nullGarmentJob);
+        assertThat(resultBottoms).isNotNull();
+
+        // Caso 2: PhotoUrl y GarmentImageUrl ausentes en blobStorage, categoría ONE_PIECES
+        when(blobStoragePort.retrieveBlobBytes("https://empty/user.png")).thenReturn(Optional.empty());
+        when(blobStoragePort.retrieveBlobBytes("https://empty/garment.png")).thenReturn(Optional.empty());
+
+        TryOnJob emptyBlobsJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://empty/user.png")
+                .withCategory(GarmentCategory.ONE_PIECES)
+                .withGarmentImageUrl("https://empty/garment.png")
+                .withProvider(AiProvider.MOCK_LOCAL)
+                .build();
+        SasSignedUrl resultOnePieces = mockAiStrategy.submitTryOn(emptyBlobsJob);
+        assertThat(resultOnePieces).isNotNull();
+
+        // Caso 3: Categoría nula y decodeImage con bytes corruptos
+        when(blobStoragePort.retrieveBlobBytes("https://empty/nullcat-user.png")).thenReturn(Optional.empty());
+        TryOnJob nullCategoryJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://empty/nullcat-user.png")
+                .withCategory(null)
+                .withGarmentImageUrl(null)
+                .withProvider(AiProvider.MOCK_LOCAL)
+                .build();
+        SasSignedUrl resultNullCategory = mockAiStrategy.submitTryOn(nullCategoryJob);
+        assertThat(resultNullCategory).isNotNull();
+
+        assertThat(mockAiStrategy.decodeImage(new byte[]{1, 2, 3, 4})).isNull();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: FashnAiStrategy debe manejar categorías nulas, URLs de prenda por defecto y respuestas vacías")
+    void shouldHandleFashnAiEdgeCases() {
+        // Caso 1: Categoría nula y garmentImageUrl en blanco -> defaults to TOPS y catálogo por defecto
+        server.expect(requestTo(FASHN_URL + "/run"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.inputs.category").value("tops"))
+                .andExpect(jsonPath("$.inputs.garment_image").value(org.hamcrest.Matchers.containsString("/catalog/garments/")))
+                .andRespond(withSuccess("{\"id\":\"job-def\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(FASHN_URL + "/status/job-def"))
+                .andRespond(withSuccess("{\"status\":\"completed\",\"output\":[\"data:image/png;base64,AQID\"]}", MediaType.APPLICATION_JSON));
+
+        TryOnJob jobWithDefaults = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(MODEL_IMAGE_URL)
+                .withCategory(null)
+                .withGarmentImageUrl("   ")
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+
+        SasSignedUrl url = fashnAiStrategy.submitTryOn(jobWithDefaults);
+        assertThat(url).isNotNull();
+        server.verify();
+        server.reset();
+
+        // Caso 2: checkStatus con null o blanco lanza excepción, y con ID válido consulta el estado
+        assertThatThrownBy(() -> fashnAiStrategy.checkStatus(null))
+                .isInstanceOf(AiProviderTimeoutException.class);
+        assertThatThrownBy(() -> fashnAiStrategy.checkStatus("   "))
+                .isInstanceOf(AiProviderTimeoutException.class);
+
+        server.expect(requestTo(FASHN_URL + "/status/ext-123"))
+                .andRespond(withSuccess("{\"status\":\"completed\"}", MediaType.APPLICATION_JSON));
+        assertThat(fashnAiStrategy.checkStatus("ext-123")).isEqualTo(JobStatus.COMPLETED);
+        server.verify();
+        server.reset();
+
+        // Caso 3: supportsProvider
+        assertThat(fashnAiStrategy.supportsProvider(AiProvider.FASHN_AI)).isTrue();
+        assertThat(fashnAiStrategy.supportsProvider(AiProvider.MOCK_LOCAL)).isFalse();
+
+        // Caso 4: FashnAiStrategy con blobStoragePort nulo utiliza directamente job.getPhotoUrl()
+        FashnAiStrategy strategyNoStorage = new FashnAiStrategy(fashnAdapter, null);
+        server.expect(requestTo(FASHN_URL + "/run"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.inputs.model_image").value("https://direct/photo.png"))
+                .andRespond(withSuccess("{\"id\":\"job-no-storage\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(FASHN_URL + "/status/job-no-storage"))
+                .andRespond(withSuccess("{\"status\":\"failed\"}", MediaType.APPLICATION_JSON));
+
+        TryOnJob directPhotoJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://direct/photo.png")
+                .withCategory(GarmentCategory.TOPS)
+                .withGarmentImageUrl(GARMENT_IMAGE_URL)
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+
+        assertThatThrownBy(() -> strategyNoStorage.submitTryOn(directPhotoJob))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
+        server.verify();
     }
 }
 

@@ -15,7 +15,7 @@ import java.util.UUID;
  */
 public class TryOnOutfit {
 
-    public static final Duration DEFAULT_SAS_VALIDITY = Duration.ofHours(1);
+    public static final Duration DEFAULT_SAS_VALIDITY = Duration.ofMinutes(15);
 
     private final UUID id;
     private final UUID jobId;

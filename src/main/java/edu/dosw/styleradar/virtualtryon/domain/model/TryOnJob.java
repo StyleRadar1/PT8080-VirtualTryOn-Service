@@ -19,6 +19,7 @@ public class TryOnJob {
     private final GarmentId garmentId;
     private String photoUrl;
     private final GarmentCategory garmentCategory;
+    private final String garmentImageUrl;
     private JobStatus status;
     private SasSignedUrl resultImageUrl;
     private final AiProvider aiProvider;
@@ -34,6 +35,7 @@ public class TryOnJob {
             GarmentId garmentId,
             String photoUrl,
             GarmentCategory garmentCategory,
+            String garmentImageUrl,
             JobStatus status,
             SasSignedUrl resultImageUrl,
             AiProvider aiProvider,
@@ -51,6 +53,7 @@ public class TryOnJob {
         }
         this.photoUrl = photoUrl;
         this.garmentCategory = Objects.requireNonNull(garmentCategory, "La categoría de la prenda no puede ser nula");
+        this.garmentImageUrl = garmentImageUrl;
         this.status = Objects.requireNonNull(status, "El estado del trabajo no puede ser nulo");
         this.resultImageUrl = resultImageUrl;
         this.aiProvider = Objects.requireNonNull(aiProvider, "El proveedor de IA no puede ser nulo");
@@ -61,8 +64,32 @@ public class TryOnJob {
         this.updatedAt = Objects.requireNonNull(updatedAt, "La fecha de actualización no puede ser nula");
     }
 
+    public TryOnJob(
+            UUID id,
+            UserId userId,
+            GarmentId garmentId,
+            String photoUrl,
+            GarmentCategory garmentCategory,
+            JobStatus status,
+            SasSignedUrl resultImageUrl,
+            AiProvider aiProvider,
+            Long executionTimeMs,
+            String errorMessage,
+            boolean photoPurged,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+        this(id, userId, garmentId, photoUrl, garmentCategory, null, status, resultImageUrl, aiProvider, executionTimeMs, errorMessage, photoPurged, createdAt, updatedAt);
+    }
+
     public void startAiProcessing() {
         this.status = JobStatus.PROCESSING;
+        this.updatedAt = Instant.now();
+    }
+
+    public void requeueForRetry(String reason) {
+        this.status = JobStatus.QUEUED;
+        this.errorMessage = (reason == null || reason.isBlank()) ? "Reencolado para reintento tras fallo transitorio" : reason.trim();
         this.updatedAt = Instant.now();
     }
 
@@ -84,11 +111,26 @@ public class TryOnJob {
         this.updatedAt = Instant.now();
     }
 
-    public void purgeBiometricPhoto() {
+    public void cancel(String reason) {
+        this.errorMessage = (reason == null || reason.isBlank()) ? "Cancelado por el usuario" : reason.trim();
+        this.status = JobStatus.CANCELLED;
+        this.updatedAt = Instant.now();
+    }
+
+    public void purgeRawSilhouettePhoto() {
         this.photoUrl = "PURGED_BY_USER_REQUEST";
-        this.resultImageUrl = null;
         this.photoPurged = true;
         this.updatedAt = Instant.now();
+    }
+
+    public void purgeResultRenderImage() {
+        this.resultImageUrl = null;
+        this.updatedAt = Instant.now();
+    }
+
+    public void purgeBiometricPhoto() {
+        purgeRawSilhouettePhoto();
+        purgeResultRenderImage();
     }
 
     public UUID getId() {
@@ -109,6 +151,10 @@ public class TryOnJob {
 
     public GarmentCategory getGarmentCategory() {
         return garmentCategory;
+    }
+
+    public String getGarmentImageUrl() {
+        return garmentImageUrl;
     }
 
     public JobStatus getStatus() {

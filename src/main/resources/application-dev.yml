@@ -20,7 +20,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: ${JPA_DDL_AUTO:update}
+      ddl-auto: ${JPA_DDL_AUTO:validate}
     show-sql: true
     properties:
       hibernate:
@@ -48,3 +48,11 @@ styleradar:
     daily-quota-limit: 10
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
     fashn-api-key: ${FASHN_API_KEY:}
+    amqp:
+      listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:true}
+      catalog-exchange: ${CATALOG_EVENTS_EXCHANGE:styleradar.catalog.events}
+      catalog-garment-queue: ${CATALOG_GARMENT_QUEUE:q.tryon.catalog.garment.updated}
+      catalog-garment-routing-key: ${CATALOG_GARMENT_ROUTING_KEY:catalog.garment.updated}
+      catalog-dlx: ${CATALOG_EVENTS_DLX:styleradar.catalog.dlx}
+      catalog-garment-dlq: ${CATALOG_GARMENT_DLQ:q.tryon.catalog.garment.updated.dlq}
+      catalog-garment-dlq-routing-key: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:catalog.garment.updated.dead}
