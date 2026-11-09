@@ -100,6 +100,9 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             String photoUrl,
             boolean biometricConsent
     ) {
+        // Validar tempranamente que el proveedor configurado cuente con una estrategia soportada registrada
+        selectStrategy(configuredProvider);
+
         // 1. Verificación estricta de consentimiento biométrico explícito y registrado (Ley 1581 de 2012)
         if (!biometricConsent) {
             throw new ConsentRequiredException(
@@ -237,11 +240,11 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         return transactionTemplate.execute(status -> action.get());
     }
 
-    private AiInferenceStrategy selectStrategy(AiProvider provider) {
+    AiInferenceStrategy selectStrategy(AiProvider provider) {
         return inferenceStrategies.stream()
                 .filter(strategy -> strategy.supportsProvider(provider))
                 .findFirst()
-                .orElse(null);
+                .orElseThrow(() -> new IllegalStateException("No existe una estrategia configurada para el proveedor: " + provider));
     }
 
     private boolean isPhotoOwnedByUser(String candidatePhotoUrl, BiometricPhoto userPhoto, UserId userId) {

@@ -116,6 +116,7 @@ class CreateTryOnJobServiceImplTest {
     private RedisQuotaCacheAdapter quotaCacheAdapter;
     private TryOnEventPublisherAdapter eventPublisherAdapter;
     private CreateTryOnJobServiceImpl createTryOnJobService;
+    private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
     private final List<JobAuditLogJpaEntity> persistedAuditLogs = new ArrayList<>();
 
     @BeforeEach
@@ -155,9 +156,8 @@ class CreateTryOnJobServiceImplTest {
         );
 
         MockAiStrategy mockAiStrategy = new MockAiStrategy(blobStoragePort);
-        org.springframework.transaction.support.TransactionTemplate defaultTxTemplate =
-                org.mockito.Mockito.mock(org.springframework.transaction.support.TransactionTemplate.class);
-        lenient().when(defaultTxTemplate.execute(any())).thenAnswer(inv -> {
+        transactionTemplate = org.mockito.Mockito.mock(org.springframework.transaction.support.TransactionTemplate.class);
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(inv -> {
             org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
             return cb.doInTransaction(null);
         });
@@ -169,7 +169,7 @@ class CreateTryOnJobServiceImplTest {
                 repositoryAdapter,
                 List.of(mockAiStrategy),
                 "mock",
-                defaultTxTemplate,
+                transactionTemplate,
                 outboxPublisherPort
         );
     }
@@ -651,6 +651,78 @@ class CreateTryOnJobServiceImplTest {
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
         TryOnJob job = service.createTryOnJob(userId, garmentId, photoUrl, true);
+
+        assertThat(job).isNotNull();
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: selectStrategy lanza IllegalStateException explícita cuando no existe una estrategia para el proveedor")
+    void shouldThrowIllegalStateExceptionWhenProviderHasNoStrategy() {
+        CreateTryOnJobServiceImpl serviceWithoutFashn = new CreateTryOnJobServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                quotaCacheAdapter,
+                repositoryAdapter,
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "fashn",
+                transactionTemplate,
+                outboxPublisherPort
+        );
+
+        assertThatThrownBy(() -> serviceWithoutFashn.selectStrategy(AiProvider.FASHN_AI))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("No existe una estrategia configurada para el proveedor: FASHN_AI");
+
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        assertThatThrownBy(() -> serviceWithoutFashn.createTryOnJob(userId, garmentId, "https://photo.png", true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("No existe una estrategia configurada para el proveedor: FASHN_AI");
+    }
+
+    @Test
+    @DisplayName("Seguridad biométrica: Prevención de Path Traversal y validación estricta de titularidad de la foto")
+    void shouldRejectPathTraversalAndInvalidPhotoOwnership() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        // Path traversal
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(userId, garmentId, "https://storage/../etc/passwd", true))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException.class)
+                .hasMessageContaining("no corresponde a la silueta biométrica");
+
+        // Photo URL nula o vacía
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(userId, garmentId, null, true))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException.class)
+                .hasMessageContaining("La URL de la fotografía frontal es obligatoria");
+
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(userId, garmentId, "   ", true))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException.class)
+                .hasMessageContaining("La URL de la fotografía frontal es obligatoria");
+
+        // Foto de otro usuario
+        String otherUserPhoto = "https://storage/biometric-silhouettes/" + UUID.randomUUID() + "/silhouette-test.png";
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(userId, garmentId, otherUserPhoto, true))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException.class)
+                .hasMessageContaining("no corresponde a la silueta biométrica");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Fallo temporal en despacho inmediato de Outbox no revierte la creación del trabajo")
+    void shouldNotFailWhenOutboxPublishFailsOnJobCreation() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        Mockito.doThrow(new RuntimeException("AMQP connection refused"))
+                .when(outboxPublisherPort).publishPendingEvents();
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
+        TryOnJob job = createTryOnJobService.createTryOnJob(userId, garmentId, photoUrl, true);
 
         assertThat(job).isNotNull();
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);

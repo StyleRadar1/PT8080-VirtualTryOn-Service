@@ -66,7 +66,9 @@ styleradar:
       secret-base64: ${JWT_SECRET_BASE64}
       duration: ${JWT_DURATION:PT60M}
   tryon:
-    ai-provider: ${TRYON_AI_PROVIDER:fashn}
+    # El proveedor real se habilita exclusivamente en qa/prod. Los perfiles locales
+    # deben declarar mock explícitamente para evitar consumo accidental de FASHN.
+    ai-provider: ${TRYON_AI_PROVIDER:mock}
     daily-quota-limit: ${TRYON_DAILY_QUOTA_LIMIT:10}
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
     fashn-api-key: ${FASHN_API_KEY:}
@@ -77,6 +79,12 @@ styleradar:
     blob-api-version: ${AZURE_STORAGE_API_VERSION:2024-11-04}
     outbox:
       poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
+    amqp:
+      retry:
+        max-attempts: ${TRYON_AMQP_RETRY_MAX_ATTEMPTS:4}
+        initial-interval-ms: ${TRYON_AMQP_RETRY_INITIAL_INTERVAL_MS:1000}
+        multiplier: ${TRYON_AMQP_RETRY_MULTIPLIER:2.0}
+        max-interval-ms: ${TRYON_AMQP_RETRY_MAX_INTERVAL_MS:10000}
     stale-job:
       enabled: ${STALE_JOB_SWEEP_ENABLED:true}
       sweep-interval-ms: ${STALE_JOB_SWEEP_INTERVAL_MS:60000}
