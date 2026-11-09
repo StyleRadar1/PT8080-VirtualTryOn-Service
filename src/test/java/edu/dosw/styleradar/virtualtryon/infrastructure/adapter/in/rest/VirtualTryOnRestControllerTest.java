@@ -6,6 +6,8 @@ import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMap
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
@@ -15,6 +17,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtAuthenticationFilter;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtTokenProvider;
@@ -134,28 +137,25 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-26 (V05): Dado un jobId existente de un job completado, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 200 OK con estado COMPLETED y URL temporal firmada SAS")
+    @DisplayName("HU SR-RF-26 (V05): Dado un jobId existente de un job completado o historial del usuario, Cuando se envía GET /api/v1/try-on/jobs/{id} y GET /api/v1/try-on/jobs, Entonces responde 200 OK con estado COMPLETED y URL temporal firmada SAS")
     void testGetTryOnJob() throws Exception {
         UUID userId = UUID.randomUUID();
         UUID jobId = UUID.randomUUID();
-
-        TryOnJob completedJob = new TryOnJob(
-                jobId,
-                UserId.of(userId),
-                GarmentId.of(UUID.randomUUID()),
-                "https://styleradar.blob.core.windows.net/photos/user-test.jpg",
-                GarmentCategory.TOPS,
-                JobStatus.COMPLETED,
-                edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png"),
-                edu.dosw.styleradar.virtualtryon.domain.model.AiProvider.MOCK_LOCAL,
-                2100L,
-                null,
-                false,
-                java.time.Instant.now().minusSeconds(10),
-                java.time.Instant.now()
+        TryOnJob completedJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(UserId.of(userId))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withCategory(GarmentCategory.TOPS)
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
+                .build();
+        completedJob.complete(
+                SasSignedUrl.of("https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png?sr=b&sp=r&spr=https"),
+                2100L
         );
-        when(queryTryOnJobsService.getTryOnJob(eq(jobId), eq(UserId.of(userId)), anyBoolean()))
-                .thenReturn(completedJob);
+
+        when(queryTryOnJobsService.getJobStatus(eq(jobId), eq(UserId.of(userId)), anyBoolean())).thenReturn(completedJob);
+        when(queryTryOnJobsService.getTryOnJob(eq(jobId), eq(UserId.of(userId)), anyBoolean())).thenReturn(completedJob);
+        when(queryTryOnJobsService.getJobHistory(UserId.of(userId))).thenReturn(List.of(completedJob));
 
         mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
@@ -164,6 +164,13 @@ class VirtualTryOnRestControllerTest {
                 .andExpect(jsonPath("$.jobId", is(jobId.toString())))
                 .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.resultImageUrl", notNullValue()));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].jobId", is(jobId.toString())))
+                .andExpect(jsonPath("$[0].status", is("COMPLETED")));
     }
 
     @Test
@@ -394,5 +401,94 @@ class VirtualTryOnRestControllerTest {
                 .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")))
                 .andExpect(jsonPath("$.photoUrl").doesNotExist())
                 .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Dado un jobId en estado PROCESSING, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 200 OK con estado PROCESSING y estimatedCompletionAt")
+    void testGetTryOnJobProcessingWithEstimatedCompletion() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        TryOnJob processingJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(UserId.of(userId))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withCategory(GarmentCategory.TOPS)
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
+                .build();
+        processingJob.startAiProcessing();
+
+        when(queryTryOnJobsService.getTryOnJob(eq(jobId), eq(UserId.of(userId)), anyBoolean()))
+                .thenReturn(processingJob);
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId", is(jobId.toString())))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
+                .andExpect(jsonPath("$.estimatedCompletionAt", notNullValue()))
+                .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Dado un jobId en estado FAILED, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 200 OK con estado FAILED y errorMessage descriptivo")
+    void testGetTryOnJobFailedWithErrorMessage() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        TryOnJob failedJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(UserId.of(userId))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withCategory(GarmentCategory.TOPS)
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
+                .build();
+        failedJob.markFailed("Pose corporal incompatible con la prenda seleccionada");
+
+        when(queryTryOnJobsService.getTryOnJob(eq(jobId), eq(UserId.of(userId)), anyBoolean()))
+                .thenReturn(failedJob);
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId", is(jobId.toString())))
+                .andExpect(jsonPath("$.status", is("FAILED")))
+                .andExpect(jsonPath("$.errorMessage", is("Pose corporal incompatible con la prenda seleccionada")))
+                .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Dado un jobId inexistente, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 404 Not Found con ProblemDetail estándar")
+    void testGetTryOnJobNotFound() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID nonExistentJobId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.getTryOnJob(eq(nonExistentJobId), eq(UserId.of(userId)), anyBoolean()))
+                .thenThrow(new JobNotFoundException(nonExistentJobId));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", nonExistentJobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status", is(404)))
+                .andExpect(jsonPath("$.errorCode", is("JOB_NOT_FOUND")))
+                .andExpect(jsonPath("$.title", is("Trabajo de Probador Virtual No Encontrado")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Dado un usuario no propietario ni admin, Cuando el servicio lanza JobAccessDeniedException, Entonces responde 403 Forbidden")
+    void testGetTryOnJobWithDomainAccessDeniedException() throws Exception {
+        UUID authenticatedUserId = UUID.randomUUID();
+        UUID otherUserJobId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.getTryOnJob(eq(otherUserJobId), eq(UserId.of(authenticatedUserId)), anyBoolean()))
+                .thenThrow(new JobAccessDeniedException("El usuario autenticado no tiene permisos para acceder al trabajo"));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", otherUserJobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")))
+                .andExpect(jsonPath("$.title", is("Acceso Denegado")));
     }
 }

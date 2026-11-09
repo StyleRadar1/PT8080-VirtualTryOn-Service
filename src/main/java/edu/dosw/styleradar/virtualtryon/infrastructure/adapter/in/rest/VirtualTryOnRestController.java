@@ -34,7 +34,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
-import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -94,9 +94,20 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<TryOnJobResponse> getTryOnJob(@PathVariable UUID jobId) {
         UUID callerUserId = resolveAndVerifyCallerUserId(null);
-        boolean isAdmin = isAdminCaller();
-        TryOnJob job = queryTryOnJobsService.getTryOnJob(jobId, UserId.of(callerUserId), isAdmin);
+        boolean callerIsAdmin = isAdminCaller();
+        TryOnJob job = queryTryOnJobsService.getTryOnJob(jobId, UserId.of(callerUserId), callerIsAdmin);
         return ResponseEntity.ok(dtoMapper.toJobResponse(job));
+    }
+
+    @Override
+    @GetMapping("/jobs")
+    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    public ResponseEntity<List<TryOnJobResponse>> getUserTryOnHistory(@RequestParam(required = false) UUID userId) {
+        UUID targetUserId = resolveAndVerifyCallerUserId(userId);
+        List<TryOnJobResponse> history = queryTryOnJobsService.getJobHistory(UserId.of(targetUserId)).stream()
+                .map(dtoMapper::toJobResponse)
+                .toList();
+        return ResponseEntity.ok(history);
     }
 
     @Override

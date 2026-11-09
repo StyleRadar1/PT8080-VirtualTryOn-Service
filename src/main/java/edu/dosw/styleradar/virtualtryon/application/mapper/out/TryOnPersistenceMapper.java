@@ -8,6 +8,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
@@ -18,6 +19,7 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.e
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.CatalogGarmentJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.JobAuditLogJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.TryOnJobJpaEntity;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.TryOnOutfitJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.UserQuotaJpaEntity;
 import org.springframework.stereotype.Component;
 
@@ -211,6 +213,31 @@ public class TryOnPersistenceMapper {
                 JobStatus.valueOf(entity.getNewStatus()),
                 entity.getTransitionReason(),
                 entity.getOccurredAt()
+        );
+    }
+
+    public TryOnOutfitJpaEntity toOutfitJpaEntity(TryOnOutfit domain) {
+        String permanentRenderUrl = domain.getFinalRenderUrl() != null && domain.getFinalRenderUrl().value() != null
+                ? domain.getFinalRenderUrl().value().split("\\?", 2)[0]
+                : "";
+        return new TryOnOutfitJpaEntity(
+                domain.getId(),
+                domain.getJobId(),
+                domain.getUserId().value(),
+                permanentRenderUrl,
+                domain.getExpiresAt(),
+                domain.getCreatedAt()
+        );
+    }
+
+    public TryOnOutfit toOutfitDomain(TryOnOutfitJpaEntity entity) {
+        return new TryOnOutfit(
+                entity.getId(),
+                entity.getJobId(),
+                UserId.of(entity.getUserId()),
+                SasSignedUrl.of(entity.getFinalRenderUrl()),
+                entity.getExpiresAt(),
+                entity.getCreatedAt()
         );
     }
 

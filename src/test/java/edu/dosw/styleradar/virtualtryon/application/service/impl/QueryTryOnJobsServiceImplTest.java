@@ -4,23 +4,34 @@ import edu.dosw.styleradar.virtualtryon.application.dto.event.CatalogGarmentUpda
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp.TryOnEventListenerAdapter;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.RedisQuotaCacheAdapter;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.TryOnRepositoryAdapter;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.CatalogGarmentJpaEntity;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.TryOnJobJpaEntity;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.TryOnOutfitJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.UserQuotaJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.BiometricConsentJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.BiometricPhotoJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.CatalogGarmentJpaRepository;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.JobAuditLogJpaRepository;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.TryOnJobJpaRepository;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.TryOnOutfitJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.UserQuotaJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -38,10 +49,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -70,6 +83,18 @@ class QueryTryOnJobsServiceImplTest {
     private CatalogGarmentJpaRepository catalogGarmentJpaRepository;
 
     @Mock
+    private TryOnJobJpaRepository tryOnJobJpaRepository;
+
+    @Mock
+    private JobAuditLogJpaRepository jobAuditLogJpaRepository;
+
+    @Mock
+    private TryOnOutfitJpaRepository tryOnOutfitJpaRepository;
+
+    @Mock
+    private BlobStoragePort blobStoragePort;
+
+    @Mock
     private BiometricDataRepositoryPort biometricDataRepositoryPort;
 
     @Mock
@@ -94,6 +119,9 @@ class QueryTryOnJobsServiceImplTest {
                 photoJpaRepository,
                 quotaJpaRepository,
                 catalogGarmentJpaRepository,
+                tryOnJobJpaRepository,
+                jobAuditLogJpaRepository,
+                tryOnOutfitJpaRepository,
                 persistenceMapper
         );
         when(redisTemplateProvider.getIfAvailable()).thenReturn(redisTemplate);
@@ -103,7 +131,9 @@ class QueryTryOnJobsServiceImplTest {
         this.queryTryOnJobsService = new QueryTryOnJobsServiceImpl(
                 repositoryAdapter,
                 redisQuotaCacheAdapter,
-                biometricDataRepositoryPort
+                biometricDataRepositoryPort,
+                repositoryAdapter,
+                blobStoragePort
         );
         this.eventListenerAdapter = new TryOnEventListenerAdapter(queryTryOnJobsService);
     }
@@ -304,6 +334,107 @@ class QueryTryOnJobsServiceImplTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-26: Dado un trabajo COMPLETED con TryOnOutfit expirado o sin outfit previo, Cuando se consulta getJobStatus o getJobHistory, Entonces renueva la URL SAS de solo lectura y verifica titularidad")
+    void shouldGetJobStatusAndHistoryAndRefreshExpiredSasUrl() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UserId otherUserId = UserId.of(UUID.randomUUID());
+        UUID jobId = UUID.randomUUID();
+        TryOnPersistenceMapper mapper = new TryOnPersistenceMapper();
+
+        TryOnJob completedJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/biometric-silhouettes/photo.jpg")
+                .build();
+        completedJob.complete(
+                SasSignedUrl.of("https://styleradar.blob.core.windows.net/biometric-silhouettes/render-old.png?sr=b&sp=r&spr=https"),
+                1450L
+        );
+        TryOnJobJpaEntity jobEntity = mapper.toJobJpaEntity(completedJob);
+
+        when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(jobEntity));
+
+        // 1. Intento de acceso de otro usuario sin rol ADMIN -> JobAccessDeniedException
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException.class,
+                () -> queryTryOnJobsService.getJobStatus(jobId, otherUserId, false));
+
+        // 2. Job no existente -> JobNotFoundException
+        UUID unknownJobId = UUID.randomUUID();
+        when(tryOnJobJpaRepository.findById(unknownJobId)).thenReturn(Optional.empty());
+        assertThrows(JobNotFoundException.class,
+                () -> queryTryOnJobsService.getJobStatus(unknownJobId, ownerId, false));
+
+        // 3. Outfit permanente -> genera URL SAS de solo lectura en consulta sin persistir credenciales temporales en try_on_outfits
+        TryOnOutfit permanentOutfit = new TryOnOutfit(
+                UUID.randomUUID(),
+                jobId,
+                ownerId,
+                SasSignedUrl.of("https://styleradar.blob.core.windows.net/biometric-silhouettes/render-permanent.png"),
+                Instant.now().plusSeconds(900),
+                Instant.now()
+        );
+        when(tryOnOutfitJpaRepository.findByJobId(jobId)).thenReturn(Optional.of(mapper.toOutfitJpaEntity(permanentOutfit)));
+        SasSignedUrl refreshedUrl = SasSignedUrl.of("https://styleradar.blob.core.windows.net/biometric-silhouettes/render-permanent.png?sr=b&sp=r&spr=https");
+        when(blobStoragePort.generateReadOnlySasUrl(any())).thenReturn(refreshedUrl);
+
+        TryOnJob result = queryTryOnJobsService.getJobStatus(jobId, ownerId, false);
+        assertEquals(refreshedUrl.value(), result.getResultImageUrl().value());
+        // Se valida que las credenciales SAS temporales NO se persistan en PostgreSQL durante la consulta
+        verify(tryOnOutfitJpaRepository, never()).save(argThat(entity -> entity != null && entity.getFinalRenderUrl().contains("?")));
+
+        // 4. Consulta por ADMIN -> genera URL firmada al momento de la consulta sin credenciales temporales en BD
+        TryOnJob adminResult = queryTryOnJobsService.getJobStatus(jobId, otherUserId, true);
+        assertEquals(refreshedUrl.value(), adminResult.getResultImageUrl().value());
+
+        // 5. Sin outfit previo + job QUEUED + job purgado en el historial -> cubre todas las ramas de enrichJobWithReadOnlySignedUrl
+        TryOnJob queuedJob = new TryOnJobBuilder()
+                .withId(UUID.randomUUID())
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/biometric-silhouettes/photo2.jpg")
+                .build();
+        TryOnJob purgedCompletedJob = new TryOnJobBuilder()
+                .withId(UUID.randomUUID())
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/biometric-silhouettes/photo3.jpg")
+                .build();
+        purgedCompletedJob.complete(refreshedUrl, 900L);
+        purgedCompletedJob.purgeBiometricPhoto();
+
+        when(tryOnOutfitJpaRepository.findByJobId(jobId)).thenReturn(Optional.empty());
+        when(tryOnOutfitJpaRepository.save(any(TryOnOutfitJpaEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(tryOnJobJpaRepository.findByUserIdOrderByCreatedAtDesc(ownerId.value())).thenReturn(List.of(
+                jobEntity,
+                mapper.toJobJpaEntity(queuedJob),
+                mapper.toJobJpaEntity(purgedCompletedJob)
+        ));
+
+        List<TryOnJob> history = queryTryOnJobsService.getJobHistory(ownerId);
+        assertEquals(3, history.size());
+        assertEquals(refreshedUrl.value(), history.get(0).getResultImageUrl().value());
+
+        // 6. Eliminación de outfit por jobId y constructores alternativos de TryOnRepositoryAdapter
+        repositoryAdapter.deleteOutfitByJobId(jobId);
+        verify(tryOnOutfitJpaRepository).deleteByJobId(jobId);
+
+        TryOnOutfit validOutfit = permanentOutfit;
+        TryOnRepositoryAdapter adapterWithoutOutfitRepo = new TryOnRepositoryAdapter(
+                consentJpaRepository,
+                photoJpaRepository,
+                quotaJpaRepository,
+                catalogGarmentJpaRepository,
+                tryOnJobJpaRepository,
+                jobAuditLogJpaRepository,
+                mapper
+        );
+        assertEquals(validOutfit, adapterWithoutOutfitRepo.saveOutfit(validOutfit));
+        assertTrue(adapterWithoutOutfitRepo.findOutfitByJobId(jobId).isEmpty());
+        adapterWithoutOutfitRepo.deleteOutfitByJobId(jobId);
+    }
+
+    @Test
     @DisplayName("HU SR-RF-25 / SR-RF-26: Consulta de TryOnJob por ID con verificación de titularidad y prevención de IDOR")
     void shouldGetTryOnJobWithTitularityCheck() {
         UUID jobId = UUID.randomUUID();
@@ -338,9 +469,9 @@ class QueryTryOnJobsServiceImplTest {
         assertEquals(ownerId, adminFound.getUserId());
 
         // 3. Otro usuario no administrador intenta consultar job ajeno o usuario nulo -> 403 Forbidden (prevención IDOR)
-        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException.class,
                 () -> serviceWithJobs.getTryOnJob(jobId, otherUser, false));
-        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException.class,
                 () -> serviceWithJobs.getTryOnJob(jobId, null, false));
 
         // 4. Job inexistente -> 404 Not Found
@@ -404,6 +535,7 @@ class QueryTryOnJobsServiceImplTest {
 
         org.mockito.Mockito.verify(blobPort).deleteBlob(photoUrl);
         org.mockito.Mockito.verify(blobPort).deleteBlob(resultUrl.value());
+        org.mockito.Mockito.verify(jobRepo).deleteOutfitByJobId(jobId);
         org.mockito.Mockito.verify(jobRepo, org.mockito.Mockito.atLeastOnce()).saveJob(job);
         org.mockito.Mockito.verify(jobRepo, org.mockito.Mockito.atLeastOnce()).saveAuditLog(any());
         assertTrue(job.isPhotoPurged());
@@ -559,6 +691,7 @@ class QueryTryOnJobsServiceImplTest {
 
         verify(blobPort, never()).deleteBlob(eq("PURGED_BY_USER_REQUEST"));
         verify(blobPort).deleteBlob(resultUrl.value());
+        verify(jobRepo).deleteOutfitByJobId(jobId);
         assertTrue(job.isPhotoPurged());
         org.junit.jupiter.api.Assertions.assertNull(job.getResultImageUrl());
     }
@@ -605,6 +738,68 @@ class QueryTryOnJobsServiceImplTest {
         org.junit.jupiter.api.Assertions.assertFalse(job.isPhotoPurged());
         verify(jobRepo, never()).saveJob(any());
         verify(jobRepo, never()).saveAuditLog(any());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Cobertura exhaustiva de ramas en enrichJobWithReadOnlySignedUrl y métodos default de BlobStoragePort")
+    void shouldCoverEnrichBranchesAndBlobPortDefaultMethods() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        UUID jobId = UUID.randomUUID();
+
+        // 1. Servicio sin repositorio de jobs retorna lista vacía en historial
+        QueryTryOnJobsServiceImpl serviceWithoutJobRepo = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                null,
+                null
+        );
+        assertThat(serviceWithoutJobRepo.getJobHistory(userId)).isEmpty();
+
+        // 2. Ramas de enrichJobWithReadOnlySignedUrl: status != COMPLETED, photoPurged = true, resultImageUrl = null
+        TryOnJob queuedJob = new TryOnJobBuilder().withId(jobId).withUserId(userId).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("https://storage/photo.jpg").build();
+        TryOnJob purgedJob = new TryOnJobBuilder().withId(jobId).withUserId(userId).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("https://storage/photo.jpg").build();
+        purgedJob.purgeBiometricPhoto();
+        TryOnJob noRenderJob = new TryOnJobBuilder().withId(jobId).withUserId(userId).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("https://storage/photo.jpg").build();
+
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo = org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class);
+        QueryTryOnJobsServiceImpl serviceWithRepo = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo,
+                blobStoragePort
+        );
+
+        when(jobRepo.findJobsByUserId(userId)).thenReturn(List.of(queuedJob, purgedJob, noRenderJob));
+        List<TryOnJob> history = serviceWithRepo.getJobHistory(userId);
+        assertThat(history).hasSize(3);
+
+        // 3. BlobStoragePort default methods
+        BlobStoragePort anonymousPort = new BlobStoragePort() {
+            @Override
+            public String storeBiometricPhoto(UserId uid, String ct, byte[] bytes) {
+                return "test/" + uid.value() + ".png";
+            }
+            @Override
+            public SasSignedUrl generateReadOnlySignedUrl(String blobPath) {
+                return SasSignedUrl.of("https://storage/" + blobPath + "?sas=1");
+            }
+            @Override
+            public Optional<byte[]> retrieveBlobBytes(String blobPathOrUrl) {
+                return blobPathOrUrl == null ? Optional.empty() : Optional.of(new byte[]{1, 2});
+            }
+            @Override
+            public void deleteBlob(String blobPathOrUrl) {
+            }
+        };
+
+        assertThat(anonymousPort.generateReadOnlySasUrl((SasSignedUrl) null)).isNull();
+        SasSignedUrl inputSas = SasSignedUrl.of("https://storage/render.png?old=1");
+        assertThat(anonymousPort.generateReadOnlySasUrl(inputSas)).isNotNull();
+        assertThat(anonymousPort.storeRenderedResult(userId, jobId, new byte[]{1})).isNotNull();
+        assertThat(anonymousPort.retrieveBlobBytes((SasSignedUrl) null)).isEmpty();
+        anonymousPort.deleteBlob((SasSignedUrl) null);
     }
 }
 

@@ -2,12 +2,14 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
@@ -21,20 +23,22 @@ import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidationContext
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidatorHandler;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
 
 /**
  * Implementación del servicio de aplicación para la consulta y sincronización de cuotas mensuales,
- * validación de prendas compatibles del catálogo, consulta de trabajos y purga biométrica (SR-RF-23 a SR-RF-25).
+ * validación de prendas compatibles del catálogo, consulta de trabajos y purga biométrica (SR-RF-23 a SR-RF-26).
  */
 @Service
 @Transactional
@@ -117,8 +121,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     public CatalogGarment validateGarmentEligibility(UserId userId, GarmentId garmentId) {
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
                 .orElseThrow(() -> new InvalidGarmentException(
-                        garmentId.value(),
-                        "No existe la prenda del catálogo o aún no ha sido publicada"
+                        "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"
                 ));
 
         boolean hasActiveConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
@@ -169,14 +172,64 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                 .orElseThrow(() -> new JobNotFoundException(jobId));
 
         if (!isAdmin && (callerUserId == null || !job.getUserId().equals(callerUserId))) {
-            throw new AccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
+            throw new JobAccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
+        }
+        return enrichJobWithReadOnlySignedUrl(job);
+    }
+
+    @Override
+    public TryOnJob getJobStatus(UUID jobId, UserId callerUserId, boolean callerIsAdmin) {
+        return getTryOnJob(jobId, callerUserId, callerIsAdmin);
+    }
+
+    @Override
+    public List<TryOnJob> getJobHistory(UserId userId) {
+        if (jobRepositoryPort == null) {
+            return List.of();
+        }
+        return jobRepositoryPort.findJobsByUserId(userId).stream()
+                .map(this::enrichJobWithReadOnlySignedUrl)
+                .toList();
+    }
+
+    private TryOnJob enrichJobWithReadOnlySignedUrl(TryOnJob job) {
+        if (job.getStatus() != JobStatus.COMPLETED || job.isPhotoPurged() || job.getResultImageUrl() == null) {
+            return job;
+        }
+
+        // Se almacena únicamente la referencia permanente del blob en PostgreSQL sin credenciales temporales SAS
+        String permanentBlobUrl = job.getResultImageUrl().value().split("\\?", 2)[0];
+        Optional<TryOnOutfit> maybeOutfit = jobRepositoryPort.findOutfitByJobId(job.getId());
+        if (maybeOutfit.isEmpty()) {
+            TryOnOutfit permanentOutfit = TryOnOutfit.createForCompletedJob(
+                    job.getId(),
+                    job.getUserId(),
+                    SasSignedUrl.of(permanentBlobUrl)
+            );
+            jobRepositoryPort.saveOutfit(permanentOutfit);
+        }
+
+        // Se genera la URL temporal firmada (SAS) en memoria al momento de consultar el resultado
+        if (blobStoragePort != null) {
+            SasSignedUrl readOnlyUrl = blobStoragePort.generateReadOnlySasUrl(SasSignedUrl.of(permanentBlobUrl));
+            if (readOnlyUrl != null) {
+                job.updateResultImageUrl(readOnlyUrl);
+            }
         }
         return job;
     }
 
     @Override
     public void purgeJobBiometricPhoto(UUID jobId, UserId callerUserId, boolean isAdmin) {
-        TryOnJob job = getTryOnJob(jobId, callerUserId, isAdmin);
+        if (jobRepositoryPort == null) {
+            throw new JobNotFoundException(jobId);
+        }
+        TryOnJob job = jobRepositoryPort.findJobById(jobId)
+                .orElseThrow(() -> new JobNotFoundException(jobId));
+
+        if (!isAdmin && (callerUserId == null || !job.getUserId().equals(callerUserId))) {
+            throw new JobAccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
+        }
 
         if (blobStoragePort == null) {
             throw new IllegalStateException(
@@ -194,15 +247,13 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             log.info("Iniciando borrado físico en Azure Blob Storage de silueta biométrica para trabajo {}", jobId);
             blobStoragePort.deleteBlob(job.getPhotoUrl());
             job.purgeRawSilhouettePhoto();
-            if (jobRepositoryPort != null) {
-                jobRepositoryPort.saveJob(job);
-                jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                        job.getId(),
-                        job.getStatus(),
-                        job.getStatus(),
-                        "Purga física y anonimización de fotografía frontal de silueta completada exitosamente en Azure Blob Storage (Ley 1581)"
-                ));
-            }
+            jobRepositoryPort.saveJob(job);
+            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                    job.getId(),
+                    job.getStatus(),
+                    job.getStatus(),
+                    "Purga física y anonimización de fotografía frontal de silueta completada exitosamente en Azure Blob Storage (Ley 1581)"
+            ));
         }
 
         // 2. Borrado físico estricto de imagen renderizada generada (sin silenciar excepciones de Azure)
@@ -210,26 +261,24 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             log.info("Iniciando borrado físico en Azure Blob Storage del render de resultado para trabajo {}", jobId);
             blobStoragePort.deleteBlob(job.getResultImageUrl().value());
             job.purgeResultRenderImage();
-            if (jobRepositoryPort != null) {
-                jobRepositoryPort.saveJob(job);
-                jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                        job.getId(),
-                        job.getStatus(),
-                        job.getStatus(),
-                        "Purga física de imagen renderizada generada completada exitosamente en Azure Blob Storage"
-                ));
-            }
-        }
-
-        // 3. Registro de auditoría de completitud integral bajo Ley 1581 confirmado tras borrado físico
-        if (jobRepositoryPort != null) {
+            jobRepositoryPort.saveJob(job);
             jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
                     job.getId(),
                     job.getStatus(),
                     job.getStatus(),
-                    "Purga integral y borrado físico de datos biométricos completado bajo Ley 1581 de 2012"
+                    "Purga física de imagen renderizada generada completada exitosamente en Azure Blob Storage"
             ));
         }
+
+        // 3. Eliminación consistente del registro asociado en try_on_outfits para garantizar borrado integral (Ley 1581)
+        jobRepositoryPort.deleteOutfitByJobId(jobId);
+
+        // 4. Registro de auditoría de completitud integral bajo Ley 1581 confirmado tras borrado físico
+        jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                job.getId(),
+                job.getStatus(),
+                job.getStatus(),
+                "Purga integral y borrado físico de datos biométricos completado bajo Ley 1581 de 2012"
+        ));
     }
 }
-

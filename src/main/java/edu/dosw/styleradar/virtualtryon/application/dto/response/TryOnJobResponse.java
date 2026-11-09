@@ -36,6 +36,23 @@ public record TryOnJobResponse(
         Instant createdAt,
 
         @Schema(description = "Fecha y hora de última actualización", example = "2026-11-02T10:30:03Z")
-        Instant updatedAt
+        Instant updatedAt,
+
+        @Schema(description = "Fecha y hora estimada de finalización (disponible durante QUEUED o PROCESSING)", example = "2026-11-02T10:30:30Z")
+        Instant estimatedCompletionAt
 ) {
+
+    public TryOnJobResponse(
+            UUID jobId,
+            UUID userId,
+            UUID garmentId,
+            String status,
+            String resultImageUrl,
+            Long executionTimeMs,
+            String errorMessage,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+        this(jobId, userId, garmentId, status, resultImageUrl, executionTimeMs, errorMessage, createdAt, updatedAt, null);
+    }
 }

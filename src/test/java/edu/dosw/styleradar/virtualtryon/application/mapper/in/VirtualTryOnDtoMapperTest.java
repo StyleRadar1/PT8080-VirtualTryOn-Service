@@ -188,5 +188,44 @@ class VirtualTryOnDtoMapperTest {
         assertThat(garmentResponse.category()).isEqualTo("TOPS");
         assertThat(garmentResponse.eligibleForTryOn()).isTrue();
     }
+
+    @Test
+    @DisplayName("toJobResponse calcula estimatedCompletionAt en QUEUED y PROCESSING, y retorna null en COMPLETED y FAILED")
+    void shouldCalculateEstimatedCompletionAtForActiveJobs() {
+        VirtualTryOnDtoMapper mapper = new VirtualTryOnDtoMapper(null, java.time.Duration.ofSeconds(30));
+
+        TryOnJob queuedJob = new TryOnJobBuilder()
+                .withId(UUID.randomUUID())
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://storage/photo.png")
+                .withCategory(GarmentCategory.TOPS)
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+
+        TryOnJobResponse queuedResponse = mapper.toJobResponse(queuedJob);
+        assertThat(queuedResponse.estimatedCompletionAt()).isNotNull();
+        assertThat(queuedResponse.estimatedCompletionAt()).isEqualTo(queuedJob.getCreatedAt().plusSeconds(30));
+
+        queuedJob.startAiProcessing();
+        TryOnJobResponse processingResponse = mapper.toJobResponse(queuedJob);
+        assertThat(processingResponse.estimatedCompletionAt()).isNotNull();
+
+        queuedJob.complete(SasSignedUrl.of("https://storage/result.png"), 1000L);
+        TryOnJobResponse completedResponse = mapper.toJobResponse(queuedJob);
+        assertThat(completedResponse.estimatedCompletionAt()).isNull();
+
+        TryOnJob failedJob = new TryOnJobBuilder()
+                .withId(UUID.randomUUID())
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://storage/photo.png")
+                .withCategory(GarmentCategory.TOPS)
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+        failedJob.markFailed("Error de inferencia");
+        TryOnJobResponse failedResponse = mapper.toJobResponse(failedJob);
+        assertThat(failedResponse.estimatedCompletionAt()).isNull();
+    }
 }
 

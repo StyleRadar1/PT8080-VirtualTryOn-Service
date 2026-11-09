@@ -438,6 +438,10 @@ class BiometricConsentServiceImplTest {
                 "2024-11-04"
         );
         assertThat(springAdapter).isNotNull();
+        SasSignedUrl refreshedWithToken = springAdapter.generateReadOnlySasUrl(
+                SasSignedUrl.of(AZURE_BASE_URL + "/" + CONTAINER + "/render-test.png?old=1")
+        );
+        assertThat(refreshedWithToken.value()).contains("sp=r");
     }
 
     @Test

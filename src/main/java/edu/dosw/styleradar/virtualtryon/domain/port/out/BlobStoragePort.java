@@ -8,7 +8,7 @@ import java.util.UUID;
 
 /**
  * Puerto de salida (Driven Port) para la persistencia, consulta y eliminación
- * de fotografías y renderizados en Azure Blob Storage (SR-RF-23 y SR-RF-25).
+ * de fotografías y renderizados en Azure Blob Storage (SR-RF-23, SR-RF-25 y SR-RF-26).
  */
 public interface BlobStoragePort {
 
@@ -23,6 +23,16 @@ public interface BlobStoragePort {
     default SasSignedUrl storeRenderedResult(UserId userId, UUID jobId, byte[] renderedPngBytes) {
         String blobPath = storeBiometricPhoto(userId, "image/png", renderedPngBytes);
         return generateReadOnlySignedUrl(blobPath);
+    }
+
+    /**
+     * Renueva o construye una URL firmada temporal de solo lectura (sp=r, sr=b, spr=https) para visualizar un resultado.
+     */
+    default SasSignedUrl generateReadOnlySasUrl(SasSignedUrl existingUrl) {
+        if (existingUrl == null || existingUrl.value() == null) {
+            return existingUrl;
+        }
+        return generateReadOnlySignedUrl(existingUrl.value());
     }
 
     /**

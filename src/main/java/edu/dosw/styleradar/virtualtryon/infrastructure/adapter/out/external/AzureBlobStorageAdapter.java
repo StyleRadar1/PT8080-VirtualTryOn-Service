@@ -61,7 +61,7 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
             @Value("${styleradar.tryon.blob-base-url}") String storageBaseUrl,
             @Value("${styleradar.tryon.blob-container:biometric-silhouettes}") String containerName,
             @Value("${styleradar.tryon.blob-account-key}") String accountKey,
-            @Value("${styleradar.tryon.blob-read-sas-duration:PT60M}") Duration readSasDuration,
+            @Value("${styleradar.tryon.blob-read-sas-duration:PT15M}") Duration readSasDuration,
             @Value("${styleradar.tryon.blob-api-version:2024-11-04}") String apiVersion
     ) {
         this(
@@ -142,6 +142,14 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         String blobName = userId.value() + "/render-" + jobId + ".png";
         uploadBlockBlob(userId, blobName, MediaType.IMAGE_PNG_VALUE, renderedPngBytes);
         return generateReadOnlySignedUrl(blobName);
+    }
+
+    @Override
+    public SasSignedUrl generateReadOnlySasUrl(SasSignedUrl existingUrl) {
+        if (existingUrl == null || existingUrl.value() == null) {
+            return existingUrl;
+        }
+        return generateReadOnlySignedUrl(existingUrl.value());
     }
 
     private String uploadBlockBlob(UserId userId, String blobName, String resolvedContentType, byte[] blobBytes) {
