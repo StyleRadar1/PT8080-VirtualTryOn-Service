@@ -217,11 +217,14 @@ public class TryOnPersistenceMapper {
     }
 
     public TryOnOutfitJpaEntity toOutfitJpaEntity(TryOnOutfit domain) {
+        String permanentRenderUrl = domain.getFinalRenderUrl() != null && domain.getFinalRenderUrl().value() != null
+                ? domain.getFinalRenderUrl().value().split("\\?", 2)[0]
+                : "";
         return new TryOnOutfitJpaEntity(
                 domain.getId(),
                 domain.getJobId(),
                 domain.getUserId().value(),
-                domain.getFinalRenderUrl().value(),
+                permanentRenderUrl,
                 domain.getExpiresAt(),
                 domain.getCreatedAt()
         );

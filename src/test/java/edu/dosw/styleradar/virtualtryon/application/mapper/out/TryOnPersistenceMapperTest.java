@@ -9,6 +9,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
@@ -19,6 +20,7 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.e
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.CatalogGarmentJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.JobAuditLogJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.TryOnJobJpaEntity;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.TryOnOutfitJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.UserQuotaJpaEntity;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -309,5 +311,35 @@ class TryOnPersistenceMapperTest {
                 .doesNotContain("?")
                 .doesNotContain("sig=")
                 .doesNotContain("SecretSig2");
+    }
+
+    @Test
+    @DisplayName("toOutfitJpaEntity: Debe despojar tokens SAS de finalRenderUrl para almacenar únicamente la referencia permanente en try_on_outfits")
+    void shouldStripSasQueryStringsFromOutfitEntityUrls() {
+        UUID outfitId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        UserId userId = UserId.of(UUID.randomUUID());
+        String renderUrlWithSas = "https://storage.blob.core.windows.net/tryon-results/user/outfit.png?se=2026-11-09&sp=r&sig=SecretSig3";
+
+        TryOnOutfit outfit = new TryOnOutfit(
+                outfitId,
+                jobId,
+                userId,
+                SasSignedUrl.of(renderUrlWithSas),
+                Instant.now().plusSeconds(900),
+                Instant.now()
+        );
+
+        TryOnOutfitJpaEntity entity = mapper.toOutfitJpaEntity(outfit);
+
+        assertThat(entity.getFinalRenderUrl())
+                .isEqualTo("https://storage.blob.core.windows.net/tryon-results/user/outfit.png")
+                .doesNotContain("?")
+                .doesNotContain("sig=")
+                .doesNotContain("SecretSig3");
+
+        TryOnOutfit roundtrip = mapper.toOutfitDomain(entity);
+        assertThat(roundtrip.getFinalRenderUrl().value())
+                .isEqualTo("https://storage.blob.core.windows.net/tryon-results/user/outfit.png");
     }
 }

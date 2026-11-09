@@ -196,24 +196,23 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         if (job.getStatus() != JobStatus.COMPLETED || job.isPhotoPurged() || job.getResultImageUrl() == null) {
             return job;
         }
+
+        // Se almacena únicamente la referencia permanente del blob en PostgreSQL sin credenciales temporales SAS
+        String permanentBlobUrl = job.getResultImageUrl().value().split("\\?", 2)[0];
         Optional<TryOnOutfit> maybeOutfit = jobRepositoryPort.findOutfitByJobId(job.getId());
-        if (maybeOutfit.isPresent()) {
-            TryOnOutfit outfit = maybeOutfit.get();
-            if (outfit.isUrlExpired() && blobStoragePort != null) {
-                SasSignedUrl refreshed = blobStoragePort.generateReadOnlySasUrl(outfit.getFinalRenderUrl());
-                if (refreshed != null) {
-                    outfit.refreshSignedUrl(refreshed);
-                    jobRepositoryPort.saveOutfit(outfit);
-                    job.updateResultImageUrl(refreshed);
-                }
-            } else {
-                job.updateResultImageUrl(outfit.getFinalRenderUrl());
-            }
-        } else if (blobStoragePort != null) {
-            SasSignedUrl readOnlyUrl = blobStoragePort.generateReadOnlySasUrl(job.getResultImageUrl());
+        if (maybeOutfit.isEmpty()) {
+            TryOnOutfit permanentOutfit = TryOnOutfit.createForCompletedJob(
+                    job.getId(),
+                    job.getUserId(),
+                    SasSignedUrl.of(permanentBlobUrl)
+            );
+            jobRepositoryPort.saveOutfit(permanentOutfit);
+        }
+
+        // Se genera la URL temporal firmada (SAS) en memoria al momento de consultar el resultado
+        if (blobStoragePort != null) {
+            SasSignedUrl readOnlyUrl = blobStoragePort.generateReadOnlySasUrl(SasSignedUrl.of(permanentBlobUrl));
             if (readOnlyUrl != null) {
-                TryOnOutfit createdOutfit = TryOnOutfit.createForCompletedJob(job.getId(), job.getUserId(), readOnlyUrl);
-                jobRepositoryPort.saveOutfit(createdOutfit);
                 job.updateResultImageUrl(readOnlyUrl);
             }
         }
@@ -271,7 +270,10 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             ));
         }
 
-        // 3. Registro de auditoría de completitud integral bajo Ley 1581 confirmado tras borrado físico
+        // 3. Eliminación consistente del registro asociado en try_on_outfits para garantizar borrado integral (Ley 1581)
+        jobRepositoryPort.deleteOutfitByJobId(jobId);
+
+        // 4. Registro de auditoría de completitud integral bajo Ley 1581 confirmado tras borrado físico
         jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
                 job.getId(),
                 job.getStatus(),

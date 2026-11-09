@@ -54,6 +54,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -364,27 +365,25 @@ class QueryTryOnJobsServiceImplTest {
         assertThrows(JobNotFoundException.class,
                 () -> queryTryOnJobsService.getJobStatus(unknownJobId, ownerId, false));
 
-        // 3. Outfit expirado -> renueva URL SAS de solo lectura y persiste en try_on_outfits
-        TryOnOutfit expiredOutfit = new TryOnOutfit(
+        // 3. Outfit permanente -> genera URL SAS de solo lectura en consulta sin persistir credenciales temporales en try_on_outfits
+        TryOnOutfit permanentOutfit = new TryOnOutfit(
                 UUID.randomUUID(),
                 jobId,
                 ownerId,
-                SasSignedUrl.of("https://styleradar.blob.core.windows.net/biometric-silhouettes/render-old.png?sr=b&sp=r&spr=https"),
-                Instant.now().minusSeconds(300),
-                Instant.now().minusSeconds(3900)
+                SasSignedUrl.of("https://styleradar.blob.core.windows.net/biometric-silhouettes/render-permanent.png"),
+                Instant.now().plusSeconds(900),
+                Instant.now()
         );
-        when(tryOnOutfitJpaRepository.findByJobId(jobId)).thenReturn(Optional.of(mapper.toOutfitJpaEntity(expiredOutfit)));
-        when(tryOnOutfitJpaRepository.save(any(TryOnOutfitJpaEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        SasSignedUrl refreshedUrl = SasSignedUrl.of("https://styleradar.blob.core.windows.net/biometric-silhouettes/render-refreshed.png?sr=b&sp=r&spr=https");
+        when(tryOnOutfitJpaRepository.findByJobId(jobId)).thenReturn(Optional.of(mapper.toOutfitJpaEntity(permanentOutfit)));
+        SasSignedUrl refreshedUrl = SasSignedUrl.of("https://styleradar.blob.core.windows.net/biometric-silhouettes/render-permanent.png?sr=b&sp=r&spr=https");
         when(blobStoragePort.generateReadOnlySasUrl(any())).thenReturn(refreshedUrl);
 
         TryOnJob result = queryTryOnJobsService.getJobStatus(jobId, ownerId, false);
         assertEquals(refreshedUrl.value(), result.getResultImageUrl().value());
-        verify(tryOnOutfitJpaRepository).save(any(TryOnOutfitJpaEntity.class));
+        // Se valida que las credenciales SAS temporales NO se persistan en PostgreSQL durante la consulta
+        verify(tryOnOutfitJpaRepository, never()).save(argThat(entity -> entity != null && entity.getFinalRenderUrl().contains("?")));
 
-        // 4. Outfit vigente (no expirado) y accedido por ADMIN -> retorna sin renovar
-        TryOnOutfit validOutfit = TryOnOutfit.createForCompletedJob(jobId, ownerId, refreshedUrl);
-        when(tryOnOutfitJpaRepository.findByJobId(jobId)).thenReturn(Optional.of(mapper.toOutfitJpaEntity(validOutfit)));
+        // 4. Consulta por ADMIN -> genera URL firmada al momento de la consulta sin credenciales temporales en BD
         TryOnJob adminResult = queryTryOnJobsService.getJobStatus(jobId, otherUserId, true);
         assertEquals(refreshedUrl.value(), adminResult.getResultImageUrl().value());
 
@@ -405,6 +404,7 @@ class QueryTryOnJobsServiceImplTest {
         purgedCompletedJob.purgeBiometricPhoto();
 
         when(tryOnOutfitJpaRepository.findByJobId(jobId)).thenReturn(Optional.empty());
+        when(tryOnOutfitJpaRepository.save(any(TryOnOutfitJpaEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(tryOnJobJpaRepository.findByUserIdOrderByCreatedAtDesc(ownerId.value())).thenReturn(List.of(
                 jobEntity,
                 mapper.toJobJpaEntity(queuedJob),
@@ -419,6 +419,7 @@ class QueryTryOnJobsServiceImplTest {
         repositoryAdapter.deleteOutfitByJobId(jobId);
         verify(tryOnOutfitJpaRepository).deleteByJobId(jobId);
 
+        TryOnOutfit validOutfit = permanentOutfit;
         TryOnRepositoryAdapter adapterWithoutOutfitRepo = new TryOnRepositoryAdapter(
                 consentJpaRepository,
                 photoJpaRepository,
@@ -534,6 +535,7 @@ class QueryTryOnJobsServiceImplTest {
 
         org.mockito.Mockito.verify(blobPort).deleteBlob(photoUrl);
         org.mockito.Mockito.verify(blobPort).deleteBlob(resultUrl.value());
+        org.mockito.Mockito.verify(jobRepo).deleteOutfitByJobId(jobId);
         org.mockito.Mockito.verify(jobRepo, org.mockito.Mockito.atLeastOnce()).saveJob(job);
         org.mockito.Mockito.verify(jobRepo, org.mockito.Mockito.atLeastOnce()).saveAuditLog(any());
         assertTrue(job.isPhotoPurged());
@@ -689,6 +691,7 @@ class QueryTryOnJobsServiceImplTest {
 
         verify(blobPort, never()).deleteBlob(eq("PURGED_BY_USER_REQUEST"));
         verify(blobPort).deleteBlob(resultUrl.value());
+        verify(jobRepo).deleteOutfitByJobId(jobId);
         assertTrue(job.isPhotoPurged());
         org.junit.jupiter.api.Assertions.assertNull(job.getResultImageUrl());
     }
