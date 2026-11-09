@@ -354,8 +354,8 @@ class QueryTryOnJobsServiceImplTest {
 
         when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(jobEntity));
 
-        // 1. Intento de acceso de otro usuario sin rol ADMIN -> AccessDeniedException
-        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+        // 1. Intento de acceso de otro usuario sin rol ADMIN -> JobAccessDeniedException
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException.class,
                 () -> queryTryOnJobsService.getJobStatus(jobId, otherUserId, false));
 
         // 2. Job no existente -> JobNotFoundException
@@ -468,9 +468,9 @@ class QueryTryOnJobsServiceImplTest {
         assertEquals(ownerId, adminFound.getUserId());
 
         // 3. Otro usuario no administrador intenta consultar job ajeno o usuario nulo -> 403 Forbidden (prevención IDOR)
-        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException.class,
                 () -> serviceWithJobs.getTryOnJob(jobId, otherUser, false));
-        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException.class,
                 () -> serviceWithJobs.getTryOnJob(jobId, null, false));
 
         // 4. Job inexistente -> 404 Not Found

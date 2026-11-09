@@ -2,6 +2,7 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
@@ -27,7 +28,6 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -172,7 +172,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                 .orElseThrow(() -> new JobNotFoundException(jobId));
 
         if (!isAdmin && (callerUserId == null || !job.getUserId().equals(callerUserId))) {
-            throw new AccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
+            throw new JobAccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
         }
         return enrichJobWithReadOnlySignedUrl(job);
     }
@@ -229,7 +229,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                 .orElseThrow(() -> new JobNotFoundException(jobId));
 
         if (!isAdmin && (callerUserId == null || !job.getUserId().equals(callerUserId))) {
-            throw new AccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
+            throw new JobAccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
         }
 
         if (blobStoragePort == null) {
