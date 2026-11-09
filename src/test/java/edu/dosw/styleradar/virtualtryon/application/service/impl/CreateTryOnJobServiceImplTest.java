@@ -16,6 +16,8 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.strategy.AiInferenceStrategy;
 import edu.dosw.styleradar.virtualtryon.domain.strategy.MockAiStrategy;
+import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
@@ -39,6 +41,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -383,5 +386,48 @@ class CreateTryOnJobServiceImplTest {
                 RabbitConfig.DEFAULT_TRYON_EXCHANGE
         );
         offlinePublisher.publishJobEvent(TryOnJobDomainEvent.fromJob(builtJob));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Cuando falla la publicación en RabbitMQ, se ejecuta compensación (reintegra cuota, marca trabajo FAILED y propaga excepción)")
+    void shouldCompensateWhenRabbitMqPublishingFails() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        UserQuota existingQuota = UserQuota.createDefault(userId, currentPeriod);
+        java.util.concurrent.atomic.AtomicReference<UserQuotaJpaEntity> quotaRef =
+                new java.util.concurrent.atomic.AtomicReference<>(new TryOnPersistenceMapper().toQuotaJpaEntity(existingQuota));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), currentPeriod.getValue()))
+                .thenAnswer(inv -> Optional.of(quotaRef.get()));
+        when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class))).thenAnswer(inv -> {
+            UserQuotaJpaEntity entity = inv.getArgument(0);
+            quotaRef.set(entity);
+            return entity;
+        });
+
+        // Simular fallo en broker RabbitMQ
+        Mockito.doThrow(new RuntimeException("Broker RabbitMQ caído"))
+                .when(rabbitTemplate).convertAndSend(any(String.class), any(String.class), any(Object.class));
+
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
+                userId, garmentId, "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png", true
+        )).isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Broker RabbitMQ caído");
+
+        // Verificar que el trabajo fue marcado FAILED en la compensación
+        ArgumentCaptor<TryOnJobJpaEntity> jobCaptor = ArgumentCaptor.forClass(TryOnJobJpaEntity.class);
+        verify(tryOnJobJpaRepository, Mockito.atLeast(2)).save(jobCaptor.capture());
+        TryOnJobJpaEntity lastSavedJob = jobCaptor.getAllValues().get(jobCaptor.getAllValues().size() - 1);
+        assertThat(lastSavedJob.getStatus()).isEqualTo("FAILED");
+        assertThat(lastSavedJob.getErrorMessage()).contains("Compensacion");
+
+        // Verificar reintegro de cuota (save con saldo decrementado de vuelta a 0)
+        ArgumentCaptor<UserQuotaJpaEntity> quotaCaptor = ArgumentCaptor.forClass(UserQuotaJpaEntity.class);
+        verify(quotaJpaRepository, Mockito.atLeast(2)).save(quotaCaptor.capture());
+        UserQuotaJpaEntity lastSavedQuota = quotaCaptor.getAllValues().get(quotaCaptor.getAllValues().size() - 1);
+        assertThat(lastSavedQuota.getUsedCount()).isZero();
     }
 }

@@ -144,6 +144,9 @@ class ProcessTryOnJobServiceImplTest {
         completedJob.markFailed("Fallo previo");
         processTryOnJobService.processJob(jobId);
 
+        completedJob.startAiProcessing();
+        processTryOnJobService.processJob(jobId);
+
         verify(fashnStrategy, never()).submitTryOn(any());
         verify(eventPublisherPort, never()).publishJobEvent(any());
     }

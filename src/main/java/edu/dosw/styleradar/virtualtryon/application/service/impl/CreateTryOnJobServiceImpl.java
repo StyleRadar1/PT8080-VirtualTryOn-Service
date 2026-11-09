@@ -202,7 +202,12 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         });
 
         // 5. Publicación asíncrona en RabbitMQ para que el consumidor desacoplado ejecute la inferencia
-        eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(savedQueuedJob));
+        try {
+            eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(savedQueuedJob));
+        } catch (RuntimeException ex) {
+            compensateFailedPublication(savedQueuedJob, userId, currentPeriod, ex.getMessage());
+            throw ex;
+        }
         return savedQueuedJob;
     }
 
@@ -211,6 +216,26 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             return transactionTemplate.execute(status -> action.get());
         }
         return action.get();
+    }
+
+    private void compensateFailedPublication(TryOnJob job, UserId userId, BillingPeriod period, String errorReason) {
+        executeInTransaction(() -> {
+            quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, period).ifPresent(quota -> {
+                quota.refundQuota();
+                quotaRepositoryPort.saveQuota(quota);
+                quotaCachePort.cacheUsedCount(userId, period, quota.getUsedCount());
+            });
+
+            job.markFailed("Compensacion: fallo al encolar en broker RabbitMQ (" + errorReason + ")");
+            jobRepositoryPort.saveJob(job);
+            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                    job.getId(),
+                    JobStatus.QUEUED,
+                    JobStatus.FAILED,
+                    "Compensacion: cuota reintegrada tras fallo en broker de mensajeria: " + errorReason
+            ));
+            return null;
+        });
     }
 
     private AiInferenceStrategy selectStrategy(AiProvider provider) {

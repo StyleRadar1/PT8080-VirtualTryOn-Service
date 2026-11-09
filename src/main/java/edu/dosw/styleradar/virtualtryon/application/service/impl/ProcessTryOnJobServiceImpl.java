@@ -66,10 +66,8 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
         TryOnJob job = jobRepositoryPort.findJobById(jobId)
                 .orElseThrow(() -> new JobNotFoundException(jobId));
 
-        if (job.getStatus() == JobStatus.COMPLETED
-                || job.getStatus() == JobStatus.FAILED
-                || job.getStatus() == JobStatus.CANCELLED) {
-            log.warn("El trabajo de prueba virtual {} ya se encuentra en estado terminal {}, se omite procesamiento duplicado",
+        if (job.getStatus() != JobStatus.QUEUED) {
+            log.warn("El trabajo de prueba virtual {} no se encuentra en estado QUEUED (estado actual: {}), se omite procesamiento duplicado o fuera de secuencia",
                     jobId, job.getStatus());
             return;
         }
