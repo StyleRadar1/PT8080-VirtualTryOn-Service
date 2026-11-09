@@ -25,6 +25,7 @@ import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -201,18 +202,27 @@ class ProcessTryOnJobServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Recuperación de trabajos bloqueados en PROCESSING tras caída de worker guarda evento outbox failed")
+    @DisplayName("HU SR-RF-25: Recuperación de trabajos bloqueados en PROCESSING con bloqueo pesimista y re-verificación de estado")
     void shouldSweepStaleProcessingJobs() {
-        TryOnJob staleJob = new TryOnJobBuilder()
-                .withUserId(UserId.of(UUID.randomUUID()))
-                .withGarmentId(GarmentId.of(UUID.randomUUID()))
-                .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
-                .withProvider(AiProvider.FASHN_AI)
-                .build();
-        staleJob.startAiProcessing();
+        TryOnJob staleJob = new TryOnJob(
+                UUID.randomUUID(),
+                UserId.of(UUID.randomUUID()),
+                GarmentId.of(UUID.randomUUID()),
+                "https://storage/photo.png",
+                GarmentCategory.TOPS,
+                "https://catalog/shirt.png",
+                JobStatus.PROCESSING,
+                null,
+                AiProvider.FASHN_AI,
+                null,
+                null,
+                false,
+                Instant.now().minus(Duration.ofMinutes(15)),
+                Instant.now().minus(Duration.ofMinutes(15)) // Más antiguo que threshold (10 min)
+        );
 
         when(jobRepositoryPort.findStaleProcessingJobs(any())).thenReturn(List.of(staleJob));
+        when(jobRepositoryPort.findJobByIdForUpdate(staleJob.getId())).thenReturn(Optional.of(staleJob));
         when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
 
         int recovered = processTryOnJobService.sweepStaleProcessingJobs(Duration.ofMinutes(10));
@@ -221,5 +231,61 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(staleJob.getStatus()).isEqualTo(JobStatus.FAILED);
         assertThat(staleJob.getErrorMessage()).contains("Timeout de procesamiento");
         verify(outboxPublisherPort).saveOutboxEvent(eq(staleJob.getId()), eq("tryon.job.failed"), any());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: sweepStaleProcessingJobs omite trabajos que cambiaron a COMPLETED o fueron actualizados recientemente (evita carrera con worker)")
+    void shouldSkipRecoveryWhenJobAlreadyCompletedOrRecentlyUpdated() {
+        UUID jobId1 = UUID.randomUUID();
+        UUID jobId2 = UUID.randomUUID();
+
+        // Trabajo 1: pasó a COMPLETED mientras el recuperador ejecutaba
+        TryOnJob completedJob = new TryOnJob(
+                jobId1,
+                UserId.of(UUID.randomUUID()),
+                GarmentId.of(UUID.randomUUID()),
+                "https://storage/photo.png",
+                GarmentCategory.TOPS,
+                "https://catalog/shirt.png",
+                JobStatus.COMPLETED,
+                SasSignedUrl.of("https://storage/render.png"),
+                AiProvider.FASHN_AI,
+                2000L,
+                null,
+                false,
+                Instant.now().minus(Duration.ofMinutes(15)),
+                Instant.now()
+        );
+
+        // Trabajo 2: sigue en PROCESSING pero fue actualizado hace 1 minuto (worker activo)
+        TryOnJob activeWorkerJob = new TryOnJob(
+                jobId2,
+                UserId.of(UUID.randomUUID()),
+                GarmentId.of(UUID.randomUUID()),
+                "https://storage/photo.png",
+                GarmentCategory.TOPS,
+                "https://catalog/shirt.png",
+                JobStatus.PROCESSING,
+                null,
+                AiProvider.FASHN_AI,
+                null,
+                null,
+                false,
+                Instant.now().minus(Duration.ofMinutes(15)),
+                Instant.now().minus(Duration.ofMinutes(1))
+        );
+
+        when(jobRepositoryPort.findStaleProcessingJobs(any())).thenReturn(List.of(completedJob, activeWorkerJob));
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId1)).thenReturn(Optional.of(completedJob));
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId2)).thenReturn(Optional.of(activeWorkerJob));
+
+        int recovered = processTryOnJobService.sweepStaleProcessingJobs(Duration.ofMinutes(10));
+
+        // Ninguno debió ser marcado como fallido
+        assertThat(recovered).isZero();
+        assertThat(completedJob.getStatus()).isEqualTo(JobStatus.COMPLETED);
+        assertThat(activeWorkerJob.getStatus()).isEqualTo(JobStatus.PROCESSING);
+        verify(jobRepositoryPort, never()).saveJob(completedJob);
+        verify(jobRepositoryPort, never()).saveJob(activeWorkerJob);
     }
 }

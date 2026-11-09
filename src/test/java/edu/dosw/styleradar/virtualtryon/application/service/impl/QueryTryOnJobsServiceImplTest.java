@@ -562,5 +562,49 @@ class QueryTryOnJobsServiceImplTest {
         assertTrue(job.isPhotoPurged());
         org.junit.jupiter.api.Assertions.assertNull(job.getResultImageUrl());
     }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Purga biométrica lanza IllegalStateException si BlobStoragePort es null y no inventa éxito ni auditoría física")
+    void shouldThrowIllegalStateExceptionWhenBlobStoragePortIsNullDuringPurge() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class);
+
+        // Instanciado sin BlobStoragePort (null)
+        QueryTryOnJobsServiceImpl serviceWithoutStorage = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo,
+                null
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob job = new edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob(
+                jobId,
+                ownerId,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
+                "https://blob/photo.jpg",
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                "https://garment.png",
+                edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://blob/render.png"),
+                edu.dosw.styleradar.virtualtryon.domain.model.AiProvider.FASHN_AI,
+                1500L,
+                null,
+                false,
+                Instant.now(),
+                Instant.now()
+        );
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(job));
+
+        assertThrows(IllegalStateException.class,
+                () -> serviceWithoutStorage.purgeJobBiometricPhoto(jobId, ownerId, false));
+
+        org.junit.jupiter.api.Assertions.assertFalse(job.isPhotoPurged());
+        verify(jobRepo, never()).saveJob(any());
+        verify(jobRepo, never()).saveAuditLog(any());
+    }
 }
 

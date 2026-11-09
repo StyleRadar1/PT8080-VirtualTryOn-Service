@@ -37,6 +37,7 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.r
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.TryOnJobJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.UserQuotaJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.config.RabbitConfig;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -380,7 +381,7 @@ class CreateTryOnJobServiceImplTest {
 
         eventPublisherAdapter.publishJobEvent(null);
         Mockito.doThrow(new RuntimeException("Rabbit offline"))
-                .when(rabbitTemplate).convertAndSend(any(String.class), any(String.class), any(Object.class));
+                .when(rabbitTemplate).convertAndSend(any(String.class), any(String.class), any(TryOnJobDomainEvent.class), any(CorrelationData.class));
         assertThatThrownBy(() -> eventPublisherAdapter.publishJobEvent(TryOnJobDomainEvent.fromJob(builtJob)))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("Rabbit offline");
@@ -392,7 +393,9 @@ class CreateTryOnJobServiceImplTest {
                 emptyRabbitProvider,
                 RabbitConfig.DEFAULT_TRYON_EXCHANGE
         );
-        offlinePublisher.publishJobEvent(TryOnJobDomainEvent.fromJob(builtJob));
+        assertThatThrownBy(() -> offlinePublisher.publishJobEvent(TryOnJobDomainEvent.fromJob(builtJob)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("RabbitTemplate no está disponible");
     }
 
     @Test

@@ -26,6 +26,11 @@ spring:
       indent-output: true
       write-dates-as-timestamps: false
 
+  # Configuración de RabbitMQ con Publisher Confirms para el Transactional Outbox
+  rabbitmq:
+    publisher-confirm-type: correlated
+    publisher-returns: true
+
   # Migraciones de esquema PostgreSQL con Flyway
   flyway:
     enabled: ${FLYWAY_ENABLED:true}

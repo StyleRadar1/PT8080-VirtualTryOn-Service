@@ -6,6 +6,8 @@
 styleradar:
   tryon:
     ai-provider: fashn
+    amqp:
+      publisher-confirms: true
     blob-container: ${AZURE_STORAGE_CONTAINER:?AZURE_STORAGE_CONTAINER debe ser configurado explícitamente en el entorno de producción}
     fashn-api-key: ${FASHN_API_KEY:?FASHN_API_KEY debe ser configurada explícitamente en el entorno de producción}
 

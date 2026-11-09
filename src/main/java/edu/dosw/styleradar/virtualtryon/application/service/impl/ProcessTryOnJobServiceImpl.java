@@ -149,23 +149,47 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
         Instant threshold = Instant.now().minus(maxProcessingAge != null ? maxProcessingAge : Duration.ofMinutes(10));
         List<TryOnJob> staleJobs = jobRepositoryPort.findStaleProcessingJobs(threshold);
         int recovered = 0;
-        for (TryOnJob staleJob : staleJobs) {
+        for (TryOnJob candidate : staleJobs) {
             try {
-                executeInTransaction(() -> {
-                    staleJob.markFailed("Timeout de procesamiento: trabajo interrumpido por caída de worker");
-                    jobRepositoryPort.saveJob(staleJob);
+                boolean wasRecovered = Boolean.TRUE.equals(executeInTransaction(() -> {
+                    // Adquirir bloqueo pesimista en base de datos para evitar condición de carrera con el worker en ejecución
+                    TryOnJob lockedJob = jobRepositoryPort.findJobByIdForUpdate(candidate.getId())
+                            .orElse(null);
+
+                    if (lockedJob == null) {
+                        return false;
+                    }
+
+                    // Verificar que siga estrictamente en PROCESSING y que su última actualización siga siendo anterior al threshold
+                    if (lockedJob.getStatus() != JobStatus.PROCESSING) {
+                        log.info("Trabajo {} ya no se encuentra en PROCESSING (estado actual: {}), se omite recuperación concurrente",
+                                lockedJob.getId(), lockedJob.getStatus());
+                        return false;
+                    }
+
+                    if (lockedJob.getUpdatedAt() != null && !lockedJob.getUpdatedAt().isBefore(threshold)) {
+                        log.info("Trabajo {} fue actualizado recientemente ({}), el worker aún está activo. Se omite recuperación",
+                                lockedJob.getId(), lockedJob.getUpdatedAt());
+                        return false;
+                    }
+
+                    lockedJob.markFailed("Timeout de procesamiento: trabajo interrumpido por caída de worker");
+                    jobRepositoryPort.saveJob(lockedJob);
                     jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                            staleJob.getId(),
+                            lockedJob.getId(),
                             JobStatus.PROCESSING,
                             JobStatus.FAILED,
                             "Recuperación automática de trabajo bloqueado por caída de nodo ejecutor"
                     ));
-                    outboxPublisherPort.saveOutboxEvent(staleJob.getId(), "tryon.job.failed", TryOnJobDomainEvent.fromJob(staleJob));
-                    return null;
-                });
-                recovered++;
+                    outboxPublisherPort.saveOutboxEvent(lockedJob.getId(), "tryon.job.failed", TryOnJobDomainEvent.fromJob(lockedJob));
+                    return true;
+                }));
+
+                if (wasRecovered) {
+                    recovered++;
+                }
             } catch (Exception ex) {
-                log.error("Fallo al recuperar trabajo huérfano {}: {}", staleJob.getId(), ex.getMessage());
+                log.error("Fallo al recuperar trabajo huérfano {}: {}", candidate.getId(), ex.getMessage());
             }
         }
         return recovered;
