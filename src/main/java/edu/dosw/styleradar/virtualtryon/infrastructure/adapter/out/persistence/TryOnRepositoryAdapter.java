@@ -165,6 +165,12 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     }
 
     @Override
+    public Optional<UserQuota> findQuotaByUserIdAndPeriodForUpdate(UserId userId, BillingPeriod billingPeriod) {
+        return quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), billingPeriod.getValue())
+                .map(persistenceMapper::toQuotaDomain);
+    }
+
+    @Override
     public CatalogGarment saveCatalogGarment(CatalogGarment garment) {
         CatalogGarmentJpaEntity saved = catalogGarmentJpaRepository.save(
                 persistenceMapper.toCatalogGarmentJpaEntity(garment)
@@ -191,8 +197,21 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     }
 
     @Override
+    public Optional<TryOnJob> findJobByIdForUpdate(UUID jobId) {
+        return tryOnJobJpaRepository.findByIdForUpdate(jobId)
+                .map(persistenceMapper::toJobDomain);
+    }
+
+    @Override
     public List<TryOnJob> findJobsByUserId(UserId userId) {
         return tryOnJobJpaRepository.findByUserIdOrderByCreatedAtDesc(userId.value()).stream()
+                .map(persistenceMapper::toJobDomain)
+                .toList();
+    }
+
+    @Override
+    public List<TryOnJob> findStaleProcessingJobs(java.time.Instant threshold) {
+        return tryOnJobJpaRepository.findByStatusAndUpdatedAtBefore("PROCESSING", threshold).stream()
                 .map(persistenceMapper::toJobDomain)
                 .toList();
     }

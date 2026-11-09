@@ -2,10 +2,13 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
+import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.model.AiProvider;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
+import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
-import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
@@ -13,7 +16,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
-import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnEventPublisherPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaRepositoryPort;
@@ -25,55 +28,62 @@ import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidationContext
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidatorHandler;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
-import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.Instant;
+import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Objects;
 import java.util.OptionalInt;
+import java.util.function.Supplier;
 
 /**
- * Implementación del servicio de aplicación que orquesta el flujo completo de creación y
- * generación de una prueba virtual con IA (SR-RF-25):
- * 1. Valida la cadena de responsabilidad (Consentimiento V01 -> Cuota Mensual V02 -> Prenda Compatible V03).
- * 2. Construye el agregado TryOnJob mediante TryOnJobBuilder en estado QUEUED y registra JobAuditLog.
- * 3. Consume 1 crédito de la cuota mensual en PostgreSQL y Redis.
- * 4. Publica el evento tryon.job.created en RabbitMQ.
- * 5. Ejecuta la estrategia de inferencia (FashnAiStrategy o MockAiStrategy), actualiza el job a COMPLETED
- *    o FAILED, registra la transición en JobAuditLog y publica tryon.job.completed / tryon.job.failed.
+ * Servicio de aplicación para la creación y orquestación inicial de trabajos de Virtual Try-On (SR-RF-25).
+ * Valida la cadena V01..V03, descuenta la cuota con bloqueo pesimista en PostgreSQL, persiste atómicamente
+ * el trabajo, la auditoría y el evento tryon.job.created en la tabla outbox_events dentro de la misma
+ * transacción JDBC (Transactional Outbox), eliminando problemas de consistencia Dual-Write.
  */
 @Service
-@Transactional
 public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
+
+    private static final Logger log = LoggerFactory.getLogger(CreateTryOnJobServiceImpl.class);
 
     private final TryOnJobRepositoryPort jobRepositoryPort;
     private final UserQuotaRepositoryPort quotaRepositoryPort;
     private final UserQuotaCachePort quotaCachePort;
     private final BiometricDataRepositoryPort biometricDataRepositoryPort;
-    private final TryOnEventPublisherPort eventPublisherPort;
     private final List<AiInferenceStrategy> inferenceStrategies;
     private final AiProvider configuredProvider;
     private final TryOnValidatorHandler validationChain;
+    private final TransactionTemplate transactionTemplate;
+    private final OutboxPublisherPort outboxPublisherPort;
 
+    @Autowired
     public CreateTryOnJobServiceImpl(
             TryOnJobRepositoryPort jobRepositoryPort,
             UserQuotaRepositoryPort quotaRepositoryPort,
             UserQuotaCachePort quotaCachePort,
             BiometricDataRepositoryPort biometricDataRepositoryPort,
-            TryOnEventPublisherPort eventPublisherPort,
             List<AiInferenceStrategy> inferenceStrategies,
-            @Value("${styleradar.tryon.ai-provider:mock}") String configuredProviderName
+            @Value("${styleradar.tryon.ai-provider:fashn}") String configuredProviderName,
+            TransactionTemplate transactionTemplate,
+            OutboxPublisherPort outboxPublisherPort
     ) {
-        this.jobRepositoryPort = jobRepositoryPort;
-        this.quotaRepositoryPort = quotaRepositoryPort;
-        this.quotaCachePort = quotaCachePort;
-        this.biometricDataRepositoryPort = biometricDataRepositoryPort;
-        this.eventPublisherPort = eventPublisherPort;
-        this.inferenceStrategies = inferenceStrategies;
+        this.jobRepositoryPort = Objects.requireNonNull(jobRepositoryPort, "jobRepositoryPort no puede ser nulo");
+        this.quotaRepositoryPort = Objects.requireNonNull(quotaRepositoryPort, "quotaRepositoryPort no puede ser nulo");
+        this.quotaCachePort = Objects.requireNonNull(quotaCachePort, "quotaCachePort no puede ser nulo");
+        this.biometricDataRepositoryPort = Objects.requireNonNull(biometricDataRepositoryPort, "biometricDataRepositoryPort no puede ser nulo");
+        this.inferenceStrategies = inferenceStrategies != null ? inferenceStrategies : List.of();
         this.configuredProvider = AiProvider.fromConfigValue(configuredProviderName);
+        this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate es obligatorio para garantizar atomicidad transaccional");
+        this.outboxPublisherPort = Objects.requireNonNull(outboxPublisherPort, "outboxPublisherPort es obligatorio para garantizar consistencia Dual-Write (Transactional Outbox)");
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
@@ -89,121 +99,159 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             String photoUrl,
             boolean biometricConsent
     ) {
-        boolean hasPersistedConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
+        // 1. Verificación estricta de consentimiento biométrico explícito y registrado (Ley 1581 de 2012)
+        if (!biometricConsent) {
+            throw new ConsentRequiredException(
+                    "Debe confirmar explícitamente el consentimiento biométrico para iniciar la prueba virtual");
+        }
+        boolean hasActivePersistedConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
                 .map(BiometricConsent::isValidForInference)
                 .orElse(false);
-        boolean effectiveConsent = biometricConsent || hasPersistedConsent;
+        if (!hasActivePersistedConsent) {
+            throw new ConsentRequiredException(
+                    "El usuario " + userId.value() + " no cuenta con consentimiento biométrico activo registrado");
+        }
+
+        // 2. Verificación de existencia y titularidad de la fotografía frontal de silueta del usuario
+        BiometricPhoto userPhoto = biometricDataRepositoryPort.findPhotoByUserId(userId)
+                .orElseThrow(() -> new InvalidPhotoException(
+                        "El usuario " + userId.value() + " no tiene una fotografía frontal de silueta registrada y validada"));
+
+        if (photoUrl == null || photoUrl.isBlank()) {
+            throw new InvalidPhotoException("La URL de la fotografía frontal es obligatoria");
+        }
+
+        if (!isPhotoOwnedByUser(photoUrl, userPhoto, userId)) {
+            throw new InvalidPhotoException(
+                    "La fotografía proporcionada no corresponde a la silueta biométrica del usuario autenticado");
+        }
+
+        String effectivePhotoUrl = (photoUrl != null && !photoUrl.isBlank())
+                ? photoUrl.trim()
+                : ((userPhoto.getPhotoUrl() != null) ? userPhoto.getPhotoUrl().value() : null);
+
+        // 3. Validación de existencia real de la prenda en el catálogo
+        CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                .orElseThrow(() -> new InvalidGarmentException(
+                        "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
 
         BillingPeriod currentPeriod = BillingPeriod.current();
-        UserQuota quota = resolveCurrentQuota(userId, currentPeriod);
 
-        CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
-                .orElseGet(() -> new CatalogGarment(
-                        garmentId,
-                        "Prenda Catálogo " + garmentId.value(),
-                        GarmentCategory.TOPS,
-                        "https://styleradar.dosw.edu/catalog/garments/" + garmentId.value() + ".png",
-                        true,
-                        Instant.now()
-                ));
+        // 4. Creación atómica del TryOnJob, consumo de cuota y persistencia en Outbox dentro de la misma transacción JDBC
+        TryOnJob savedQueuedJob = executeInTransaction(() -> {
+            UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)
+                    .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
 
-        TryOnValidationContext validationContext = new TryOnValidationContext(
-                userId,
-                garment.getGarmentId(),
-                garment.getCategory(),
-                garment.getImageUrl(),
-                garment.isVisible(),
-                effectiveConsent,
-                quota
-        );
-        validationChain.validate(validationContext);
+            OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
+            if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
+                quota = new UserQuota(
+                        quota.getId(),
+                        quota.getUserId(),
+                        quota.getMonthlyLimit(),
+                        cachedUsed.getAsInt(),
+                        quota.getBillingPeriod(),
+                        quota.isRadarPlus(),
+                        quota.getLastResetAt()
+                );
+            }
 
-        quota.consumeQuota();
-        quotaRepositoryPort.saveQuota(quota);
-        quotaCachePort.cacheUsedCount(userId, currentPeriod, quota.getUsedCount());
+            TryOnValidationContext validationContext = new TryOnValidationContext(
+                    userId,
+                    garment.getGarmentId(),
+                    garment.getCategory(),
+                    garment.getImageUrl(),
+                    garment.isVisible(),
+                    true,
+                    quota
+            );
+            validationChain.validate(validationContext);
 
-        TryOnJob queuedJob = new TryOnJobBuilder()
-                .withUserId(userId)
-                .withGarmentId(garmentId)
-                .withPhotoUrl(photoUrl)
-                .withCategory(garment.getCategory())
-                .withProvider(configuredProvider)
-                .build();
+            quota.consumeQuota();
+            quotaRepositoryPort.saveQuota(quota);
+            quotaCachePort.cacheUsedCount(userId, currentPeriod, quota.getUsedCount());
 
-        TryOnJob savedQueuedJob = jobRepositoryPort.saveJob(queuedJob);
-        jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                savedQueuedJob.getId(),
-                null,
-                JobStatus.QUEUED,
-                "Trabajo de prueba virtual creado y encolado tras superar validaciones V01..V03"
-        ));
-        eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(savedQueuedJob));
+            TryOnJob queuedJob = new TryOnJobBuilder()
+                    .withUserId(userId)
+                    .withGarmentId(garmentId)
+                    .withPhotoUrl(effectivePhotoUrl)
+                    .withCategory(garment.getCategory())
+                    .withGarmentImageUrl(garment.getImageUrl())
+                    .withProvider(configuredProvider)
+                    .build();
 
-        long startNanos = System.nanoTime();
-        savedQueuedJob.startAiProcessing();
-        jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                savedQueuedJob.getId(),
-                JobStatus.QUEUED,
-                JobStatus.PROCESSING,
-                "Iniciando procesamiento de inferencia IA con proveedor " + configuredProvider
-        ));
+            TryOnJob saved = jobRepositoryPort.saveJob(queuedJob);
+            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                    saved.getId(),
+                    null,
+                    JobStatus.QUEUED,
+                    "Trabajo de prueba virtual creado y encolado tras superar validaciones V01..V03"
+            ));
 
-        AiInferenceStrategy selectedStrategy = selectStrategy(configuredProvider);
+            // Persistencia obligatoria del evento en el Outbox en la misma transacción PostgreSQL
+            outboxPublisherPort.saveOutboxEvent(saved.getId(), "tryon.job.created", TryOnJobDomainEvent.fromJob(saved));
+            return saved;
+        });
+
+        // 5. Despacho asíncrono inmediato opcional (si el broker falla, el Outbox periódico garantiza la entrega At-Least-Once)
         try {
-            SasSignedUrl renderUrl = selectedStrategy.submitTryOn(savedQueuedJob);
-            long elapsedMs = Math.max(1L, (System.nanoTime() - startNanos) / 1_000_000L);
-            savedQueuedJob.complete(renderUrl, elapsedMs);
-            TryOnJob completedJob = jobRepositoryPort.saveJob(savedQueuedJob);
-            jobRepositoryPort.saveOutfit(TryOnOutfit.createForCompletedJob(
-                    completedJob.getId(),
-                    completedJob.getUserId(),
-                    renderUrl
-            ));
-            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                    completedJob.getId(),
-                    JobStatus.PROCESSING,
-                    JobStatus.COMPLETED,
-                    "Renderizado de prueba virtual completado exitosamente en " + elapsedMs + " ms"
-            ));
-            eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(completedJob));
-            return completedJob;
-        } catch (RuntimeException ex) {
-            savedQueuedJob.markFailed(ex.getMessage());
-            TryOnJob failedJob = jobRepositoryPort.saveJob(savedQueuedJob);
-            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                    failedJob.getId(),
-                    JobStatus.PROCESSING,
-                    JobStatus.FAILED,
-                    "Error durante la generación de prueba virtual: " + failedJob.getErrorMessage()
-            ));
-            eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(failedJob));
-            throw ex;
+            outboxPublisherPort.publishPendingEvents();
+        } catch (Exception ex) {
+            log.warn("Fallo temporal al despachar evento AMQP inmediatamente. El scheduler de Outbox garantizará la entrega: {}",
+                    ex.getMessage());
         }
+
+        return savedQueuedJob;
     }
 
-    private UserQuota resolveCurrentQuota(UserId userId, BillingPeriod currentPeriod) {
-        UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
-                .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
-        OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
-        if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
-            quota = new UserQuota(
-                    quota.getId(),
-                    quota.getUserId(),
-                    quota.getMonthlyLimit(),
-                    cachedUsed.getAsInt(),
-                    quota.getBillingPeriod(),
-                    quota.isRadarPlus(),
-                    quota.getLastResetAt()
-            );
-        }
-        return quota;
+    private <T> T executeInTransaction(Supplier<T> action) {
+        return transactionTemplate.execute(status -> action.get());
     }
 
     private AiInferenceStrategy selectStrategy(AiProvider provider) {
         return inferenceStrategies.stream()
                 .filter(strategy -> strategy.supportsProvider(provider))
                 .findFirst()
-                .orElseGet(() -> inferenceStrategies.get(0));
+                .orElse(null);
+    }
+
+    private boolean isPhotoOwnedByUser(String candidatePhotoUrl, BiometricPhoto userPhoto, UserId userId) {
+        if (candidatePhotoUrl == null || candidatePhotoUrl.isBlank() || userPhoto == null || userId == null) {
+            return false;
+        }
+        String expectedBlobPath = userPhoto.getBlobPath();
+        if (expectedBlobPath == null || expectedBlobPath.isBlank()) {
+            return false;
+        }
+        String expectedUserPrefix = userId.value().toString() + "/";
+        if (!expectedBlobPath.startsWith(expectedUserPrefix)) {
+            return false;
+        }
+        try {
+            String decodedUrl = URLDecoder.decode(candidatePhotoUrl.trim(), StandardCharsets.UTF_8);
+            if (decodedUrl.contains("..")) {
+                return false; // Prevenir cualquier vector de directory traversal
+            }
+            URI uri = URI.create(decodedUrl).normalize();
+            String path = uri.getPath();
+            if (path == null || path.isBlank()) {
+                path = decodedUrl;
+            }
+            while (path.startsWith("/")) {
+                path = path.substring(1);
+            }
+            while (path.endsWith("/")) {
+                path = path.substring(0, path.length() - 1);
+            }
+            int firstSlash = path.indexOf('/');
+            String pathWithoutContainer = (firstSlash >= 0) ? path.substring(firstSlash + 1) : path;
+            while (pathWithoutContainer.endsWith("/")) {
+                pathWithoutContainer = pathWithoutContainer.substring(0, pathWithoutContainer.length() - 1);
+            }
+
+            return expectedBlobPath.equalsIgnoreCase(path)
+                    || expectedBlobPath.equalsIgnoreCase(pathWithoutContainer);
+        } catch (Exception ex) {
+            return false;
+        }
     }
 }
-

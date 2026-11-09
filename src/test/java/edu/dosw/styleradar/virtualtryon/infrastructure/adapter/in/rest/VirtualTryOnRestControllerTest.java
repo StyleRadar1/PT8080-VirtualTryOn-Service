@@ -9,6 +9,7 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
@@ -38,6 +39,8 @@ import java.util.UUID;
 
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -148,7 +151,8 @@ class VirtualTryOnRestControllerTest {
                 2100L
         );
 
-        when(queryTryOnJobsService.getJobStatus(jobId, UserId.of(userId), false)).thenReturn(completedJob);
+        when(queryTryOnJobsService.getJobStatus(eq(jobId), eq(UserId.of(userId)), anyBoolean())).thenReturn(completedJob);
+        when(queryTryOnJobsService.getTryOnJob(eq(jobId), eq(UserId.of(userId)), anyBoolean())).thenReturn(completedJob);
         when(queryTryOnJobsService.getJobHistory(UserId.of(userId))).thenReturn(List.of(completedJob));
 
         mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
@@ -371,5 +375,29 @@ class VirtualTryOnRestControllerTest {
         mockMvc.perform(delete("/api/v1/try-on/personal-photos/{jobId}", jobId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR")))
                 .andExpect(status().isNoContent());
+
+        org.mockito.Mockito.verify(queryTryOnJobsService).purgeJobBiometricPhoto(
+                eq(jobId),
+                eq(edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId.of(userId)),
+                eq(false)
+        );
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Consulta de trabajo por un usuario que no es el propietario ni administrador retorna 403 Forbidden sin exponer información biométrica")
+    void testGetTryOnJobForbiddenForNonOwnerNonAdmin() throws Exception {
+        UUID authenticatedUserId = UUID.randomUUID();
+        UUID otherUserJobId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.getTryOnJob(eq(otherUserJobId), eq(UserId.of(authenticatedUserId)), eq(false)))
+                .thenThrow(new org.springframework.security.access.AccessDeniedException("No tiene permisos para consultar este trabajo"));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", otherUserJobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")))
+                .andExpect(jsonPath("$.photoUrl").doesNotExist())
+                .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
     }
 }

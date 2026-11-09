@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +23,7 @@ import java.util.UUID;
  * Separa las anotaciones de documentación de la lógica del controlador REST.
  */
 @Tag(name = "Virtual Try-On", description = "Endpoints de orquestación de Virtual Try-On con IA, selección de prendas, consulta de cuotas y privacidad biométrica")
+@SecurityRequirement(name = "bearerAuth")
 public interface VirtualTryOnOpenApiDoc {
 
     @Operation(

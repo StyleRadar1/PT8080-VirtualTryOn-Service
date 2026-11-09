@@ -75,6 +75,12 @@ public class UserQuota {
         this.usedCount++;
     }
 
+    public void refundQuota() {
+        if (this.usedCount > 0) {
+            this.usedCount--;
+        }
+    }
+
     public void resetQuota(String newPeriod) {
         this.billingPeriod = BillingPeriod.of(newPeriod);
         this.usedCount = 0;

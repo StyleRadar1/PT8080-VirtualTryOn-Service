@@ -18,6 +18,7 @@ public class TryOnJobBuilder {
     private GarmentId garmentId;
     private String photoUrl;
     private GarmentCategory garmentCategory = GarmentCategory.TOPS;
+    private String garmentImageUrl;
     private AiProvider aiProvider = AiProvider.FASHN_AI;
 
     public TryOnJobBuilder withId(UUID id) {
@@ -45,6 +46,11 @@ public class TryOnJobBuilder {
         return this;
     }
 
+    public TryOnJobBuilder withGarmentImageUrl(String garmentImageUrl) {
+        this.garmentImageUrl = garmentImageUrl;
+        return this;
+    }
+
     public TryOnJobBuilder withProvider(AiProvider provider) {
         this.aiProvider = provider;
         return this;
@@ -66,6 +72,7 @@ public class TryOnJobBuilder {
                 garmentId,
                 photoUrl.trim(),
                 resolvedCategory,
+                garmentImageUrl,
                 JobStatus.QUEUED,
                 null,
                 resolvedProvider,

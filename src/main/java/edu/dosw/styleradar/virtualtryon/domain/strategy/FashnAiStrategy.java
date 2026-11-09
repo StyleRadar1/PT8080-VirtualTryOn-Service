@@ -8,35 +8,31 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.AiInferenceClientPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
-import org.springframework.stereotype.Component;
-
 import java.util.Optional;
 
 /**
  * Estrategia concreta (Patrón Strategy) que delega la inferencia generativa de prueba virtual
  * hacia FASHN AI API y almacena el render resultante en Azure Blob Storage con URL SAS sp=r (SR-RF-25).
  */
-@Component
 public class FashnAiStrategy implements AiInferenceStrategy {
 
     private final AiInferenceClientPort aiInferenceClientPort;
     private final BlobStoragePort blobStoragePort;
-    private final MockAiStrategy fallbackStrategy;
 
     public FashnAiStrategy(
             AiInferenceClientPort aiInferenceClientPort,
-            BlobStoragePort blobStoragePort,
-            MockAiStrategy fallbackStrategy
+            BlobStoragePort blobStoragePort
     ) {
         this.aiInferenceClientPort = aiInferenceClientPort;
         this.blobStoragePort = blobStoragePort;
-        this.fallbackStrategy = fallbackStrategy;
     }
 
     @Override
     public SasSignedUrl submitTryOn(TryOnJob job) {
         GarmentCategory category = job.getGarmentCategory() != null ? job.getGarmentCategory() : GarmentCategory.TOPS;
-        String garmentReferenceUrl = "https://styleradar.dosw.edu/catalog/garments/" + job.getGarmentId().value() + ".png";
+        String garmentReferenceUrl = (job.getGarmentImageUrl() != null && !job.getGarmentImageUrl().isBlank())
+                ? job.getGarmentImageUrl()
+                : "https://styleradar.dosw.edu/catalog/garments/" + job.getGarmentId().value() + ".png";
         Optional<byte[]> renderedBytes = aiInferenceClientPort.generateTryOnRender(
                 job.getPhotoUrl(),
                 garmentReferenceUrl,
@@ -45,7 +41,9 @@ public class FashnAiStrategy implements AiInferenceStrategy {
         if (renderedBytes.isPresent() && renderedBytes.get().length > 0) {
             return blobStoragePort.storeRenderedResult(job.getUserId(), job.getId(), renderedBytes.get());
         }
-        return fallbackStrategy.submitTryOn(job);
+        throw new AiProviderTimeoutException(
+                "FASHN AI no devolvió una imagen renderizada válida para el trabajo: " + job.getId()
+        );
     }
 
     @Override

@@ -1,0 +1,21 @@
+# ===================================================================
+# Configuración estricta para el perfil de producción (Spring profile: prod)
+# Previene el uso accidental de contenedores QA, mocks de IA o valores inseguros (SR-RF-25)
+# ===================================================================
+
+styleradar:
+  tryon:
+    ai-provider: fashn
+    amqp:
+      publisher-confirms: true
+    blob-container: ${AZURE_STORAGE_CONTAINER:?AZURE_STORAGE_CONTAINER debe ser configurado explícitamente en el entorno de producción}
+    fashn-api-key: ${FASHN_API_KEY:?FASHN_API_KEY debe ser configurada explícitamente en el entorno de producción}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never

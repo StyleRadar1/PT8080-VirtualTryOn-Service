@@ -7,38 +7,54 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Puerto de salida para el almacenamiento seguro de objetos binarios (siluetas biométricas y resultados)
- * en Azure Blob Storage mediante URLs firmadas con SAS Token.
+ * Puerto de salida (Driven Port) para la persistencia, consulta y eliminación
+ * de fotografías y renderizados en Azure Blob Storage (SR-RF-23, SR-RF-25 y SR-RF-26).
  */
 public interface BlobStoragePort {
 
     /**
-     * Almacena la fotografía frontal de silueta del usuario y retorna su URL firmada (SAS).
+     * Almacena físicamente la fotografía en Azure Blob Storage y retorna su ruta relativa persistente (ej: "userId/silhouette-UUID.png").
      */
-    SasSignedUrl storeBiometricPhoto(UserId userId, String contentType, byte[] photoBytes);
+    String storeBiometricPhoto(UserId userId, String contentType, byte[] photoBytes);
 
     /**
      * Almacena la imagen renderizada resultante de la prueba virtual y retorna su URL firmada de solo lectura (sp=r).
      */
     default SasSignedUrl storeRenderedResult(UserId userId, UUID jobId, byte[] renderedPngBytes) {
-        return storeBiometricPhoto(userId, "image/png", renderedPngBytes);
+        String blobPath = storeBiometricPhoto(userId, "image/png", renderedPngBytes);
+        return generateReadOnlySignedUrl(blobPath);
     }
 
     /**
      * Renueva o construye una URL firmada temporal de solo lectura (sp=r, sr=b, spr=https) para visualizar un resultado.
      */
     default SasSignedUrl generateReadOnlySasUrl(SasSignedUrl existingUrl) {
-        return existingUrl;
+        if (existingUrl == null || existingUrl.value() == null) {
+            return existingUrl;
+        }
+        return generateReadOnlySignedUrl(existingUrl.value());
     }
 
     /**
-     * Recupera los bytes binarios de una fotografía almacenada a partir de su URL firmada.
+     * Genera una URL firmada SAS de solo lectura temporal (sr=b, sp=r, spr=https) para la ruta del blob indicada.
      */
-    Optional<byte[]> retrieveBlobBytes(SasSignedUrl blobUrl);
+    SasSignedUrl generateReadOnlySignedUrl(String blobPath);
 
     /**
-     * Elimina físicamente un objeto binario del contenedor de almacenamiento.
+     * Recupera los bytes binarios de una fotografía almacenada a partir de su ruta de blob o URL firmada.
      */
-    void deleteBlob(SasSignedUrl blobUrl);
-}
+    Optional<byte[]> retrieveBlobBytes(String blobPathOrUrl);
 
+    default Optional<byte[]> retrieveBlobBytes(SasSignedUrl blobUrl) {
+        return retrieveBlobBytes(blobUrl != null ? blobUrl.value() : null);
+    }
+
+    /**
+     * Elimina físicamente un objeto binario del contenedor de almacenamiento con reintentos controlados.
+     */
+    void deleteBlob(String blobPathOrUrl);
+
+    default void deleteBlob(SasSignedUrl blobUrl) {
+        deleteBlob(blobUrl != null ? blobUrl.value() : null);
+    }
+}

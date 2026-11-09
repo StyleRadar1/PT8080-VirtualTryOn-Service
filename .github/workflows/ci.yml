@@ -29,6 +29,8 @@ jobs:
         run: chmod +x mvnw
 
       - name: Execute Maven Clean Verify (Tests & JaCoCo >= 85%)
+        env:
+          AZURE_LIVE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_ACCOUNT_KEY }}
         run: ./mvnw clean verify -B
 
       - name: Upload JaCoCo Coverage Report

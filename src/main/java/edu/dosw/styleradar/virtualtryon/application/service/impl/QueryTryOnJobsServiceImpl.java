@@ -5,6 +5,7 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
@@ -23,6 +24,8 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -35,11 +38,13 @@ import java.util.UUID;
 
 /**
  * Implementación del servicio de aplicación para la consulta y sincronización de cuotas mensuales,
- * validación de prendas compatibles y visualización de resultados e historial de trabajos (SR-RF-24 y SR-RF-26).
+ * validación de prendas compatibles del catálogo, consulta de trabajos y purga biométrica (SR-RF-23 a SR-RF-26).
  */
 @Service
 @Transactional
 public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
+
+    private static final Logger log = LoggerFactory.getLogger(QueryTryOnJobsServiceImpl.class);
 
     private final UserQuotaRepositoryPort quotaRepositoryPort;
     private final UserQuotaCachePort quotaCachePort;
@@ -54,7 +59,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             UserQuotaCachePort quotaCachePort,
             BiometricDataRepositoryPort biometricDataRepositoryPort,
             TryOnJobRepositoryPort jobRepositoryPort,
-            BlobStoragePort blobStoragePort
+            @Autowired(required = false) BlobStoragePort blobStoragePort
     ) {
         this.quotaRepositoryPort = quotaRepositoryPort;
         this.quotaCachePort = quotaCachePort;
@@ -67,6 +72,15 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         TryOnValidatorHandler garmentValidator = new GarmentCategoryValidator();
         consentValidator.setNext(quotaValidator).setNext(garmentValidator);
         this.eligibilityValidationChain = consentValidator;
+    }
+
+    public QueryTryOnJobsServiceImpl(
+            UserQuotaRepositoryPort quotaRepositoryPort,
+            UserQuotaCachePort quotaCachePort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            TryOnJobRepositoryPort jobRepositoryPort
+    ) {
+        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, jobRepositoryPort, null);
     }
 
     public QueryTryOnJobsServiceImpl(
@@ -107,8 +121,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     public CatalogGarment validateGarmentEligibility(UserId userId, GarmentId garmentId) {
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
                 .orElseThrow(() -> new InvalidGarmentException(
-                        garmentId.value(),
-                        "No existe la prenda del catálogo o aún no ha sido publicada"
+                        "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"
                 ));
 
         boolean hasActiveConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
@@ -151,21 +164,29 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     }
 
     @Override
-    public TryOnJob getJobStatus(UUID jobId, UserId callerUserId, boolean callerIsAdmin) {
+    public TryOnJob getTryOnJob(UUID jobId, UserId callerUserId, boolean isAdmin) {
+        if (jobRepositoryPort == null) {
+            throw new JobNotFoundException(jobId);
+        }
         TryOnJob job = jobRepositoryPort.findJobById(jobId)
                 .orElseThrow(() -> new JobNotFoundException(jobId));
 
-        if (!callerIsAdmin && !job.getUserId().equals(callerUserId)) {
-            throw new AccessDeniedException(
-                    "No tiene permisos para visualizar el trabajo de prueba virtual de otro usuario"
-            );
+        if (!isAdmin && (callerUserId == null || !job.getUserId().equals(callerUserId))) {
+            throw new AccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
         }
-
         return enrichJobWithReadOnlySignedUrl(job);
     }
 
     @Override
+    public TryOnJob getJobStatus(UUID jobId, UserId callerUserId, boolean callerIsAdmin) {
+        return getTryOnJob(jobId, callerUserId, callerIsAdmin);
+    }
+
+    @Override
     public List<TryOnJob> getJobHistory(UserId userId) {
+        if (jobRepositoryPort == null) {
+            return List.of();
+        }
         return jobRepositoryPort.findJobsByUserId(userId).stream()
                 .map(this::enrichJobWithReadOnlySignedUrl)
                 .toList();
@@ -180,16 +201,82 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             TryOnOutfit outfit = maybeOutfit.get();
             if (outfit.isUrlExpired() && blobStoragePort != null) {
                 SasSignedUrl refreshed = blobStoragePort.generateReadOnlySasUrl(outfit.getFinalRenderUrl());
-                outfit.refreshSignedUrl(refreshed);
-                jobRepositoryPort.saveOutfit(outfit);
+                if (refreshed != null) {
+                    outfit.refreshSignedUrl(refreshed);
+                    jobRepositoryPort.saveOutfit(outfit);
+                    job.updateResultImageUrl(refreshed);
+                }
+            } else {
+                job.updateResultImageUrl(outfit.getFinalRenderUrl());
             }
-            job.updateResultImageUrl(outfit.getFinalRenderUrl());
         } else if (blobStoragePort != null) {
             SasSignedUrl readOnlyUrl = blobStoragePort.generateReadOnlySasUrl(job.getResultImageUrl());
-            TryOnOutfit createdOutfit = TryOnOutfit.createForCompletedJob(job.getId(), job.getUserId(), readOnlyUrl);
-            jobRepositoryPort.saveOutfit(createdOutfit);
-            job.updateResultImageUrl(readOnlyUrl);
+            if (readOnlyUrl != null) {
+                TryOnOutfit createdOutfit = TryOnOutfit.createForCompletedJob(job.getId(), job.getUserId(), readOnlyUrl);
+                jobRepositoryPort.saveOutfit(createdOutfit);
+                job.updateResultImageUrl(readOnlyUrl);
+            }
         }
         return job;
+    }
+
+    @Override
+    public void purgeJobBiometricPhoto(UUID jobId, UserId callerUserId, boolean isAdmin) {
+        if (jobRepositoryPort == null) {
+            throw new JobNotFoundException(jobId);
+        }
+        TryOnJob job = jobRepositoryPort.findJobById(jobId)
+                .orElseThrow(() -> new JobNotFoundException(jobId));
+
+        if (!isAdmin && (callerUserId == null || !job.getUserId().equals(callerUserId))) {
+            throw new AccessDeniedException("No tiene permisos para consultar este trabajo de prueba virtual");
+        }
+
+        if (blobStoragePort == null) {
+            throw new IllegalStateException(
+                    "No es posible ejecutar la purga biométrica bajo la Ley 1581 de 2012 porque el conector de almacenamiento físico (BlobStoragePort) no está configurado o disponible"
+            );
+        }
+
+        boolean rawPhotoNeedsPurge = job.getPhotoUrl() != null
+                && !job.isPhotoPurged()
+                && !job.getPhotoUrl().startsWith("PURGED");
+        boolean renderNeedsPurge = job.getResultImageUrl() != null;
+
+        // 1. Borrado físico estricto de fotografía frontal de silueta (sin silenciar excepciones de Azure)
+        if (rawPhotoNeedsPurge) {
+            log.info("Iniciando borrado físico en Azure Blob Storage de silueta biométrica para trabajo {}", jobId);
+            blobStoragePort.deleteBlob(job.getPhotoUrl());
+            job.purgeRawSilhouettePhoto();
+            jobRepositoryPort.saveJob(job);
+            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                    job.getId(),
+                    job.getStatus(),
+                    job.getStatus(),
+                    "Purga física y anonimización de fotografía frontal de silueta completada exitosamente en Azure Blob Storage (Ley 1581)"
+            ));
+        }
+
+        // 2. Borrado físico estricto de imagen renderizada generada (sin silenciar excepciones de Azure)
+        if (renderNeedsPurge) {
+            log.info("Iniciando borrado físico en Azure Blob Storage del render de resultado para trabajo {}", jobId);
+            blobStoragePort.deleteBlob(job.getResultImageUrl().value());
+            job.purgeResultRenderImage();
+            jobRepositoryPort.saveJob(job);
+            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                    job.getId(),
+                    job.getStatus(),
+                    job.getStatus(),
+                    "Purga física de imagen renderizada generada completada exitosamente en Azure Blob Storage"
+            ));
+        }
+
+        // 3. Registro de auditoría de completitud integral bajo Ley 1581 confirmado tras borrado físico
+        jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                job.getId(),
+                job.getStatus(),
+                job.getStatus(),
+                "Purga integral y borrado físico de datos biométricos completado bajo Ley 1581 de 2012"
+        ));
     }
 }

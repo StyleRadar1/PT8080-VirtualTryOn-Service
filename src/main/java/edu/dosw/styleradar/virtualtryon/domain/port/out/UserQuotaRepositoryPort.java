@@ -18,6 +18,8 @@ public interface UserQuotaRepositoryPort {
 
     Optional<UserQuota> findQuotaByUserIdAndPeriod(UserId userId, BillingPeriod billingPeriod);
 
+    Optional<UserQuota> findQuotaByUserIdAndPeriodForUpdate(UserId userId, BillingPeriod billingPeriod);
+
     CatalogGarment saveCatalogGarment(CatalogGarment garment);
 
     Optional<CatalogGarment> findCatalogGarmentById(GarmentId garmentId);
