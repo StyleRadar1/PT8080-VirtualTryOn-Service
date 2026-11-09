@@ -1,0 +1,44 @@
+# ===================================================================
+# Configuración estricta para el perfil de producción (Spring profile: prod)
+# Previene el uso accidental de contenedores QA, mocks de IA o valores inseguros (SR-RF-25)
+# ===================================================================
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    url: ${DB_URL:?DB_URL debe configurarse explícitamente en producción}
+    username: ${DB_USER:?DB_USER debe configurarse explícitamente en producción}
+    password: ${DB_PASSWORD:?DB_PASSWORD debe configurarse explícitamente en producción}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  data:
+    redis:
+      host: ${REDIS_HOST:?REDIS_HOST debe configurarse explícitamente en producción}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:?RABBITMQ_HOST debe configurarse explícitamente en producción}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:?RABBITMQ_USER debe configurarse explícitamente en producción}
+    password: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD debe configurarse explícitamente en producción}
+
+styleradar:
+  tryon:
+    ai-provider: fashn
+    amqp:
+      publisher-confirms: true
+    blob-container: ${AZURE_STORAGE_CONTAINER:?AZURE_STORAGE_CONTAINER debe ser configurado explícitamente en el entorno de producción}
+    fashn-api-key: ${FASHN_API_KEY:?FASHN_API_KEY debe ser configurada explícitamente en el entorno de producción}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never

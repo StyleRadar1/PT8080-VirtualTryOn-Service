@@ -4,10 +4,11 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 
 import java.util.Optional;
+import java.util.UUID;
 
 /**
- * Puerto de salida para el almacenamiento seguro de objetos binarios (siluetas biométricas y resultados)
- * en Azure Blob Storage mediante rutas de blob persistidas y URLs firmadas temporales con SAS Token (sp=r, sr=b).
+ * Puerto de salida (Driven Port) para la persistencia, consulta y eliminación
+ * de fotografías y renderizados en Azure Blob Storage (SR-RF-23 y SR-RF-25).
  */
 public interface BlobStoragePort {
 
@@ -17,9 +18,24 @@ public interface BlobStoragePort {
     String storeBiometricPhoto(UserId userId, String contentType, byte[] photoBytes);
 
     /**
+     * Almacena la imagen renderizada resultante de la prueba virtual y retorna su URL firmada de solo lectura (sp=r).
+     */
+    default SasSignedUrl storeRenderedResult(UserId userId, UUID jobId, byte[] renderedPngBytes) {
+        String blobPath = storeBiometricPhoto(userId, "image/png", renderedPngBytes);
+        return generateReadOnlySignedUrl(blobPath);
+    }
+
+    /**
      * Genera una URL firmada SAS de solo lectura temporal (sr=b, sp=r, spr=https) para la ruta del blob indicada.
      */
     SasSignedUrl generateReadOnlySignedUrl(String blobPath);
+
+    /** Removes a temporary SAS query string before a storage reference is persisted. */
+    default String normalizeBlobReference(String blobPathOrUrl) {
+        if (blobPathOrUrl == null) return null;
+        int queryIndex = blobPathOrUrl.indexOf('?');
+        return queryIndex >= 0 ? blobPathOrUrl.substring(0, queryIndex) : blobPathOrUrl;
+    }
 
     /**
      * Recupera los bytes binarios de una fotografía almacenada a partir de su ruta de blob o URL firmada.

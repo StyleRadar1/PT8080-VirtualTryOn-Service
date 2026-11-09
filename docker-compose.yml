@@ -18,7 +18,7 @@ services:
       - "${SERVER_PORT:-8500}:8500"
     environment:
       SERVER_PORT: 8500
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       DB_URL: jdbc:postgresql://probador-postgres:5432/probador_db
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
@@ -43,7 +43,7 @@ services:
       JWT_SECRET_BASE64: ${JWT_SECRET_BASE64:?JWT_SECRET_BASE64 es obligatorio en variables de entorno}
       JWT_DURATION: ${JWT_DURATION:-PT60M}
       AZURE_STORAGE_BASE_URL: ${AZURE_STORAGE_BASE_URL:?AZURE_STORAGE_BASE_URL es obligatorio en variables de entorno}
-      AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-biometric-silhouettes}
+      AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:?AZURE_STORAGE_CONTAINER es obligatorio en variables de entorno}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:?AZURE_STORAGE_ACCOUNT_KEY es obligatorio en variables de entorno}
       AZURE_READ_SAS_DURATION: ${AZURE_READ_SAS_DURATION:-PT60M}
       AZURE_STORAGE_API_VERSION: ${AZURE_STORAGE_API_VERSION:-2024-11-04}

@@ -43,6 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -300,6 +301,310 @@ class QueryTryOnJobsServiceImplTest {
 
         when(redisTemplate.delete(any(String.class))).thenThrow(new RuntimeException("Redis delete error"));
         redisQuotaCacheAdapter.evictQuota(userId, period);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25 / SR-RF-26: Consulta de TryOnJob por ID con verificación de titularidad y prevención de IDOR")
+    void shouldGetTryOnJobWithTitularityCheck() {
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UserId otherUser = UserId.of(UUID.randomUUID());
+
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob job = new edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder()
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://storage/photo.png")
+                .withCategory(GarmentCategory.TOPS)
+                .build();
+
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo = org.mockito.Mockito.mock(
+                edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class
+        );
+        QueryTryOnJobsServiceImpl serviceWithJobs = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo
+        );
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(job));
+
+        // 1. Dueño legítimo consulta su job -> 200 OK
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob found = serviceWithJobs.getTryOnJob(jobId, ownerId, false);
+        assertEquals(ownerId, found.getUserId());
+
+        // 2. Administrador consulta cualquier job -> 200 OK
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob adminFound = serviceWithJobs.getTryOnJob(jobId, otherUser, true);
+        assertEquals(ownerId, adminFound.getUserId());
+
+        // 3. Otro usuario no administrador intenta consultar job ajeno o usuario nulo -> 403 Forbidden (prevención IDOR)
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> serviceWithJobs.getTryOnJob(jobId, otherUser, false));
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> serviceWithJobs.getTryOnJob(jobId, null, false));
+
+        // 4. Job inexistente -> 404 Not Found
+        UUID nonExistent = UUID.randomUUID();
+        when(jobRepo.findJobById(nonExistent)).thenReturn(Optional.empty());
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException.class,
+                () -> serviceWithJobs.getTryOnJob(nonExistent, ownerId, false));
+
+        // 5. Servicio sin repositorio de jobs inyectado -> 404 Not Found
+        QueryTryOnJobsServiceImpl serviceWithoutJobRepo = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort
+        );
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException.class,
+                () -> serviceWithoutJobRepo.getTryOnJob(jobId, ownerId, false));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: purgeJobBiometricPhoto debe eliminar físicamente fotos de blob storage y marcar photoPurged en BD")
+    void shouldPurgeBiometricPhotoAndLogAudit() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class);
+        edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort blobPort =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort.class);
+
+        QueryTryOnJobsServiceImpl service = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo,
+                blobPort
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        String photoUrl = "https://blob/photo.jpg";
+        edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl resultUrl =
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://blob/render.png?sv=2024");
+
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob job = new edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob(
+                jobId,
+                ownerId,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
+                photoUrl,
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                "https://garment.png",
+                edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
+                resultUrl,
+                edu.dosw.styleradar.virtualtryon.domain.model.AiProvider.FASHN_AI,
+                1500L,
+                null,
+                false,
+                Instant.now(),
+                Instant.now()
+        );
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(job));
+
+        service.purgeJobBiometricPhoto(jobId, ownerId, false);
+
+        org.mockito.Mockito.verify(blobPort).deleteBlob(photoUrl);
+        org.mockito.Mockito.verify(blobPort).deleteBlob(resultUrl.value());
+        org.mockito.Mockito.verify(jobRepo, org.mockito.Mockito.atLeastOnce()).saveJob(job);
+        org.mockito.Mockito.verify(jobRepo, org.mockito.Mockito.atLeastOnce()).saveAuditLog(any());
+        assertTrue(job.isPhotoPurged());
+        assertEquals("PURGED_BY_USER_REQUEST", job.getPhotoUrl());
+        org.junit.jupiter.api.Assertions.assertNull(job.getResultImageUrl());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Purga biométrica con fallo en Azure Storage no marca foto como purgada y propaga la excepción")
+    void shouldNotMarkPhotoPurgedAndPropagateExceptionWhenAzurePhotoDeleteFails() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class);
+        edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort blobPort =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort.class);
+
+        QueryTryOnJobsServiceImpl service = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo,
+                blobPort
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        String photoUrl = "https://blob/photo.jpg";
+        edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl resultUrl =
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://blob/render.png?sv=2024");
+
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob job = new edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob(
+                jobId,
+                ownerId,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
+                photoUrl,
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                "https://garment.png",
+                edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
+                resultUrl,
+                edu.dosw.styleradar.virtualtryon.domain.model.AiProvider.FASHN_AI,
+                1500L,
+                null,
+                false,
+                Instant.now(),
+                Instant.now()
+        );
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(job));
+        doThrow(new RuntimeException("Azure Blob Storage 503 Service Unavailable"))
+                .when(blobPort).deleteBlob(photoUrl);
+
+        assertThrows(RuntimeException.class, () -> service.purgeJobBiometricPhoto(jobId, ownerId, false));
+
+        org.junit.jupiter.api.Assertions.assertFalse(job.isPhotoPurged());
+        assertEquals(photoUrl, job.getPhotoUrl());
+        assertEquals(resultUrl, job.getResultImageUrl());
+        verify(jobRepo, never()).saveJob(any());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Purga con éxito en silueta pero fallo en render refleja purga parcial y propaga excepción")
+    void shouldReflectPartialPurgeWhenRenderDeleteFails() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class);
+        edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort blobPort =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort.class);
+
+        QueryTryOnJobsServiceImpl service = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo,
+                blobPort
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        String photoUrl = "https://blob/photo.jpg";
+        edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl resultUrl =
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://blob/render.png?sv=2024");
+
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob job = new edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob(
+                jobId,
+                ownerId,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
+                photoUrl,
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                "https://garment.png",
+                edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
+                resultUrl,
+                edu.dosw.styleradar.virtualtryon.domain.model.AiProvider.FASHN_AI,
+                1500L,
+                null,
+                false,
+                Instant.now(),
+                Instant.now()
+        );
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(job));
+        doNothing().when(blobPort).deleteBlob(photoUrl);
+        doThrow(new RuntimeException("Azure Storage Timeout al purgar render"))
+                .when(blobPort).deleteBlob(resultUrl.value());
+
+        assertThrows(RuntimeException.class, () -> service.purgeJobBiometricPhoto(jobId, ownerId, false));
+
+        assertTrue(job.isPhotoPurged());
+        assertEquals("PURGED_BY_USER_REQUEST", job.getPhotoUrl());
+        assertEquals(resultUrl, job.getResultImageUrl());
+        verify(jobRepo, org.mockito.Mockito.times(1)).saveJob(job);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Reintento exitoso de purga tras fallo parcial completa render sin reintentar silueta ya purgada")
+    void shouldCompleteRemainingPurgeOnRetryWithoutRetryingAlreadyPurgedPhoto() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class);
+        edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort blobPort =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort.class);
+
+        QueryTryOnJobsServiceImpl service = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo,
+                blobPort
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl resultUrl =
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://blob/render.png?sv=2024");
+
+        // Job con estado de purga parcial previa
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob job = new edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob(
+                jobId,
+                ownerId,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
+                "PURGED_BY_USER_REQUEST",
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                "https://garment.png",
+                edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
+                resultUrl,
+                edu.dosw.styleradar.virtualtryon.domain.model.AiProvider.FASHN_AI,
+                1500L,
+                null,
+                true, // Ya purgado previamente
+                Instant.now(),
+                Instant.now()
+        );
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(job));
+
+        service.purgeJobBiometricPhoto(jobId, ownerId, false);
+
+        verify(blobPort, never()).deleteBlob(eq("PURGED_BY_USER_REQUEST"));
+        verify(blobPort).deleteBlob(resultUrl.value());
+        assertTrue(job.isPhotoPurged());
+        org.junit.jupiter.api.Assertions.assertNull(job.getResultImageUrl());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Purga biométrica lanza IllegalStateException si BlobStoragePort es null y no inventa éxito ni auditoría física")
+    void shouldThrowIllegalStateExceptionWhenBlobStoragePortIsNullDuringPurge() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class);
+
+        // Instanciado sin BlobStoragePort (null)
+        QueryTryOnJobsServiceImpl serviceWithoutStorage = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo,
+                null
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob job = new edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob(
+                jobId,
+                ownerId,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
+                "https://blob/photo.jpg",
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                "https://garment.png",
+                edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
+                edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://blob/render.png"),
+                edu.dosw.styleradar.virtualtryon.domain.model.AiProvider.FASHN_AI,
+                1500L,
+                null,
+                false,
+                Instant.now(),
+                Instant.now()
+        );
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(job));
+
+        assertThrows(IllegalStateException.class,
+                () -> serviceWithoutStorage.purgeJobBiometricPhoto(jobId, ownerId, false));
+
+        org.junit.jupiter.api.Assertions.assertFalse(job.isPhotoPurged());
+        verify(jobRepo, never()).saveJob(any());
+        verify(jobRepo, never()).saveAuditLog(any());
     }
 }
 

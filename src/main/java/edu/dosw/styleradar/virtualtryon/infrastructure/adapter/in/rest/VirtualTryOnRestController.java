@@ -5,8 +5,10 @@ import edu.dosw.styleradar.virtualtryon.application.dto.response.GarmentValidati
 import edu.dosw.styleradar.virtualtryon.application.dto.response.TryOnJobResponse;
 import edu.dosw.styleradar.virtualtryon.application.dto.response.UserQuotaResponse;
 import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMapper;
+import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
@@ -39,7 +41,7 @@ import java.util.UUID;
 /**
  * Adaptador primario (Driving) REST para el microservicio de Probador Virtual.
  * Implementa la interfaz de documentación OpenAPI VirtualTryOnOpenApiDoc y delega
- * la consulta de cuotas mensuales y elegibilidad de prendas en QueryTryOnJobsService (SR-RF-24).
+ * la creación de trabajos en CreateTryOnJobService y las consultas en QueryTryOnJobsService (SR-RF-24 y SR-RF-25).
  */
 @RestController
 @RequestMapping("/api/v1/try-on")
@@ -57,13 +59,16 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
             "ROLE_ADMIN_STYLERADAR"
     );
 
+    private final CreateTryOnJobService createTryOnJobService;
     private final QueryTryOnJobsService queryTryOnJobsService;
     private final VirtualTryOnDtoMapper dtoMapper;
 
     public VirtualTryOnRestController(
+            CreateTryOnJobService createTryOnJobService,
             QueryTryOnJobsService queryTryOnJobsService,
             VirtualTryOnDtoMapper dtoMapper
     ) {
+        this.createTryOnJobService = createTryOnJobService;
         this.queryTryOnJobsService = queryTryOnJobsService;
         this.dtoMapper = dtoMapper;
     }
@@ -72,19 +77,15 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @PostMapping("/jobs")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<TryOnJobResponse> startTryOn(@Valid @RequestBody StartTryOnRequest request) {
-        UUID newJobId = UUID.randomUUID();
-        TryOnJobResponse response = new TryOnJobResponse(
-                newJobId,
-                request.userId(),
-                request.garmentId(),
-                "QUEUED",
-                null,
-                null,
-                null,
-                Instant.now(),
-                Instant.now()
+        UUID targetUserId = resolveAndVerifyCallerUserId(request.userId());
+        TryOnJob createdJob = createTryOnJobService.createTryOnJob(
+                UserId.of(targetUserId),
+                GarmentId.of(request.garmentId()),
+                request.photoUrl(),
+                Boolean.TRUE.equals(request.biometricConsent())
         );
-        URI location = URI.create("/api/v1/try-on/jobs/" + newJobId);
+        TryOnJobResponse response = dtoMapper.toJobResponse(createdJob);
+        URI location = URI.create("/api/v1/try-on/jobs/" + createdJob.getId());
         return ResponseEntity.accepted().location(location).body(response);
     }
 
@@ -92,18 +93,10 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @GetMapping("/jobs/{jobId}")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<TryOnJobResponse> getTryOnJob(@PathVariable UUID jobId) {
-        TryOnJobResponse response = new TryOnJobResponse(
-                jobId,
-                UUID.fromString("a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"),
-                UUID.fromString("f8e7d6c5-b4a3-2109-8765-43210fedcba9"),
-                "COMPLETED",
-                "https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png",
-                2100L,
-                null,
-                Instant.now().minusSeconds(10),
-                Instant.now()
-        );
-        return ResponseEntity.ok(response);
+        UUID callerUserId = resolveAndVerifyCallerUserId(null);
+        boolean isAdmin = isAdminCaller();
+        TryOnJob job = queryTryOnJobsService.getTryOnJob(jobId, UserId.of(callerUserId), isAdmin);
+        return ResponseEntity.ok(dtoMapper.toJobResponse(job));
     }
 
     @Override
@@ -134,6 +127,9 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @DeleteMapping("/personal-photos/{jobId}")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<Void> deleteBiometricPhoto(@PathVariable UUID jobId) {
+        UUID callerUserId = resolveAndVerifyCallerUserId(null);
+        boolean isAdmin = isAdminCaller();
+        queryTryOnJobsService.purgeJobBiometricPhoto(jobId, UserId.of(callerUserId), isAdmin);
         return ResponseEntity.noContent().build();
     }
 
@@ -165,7 +161,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
             UUID targetUserId = requestedUserId != null ? requestedUserId : authenticatedUser.userId();
             if (!isAdmin && !authenticatedUser.canAccessUser(targetUserId)) {
                 throw new AccessDeniedException(
-                        "No tiene permisos para consultar cuotas o validar prendas en nombre de otro usuario"
+                        "No tiene permisos para operar en el Probador Virtual en nombre de otro usuario"
                 );
             }
             return targetUserId;
@@ -179,7 +175,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
             UUID targetUserId = requestedUserId != null ? requestedUserId : authenticatedUuid;
             if (!isAdmin && !authenticatedUuid.equals(targetUserId)) {
                 throw new AccessDeniedException(
-                        "No tiene permisos para consultar cuotas o validar prendas en nombre de otro usuario"
+                        "No tiene permisos para operar en el Probador Virtual en nombre de otro usuario"
                 );
             }
             return targetUserId;
@@ -191,5 +187,12 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
                     "Identidad de usuario autenticado inválida para validar titularidad en el Probador Virtual"
             );
         }
+    }
+
+    private boolean isAdminCaller() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(ADMIN_ROLES::contains);
     }
 }

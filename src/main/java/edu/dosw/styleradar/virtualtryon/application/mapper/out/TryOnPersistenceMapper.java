@@ -1,9 +1,13 @@
 package edu.dosw.styleradar.virtualtryon.application.mapper.out;
 
+import edu.dosw.styleradar.virtualtryon.domain.model.AiProvider;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
+import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
+import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
@@ -12,6 +16,8 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.BiometricConsentJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.BiometricPhotoJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.CatalogGarmentJpaEntity;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.JobAuditLogJpaEntity;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.TryOnJobJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.UserQuotaJpaEntity;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +26,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Mapper de salida que convierte entidades del dominio hacia entidades JPA de persistencia y viceversa (SR-RF-23 y SR-RF-24).
+ * Mapper de salida que convierte entidades del dominio hacia entidades JPA de persistencia y viceversa (SR-RF-23 a SR-RF-25).
  * Persiste únicamente la ruta del blob en la base de datos relacional para evitar la persistencia de tokens SAS temporales.
  */
 @Component
@@ -129,6 +135,82 @@ public class TryOnPersistenceMapper {
                 entity.getImageUrl(),
                 entity.isVisible(),
                 entity.getUpdatedAt()
+        );
+    }
+
+    public TryOnJobJpaEntity toJobJpaEntity(TryOnJob domain) {
+        String cleanPhotoUrl = domain.getPhotoUrl() != null ? domain.getPhotoUrl().split("\\?", 2)[0] : null;
+        String cleanResultUrl = domain.getResultImageUrl() != null && domain.getResultImageUrl().value() != null
+                ? domain.getResultImageUrl().value().split("\\?", 2)[0]
+                : null;
+        return new TryOnJobJpaEntity(
+                domain.getId(),
+                domain.getUserId().value(),
+                domain.getGarmentId().value(),
+                cleanPhotoUrl,
+                domain.getGarmentCategory().name(),
+                domain.getGarmentImageUrl(),
+                domain.getStatus().name(),
+                cleanResultUrl,
+                domain.getAiProvider().name(),
+                domain.getExecutionTimeMs(),
+                domain.getErrorMessage(),
+                domain.isPhotoPurged(),
+                domain.getCreatedAt(),
+                domain.getUpdatedAt()
+        );
+    }
+
+    public TryOnJob toJobDomain(TryOnJobJpaEntity entity) {
+        SasSignedUrl resultUrl = (entity.getResultImageUrl() == null || entity.getResultImageUrl().isBlank())
+                ? null
+                : SasSignedUrl.of(entity.getResultImageUrl());
+        GarmentCategory category = entity.getGarmentCategory() == null
+                ? GarmentCategory.TOPS
+                : GarmentCategory.fromRawValue(entity.getGarmentCategory());
+        AiProvider provider = entity.getAiProvider() == null
+                ? AiProvider.FASHN_AI
+                : AiProvider.fromConfigValue(entity.getAiProvider());
+        return new TryOnJob(
+                entity.getId(),
+                UserId.of(entity.getUserId()),
+                GarmentId.of(entity.getGarmentId()),
+                entity.getPhotoUrl(),
+                category,
+                entity.getGarmentImageUrl(),
+                JobStatus.valueOf(entity.getStatus()),
+                resultUrl,
+                provider,
+                entity.getExecutionTimeMs(),
+                entity.getErrorMessage(),
+                entity.isPhotoPurged(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
+    }
+
+    public JobAuditLogJpaEntity toAuditLogJpaEntity(JobAuditLog domain) {
+        return new JobAuditLogJpaEntity(
+                domain.getId(),
+                domain.getJobId(),
+                domain.getPreviousStatus() != null ? domain.getPreviousStatus().name() : null,
+                domain.getNewStatus().name(),
+                domain.getTransitionReason(),
+                domain.getOccurredAt()
+        );
+    }
+
+    public JobAuditLog toAuditLogDomain(JobAuditLogJpaEntity entity) {
+        JobStatus previous = (entity.getPreviousStatus() == null || entity.getPreviousStatus().isBlank())
+                ? null
+                : JobStatus.valueOf(entity.getPreviousStatus());
+        return new JobAuditLog(
+                entity.getId(),
+                entity.getJobId(),
+                previous,
+                JobStatus.valueOf(entity.getNewStatus()),
+                entity.getTransitionReason(),
+                entity.getOccurredAt()
         );
     }
 
