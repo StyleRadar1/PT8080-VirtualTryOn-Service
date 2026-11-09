@@ -6,6 +6,8 @@ import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMap
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
@@ -399,5 +401,94 @@ class VirtualTryOnRestControllerTest {
                 .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")))
                 .andExpect(jsonPath("$.photoUrl").doesNotExist())
                 .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Dado un jobId en estado PROCESSING, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 200 OK con estado PROCESSING y estimatedCompletionAt")
+    void testGetTryOnJobProcessingWithEstimatedCompletion() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        TryOnJob processingJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(UserId.of(userId))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withCategory(GarmentCategory.TOPS)
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
+                .build();
+        processingJob.startAiProcessing();
+
+        when(queryTryOnJobsService.getTryOnJob(eq(jobId), eq(UserId.of(userId)), anyBoolean()))
+                .thenReturn(processingJob);
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId", is(jobId.toString())))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
+                .andExpect(jsonPath("$.estimatedCompletionAt", notNullValue()))
+                .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Dado un jobId en estado FAILED, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 200 OK con estado FAILED y errorMessage descriptivo")
+    void testGetTryOnJobFailedWithErrorMessage() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        TryOnJob failedJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(UserId.of(userId))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withCategory(GarmentCategory.TOPS)
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
+                .build();
+        failedJob.markFailed("Pose corporal incompatible con la prenda seleccionada");
+
+        when(queryTryOnJobsService.getTryOnJob(eq(jobId), eq(UserId.of(userId)), anyBoolean()))
+                .thenReturn(failedJob);
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId", is(jobId.toString())))
+                .andExpect(jsonPath("$.status", is("FAILED")))
+                .andExpect(jsonPath("$.errorMessage", is("Pose corporal incompatible con la prenda seleccionada")))
+                .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Dado un jobId inexistente, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 404 Not Found con ProblemDetail estándar")
+    void testGetTryOnJobNotFound() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID nonExistentJobId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.getTryOnJob(eq(nonExistentJobId), eq(UserId.of(userId)), anyBoolean()))
+                .thenThrow(new JobNotFoundException(nonExistentJobId));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", nonExistentJobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status", is(404)))
+                .andExpect(jsonPath("$.errorCode", is("JOB_NOT_FOUND")))
+                .andExpect(jsonPath("$.title", is("Trabajo de Probador Virtual No Encontrado")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Dado un usuario no propietario ni admin, Cuando el servicio lanza JobAccessDeniedException, Entonces responde 403 Forbidden")
+    void testGetTryOnJobWithDomainAccessDeniedException() throws Exception {
+        UUID authenticatedUserId = UUID.randomUUID();
+        UUID otherUserJobId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.getTryOnJob(eq(otherUserJobId), eq(UserId.of(authenticatedUserId)), anyBoolean()))
+                .thenThrow(new JobAccessDeniedException("El usuario autenticado no tiene permisos para acceder al trabajo"));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", otherUserJobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")))
+                .andExpect(jsonPath("$.title", is("Acceso Denegado")));
     }
 }
