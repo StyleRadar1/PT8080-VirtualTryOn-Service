@@ -144,13 +144,6 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
         return ResponseEntity.noContent().build();
     }
 
-    private boolean isCallerAdmin() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        return authentication != null && authentication.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .anyMatch(ADMIN_ROLES::contains);
-    }
-
     private UUID resolveAndVerifyCallerUserId(UUID requestedUserId) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null
