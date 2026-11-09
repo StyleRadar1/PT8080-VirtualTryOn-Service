@@ -246,9 +246,21 @@ class ProcessTryOnJobBiometricAndRetryTest {
     }
 
     @Test
-    @DisplayName("Bloqueo 2: Cuando el job ya está en estado PROCESSING (reintento AMQP), no re-ejecuta startAiProcessing()")
-    void shouldHandleRetryWhenJobAlreadyInProcessing() {
+    @DisplayName("Idempotencia estricta: Si llega un evento duplicado cuando el job ya está en PROCESSING, se descarta y no ejecuta la IA")
+    void shouldDiscardDuplicateEventWhenJobAlreadyInProcessing() {
         TryOnJob job = createSampleJob(JobStatus.PROCESSING);
+        when(jobRepositoryPort.findJobByIdForUpdate(job.getId())).thenReturn(Optional.of(job));
+
+        processTryOnJobService.processJob(job.getId());
+
+        assertThat(job.getStatus()).isEqualTo(JobStatus.PROCESSING);
+        verify(fashnStrategy, never()).submitTryOn(any());
+    }
+
+    @Test
+    @DisplayName("Reintento AMQP seguro: Si ocurre un fallo transitorio, reencola el job a QUEUED para el backoff")
+    void shouldRequeueJobToQueuedOnTransientFailure() {
+        TryOnJob job = createSampleJob(JobStatus.QUEUED);
         BiometricConsent activeConsent = new BiometricConsent(
                 UUID.randomUUID(), job.getUserId(), "v1.0", true,
                 List.of("VIRTUAL_TRY_ON_INFERENCE"), Instant.now(), null, "127.0.0.1"
@@ -265,11 +277,13 @@ class ProcessTryOnJobBiometricAndRetryTest {
         when(blobStoragePort.normalizeBlobReference(any())).thenAnswer(inv -> inv.getArgument(0));
 
         when(fashnStrategy.supportsProvider(AiProvider.FASHN_AI)).thenReturn(true);
-        when(fashnStrategy.submitTryOn(job)).thenReturn(SasSignedUrl.of("https://storage.blob.core.windows.net/renders/output.png"));
+        when(fashnStrategy.submitTryOn(job)).thenThrow(new RuntimeException("Fallo transitorio de conexion"));
 
-        processTryOnJobService.processJob(job.getId());
+        assertThatThrownBy(() -> processTryOnJobService.processJob(job.getId()))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Fallo transitorio de conexion");
 
-        assertThat(job.getStatus()).isEqualTo(JobStatus.COMPLETED);
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
     }
 
     @Test

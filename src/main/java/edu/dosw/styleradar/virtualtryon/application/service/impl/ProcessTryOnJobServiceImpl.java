@@ -88,20 +88,17 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
             TryOnJob lockedJob = jobRepositoryPort.findJobByIdForUpdate(jobId)
                     .orElseThrow(() -> new JobNotFoundException(jobId));
 
-            if (lockedJob.getStatus() == JobStatus.COMPLETED || lockedJob.getStatus() == JobStatus.FAILED
-                    || lockedJob.getStatus() == JobStatus.CANCELLED) {
+            if (lockedJob.getStatus() != JobStatus.QUEUED) {
                 log.warn("El trabajo de prueba virtual {} no se encuentra en estado QUEUED (estado actual: {}), se omite procesamiento duplicado o fuera de secuencia",
                         jobId, lockedJob.getStatus());
                 return null;
             }
 
-            if (lockedJob.getStatus() == JobStatus.QUEUED) {
-                lockedJob.startAiProcessing();
-                jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                        lockedJob.getId(), JobStatus.QUEUED, JobStatus.PROCESSING,
-                        "Iniciando inferencia generativa de prueba virtual con proveedor " + lockedJob.getAiProvider()
-                ));
-            }
+            lockedJob.startAiProcessing();
+            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                    lockedJob.getId(), JobStatus.QUEUED, JobStatus.PROCESSING,
+                    "Iniciando inferencia generativa de prueba virtual con proveedor " + lockedJob.getAiProvider()
+            ));
             TryOnJob saved = jobRepositoryPort.saveJob(lockedJob);
             return saved != null ? saved : lockedJob;
         });
@@ -153,7 +150,27 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
             long elapsed = System.currentTimeMillis() - startTime;
             log.error("Fallo durante la generación de prueba virtual para el trabajo {}: {}", jobId, ex.getMessage(), ex);
 
-            log.warn("Inferencia fallida para trabajo {}; queda reintentable hasta que AMQP agote el backoff", jobId);
+            // Reencolar atómicamente a QUEUED para que el reintento AMQP con backoff sea procesable,
+            // previniendo al mismo tiempo que entregas duplicadas concurrentes llamen a la IA en paralelo.
+            try {
+                executeInTransaction(() -> {
+                    jobRepositoryPort.findJobByIdForUpdate(jobId).ifPresent(locked -> {
+                        if (locked.getStatus() == JobStatus.PROCESSING) {
+                            locked.requeueForRetry("Fallo transitorio de inferencia (" + ex.getClass().getSimpleName() + "): " + ex.getMessage());
+                            jobRepositoryPort.saveJob(locked);
+                            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                                    locked.getId(), JobStatus.PROCESSING, JobStatus.QUEUED,
+                                    "Trabajo reencolado para reintento AMQP tras fallo transitorio"
+                            ));
+                        }
+                    });
+                    return null;
+                });
+            } catch (Exception requeueEx) {
+                log.warn("No fue posible reencolar trabajo {} a QUEUED tras fallo: {}", jobId, requeueEx.getMessage());
+            }
+
+            log.warn("Inferencia fallida para trabajo {}; reencolado a QUEUED hasta que AMQP ejecute el backoff", jobId);
             throw ex;
         }
     }

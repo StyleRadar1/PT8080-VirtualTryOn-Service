@@ -112,7 +112,7 @@ class ProcessTryOnJobServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Cuando la estrategia de IA falla transitoriamente, mantiene estado PROCESSING y propaga excepción para reintentos AMQP")
+    @DisplayName("HU SR-RF-25: Cuando la estrategia de IA falla transitoriamente, reencola a QUEUED y propaga excepción para reintentos AMQP")
     void shouldKeepJobInProcessingWhenAiStrategyThrowsTransientException() {
         UUID jobId = UUID.randomUUID();
         UserId userId = UserId.of(UUID.randomUUID());
@@ -136,7 +136,7 @@ class ProcessTryOnJobServiceImplTest {
         assertThatThrownBy(() -> processTryOnJobService.processJob(jobId))
                 .isInstanceOf(AiProviderTimeoutException.class);
 
-        assertThat(job.getStatus()).isEqualTo(JobStatus.PROCESSING);
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
         verify(outboxPublisherPort, never()).saveOutboxEvent(any(), eq("tryon.job.failed"), any());
     }
 

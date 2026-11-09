@@ -87,6 +87,12 @@ public class TryOnJob {
         this.updatedAt = Instant.now();
     }
 
+    public void requeueForRetry(String reason) {
+        this.status = JobStatus.QUEUED;
+        this.errorMessage = (reason == null || reason.isBlank()) ? "Reencolado para reintento tras fallo transitorio" : reason.trim();
+        this.updatedAt = Instant.now();
+    }
+
     public void complete(SasSignedUrl renderUrl, Long elapsedMs) {
         this.resultImageUrl = Objects.requireNonNull(renderUrl, "La URL firmada del renderizado no puede ser nula");
         this.executionTimeMs = elapsedMs != null && elapsedMs >= 0 ? elapsedMs : 0L;
