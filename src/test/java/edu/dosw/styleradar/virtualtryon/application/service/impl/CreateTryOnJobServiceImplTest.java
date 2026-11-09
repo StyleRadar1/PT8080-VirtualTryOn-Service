@@ -288,9 +288,24 @@ class CreateTryOnJobServiceImplTest {
                 userWithoutPhoto, garmentId, "https://styleradarblob.blob.core.windows.net/photo.png", true
         )).isInstanceOf(InvalidPhotoException.class);
 
-        // 4. URL de foto que no pertenece al usuario autenticado (prevención IDOR)
+        // 4. URL de foto que no pertenece al usuario autenticado (prevención IDOR y verificación canónica)
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/otro-usuario/silhouette.png", true
+        )).isInstanceOf(InvalidPhotoException.class);
+
+        // Intento de evasión por inyección de parámetro de consulta con UUID del usuario legítimo
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
+                userId, garmentId, "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/otro-usuario/silhouette.png?query=" + userId.value(), true
+        )).isInstanceOf(InvalidPhotoException.class);
+
+        // Intento de evasión por path traversal (../)
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
+                userId, garmentId, "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/../otro-usuario/silhouette.png", true
+        )).isInstanceOf(InvalidPhotoException.class);
+
+        // Intento con archivo no registrado en metadatos del usuario
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
+                userId, garmentId, "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/otra-foto-no-registrada.png", true
         )).isInstanceOf(InvalidPhotoException.class);
 
         String validUserPhotoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";

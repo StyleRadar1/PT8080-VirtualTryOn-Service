@@ -36,6 +36,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.OptionalInt;
@@ -132,10 +133,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             throw new InvalidPhotoException("La URL de la fotografía frontal es obligatoria");
         }
 
-        String userUuidStr = userId.value().toString();
-        boolean belongsToUser = photoUrl.contains(userUuidStr)
-                || (userPhoto.getBlobPath() != null && photoUrl.contains(userPhoto.getBlobPath()));
-        if (!belongsToUser) {
+        if (!isPhotoOwnedByUser(photoUrl, userPhoto, userId)) {
             throw new InvalidPhotoException(
                     "La fotografía proporcionada no corresponde a la silueta biométrica del usuario autenticado");
         }
@@ -220,5 +218,36 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                 .filter(strategy -> strategy.supportsProvider(provider))
                 .findFirst()
                 .orElse(null);
+    }
+
+    private boolean isPhotoOwnedByUser(String candidatePhotoUrl, BiometricPhoto userPhoto, UserId userId) {
+        if (candidatePhotoUrl == null || candidatePhotoUrl.isBlank() || userPhoto == null || userId == null) {
+            return false;
+        }
+        String expectedBlobPath = userPhoto.getBlobPath();
+        if (expectedBlobPath == null || expectedBlobPath.isBlank()) {
+            return false;
+        }
+        String expectedUserPrefix = userId.value().toString() + "/";
+        if (!expectedBlobPath.startsWith(expectedUserPrefix)) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(candidatePhotoUrl.trim()).normalize();
+            String path = uri.getPath();
+            if (path == null || path.isBlank()) {
+                path = candidatePhotoUrl.trim();
+            }
+            while (path.startsWith("/")) {
+                path = path.substring(1);
+            }
+            int firstSlash = path.indexOf('/');
+            String pathWithoutContainer = (firstSlash >= 0) ? path.substring(firstSlash + 1) : path;
+
+            return expectedBlobPath.equalsIgnoreCase(path)
+                    || expectedBlobPath.equalsIgnoreCase(pathWithoutContainer);
+        } catch (Exception ex) {
+            return false;
+        }
     }
 }
