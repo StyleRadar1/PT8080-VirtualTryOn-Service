@@ -9,6 +9,11 @@ import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.retry.interceptor.RetryInterceptorBuilder;
+import org.springframework.retry.interceptor.RetryOperationsInterceptor;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp.TryOnJobRetryRecoverer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -141,5 +146,35 @@ public class RabbitConfig {
     @Bean
     public MessageConverter jackson2JsonMessageConverter(ObjectMapper objectMapper) {
         return new Jackson2JsonMessageConverter(objectMapper);
+    }
+
+    @Bean
+    public RetryOperationsInterceptor tryOnRetryInterceptor(
+            TryOnJobRetryRecoverer recoverer,
+            @Value("${styleradar.tryon.amqp.retry.max-attempts:4}") int maxAttempts,
+            @Value("${styleradar.tryon.amqp.retry.initial-interval-ms:1000}") long initialInterval,
+            @Value("${styleradar.tryon.amqp.retry.multiplier:2.0}") double multiplier,
+            @Value("${styleradar.tryon.amqp.retry.max-interval-ms:10000}") long maxInterval
+    ) {
+        return RetryInterceptorBuilder.stateless()
+                .maxAttempts(maxAttempts)
+                .backOffOptions(initialInterval, multiplier, maxInterval)
+                .recoverer(recoverer)
+                .build();
+    }
+
+    @Bean(name = "rabbitListenerContainerFactory")
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnBean(ConnectionFactory.class)
+    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter messageConverter,
+            RetryOperationsInterceptor tryOnRetryInterceptor
+    ) {
+        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setMessageConverter(messageConverter);
+        factory.setDefaultRequeueRejected(false);
+        factory.setAdviceChain(tryOnRetryInterceptor);
+        return factory;
     }
 }

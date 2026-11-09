@@ -101,6 +101,12 @@ public class TryOnJob {
         this.updatedAt = Instant.now();
     }
 
+    public void cancel(String reason) {
+        this.errorMessage = (reason == null || reason.isBlank()) ? "Cancelado por el usuario" : reason.trim();
+        this.status = JobStatus.CANCELLED;
+        this.updatedAt = Instant.now();
+    }
+
     public void purgeRawSilhouettePhoto() {
         this.photoUrl = "PURGED_BY_USER_REQUEST";
         this.photoPurged = true;

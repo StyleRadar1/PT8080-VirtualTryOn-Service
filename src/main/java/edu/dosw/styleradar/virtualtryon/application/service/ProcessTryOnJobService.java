@@ -10,5 +10,7 @@ import java.time.Duration;
  */
 public interface ProcessTryOnJobService extends ProcessTryOnJobUseCase {
 
+    void markFailedAfterRetries(java.util.UUID jobId, String reason);
+
     int sweepStaleProcessingJobs(Duration maxProcessingAge);
 }

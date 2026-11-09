@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -55,12 +56,17 @@ class TryOnJobProcessConsumerTest {
     @DisplayName("HU SR-RF-25: Cuando el evento o jobId es nulo, descarta el mensaje sin invocar el caso de uso")
     void shouldIgnoreNullEventOrJobId() {
         consumer.onTryOnJobCreated(null);
-        verify(processTryOnJobUseCase, never()).processJob(null);
+        verify(processTryOnJobUseCase, never()).processJob(any());
+
+        TryOnJobDomainEvent eventWithNullJob = org.mockito.Mockito.mock(TryOnJobDomainEvent.class);
+        org.mockito.Mockito.when(eventWithNullJob.jobId()).thenReturn(null);
+        consumer.onTryOnJobCreated(eventWithNullJob);
+        verify(processTryOnJobUseCase, never()).processJob(any());
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Cuando falla el procesamiento, lanza AmqpRejectAndDontRequeueException para desviar a DLQ")
-    void shouldThrowAmqpRejectWhenProcessThrows() {
+    @DisplayName("HU SR-RF-25: Cuando falla con error transitorio, propaga RuntimeException para que Spring Retry aplique backoff")
+    void shouldPropagateTransientExceptionForRetry() {
         UUID jobId = UUID.randomUUID();
         TryOnJobDomainEvent event = new TryOnJobDomainEvent(
                 UUID.randomUUID(),
@@ -73,10 +79,11 @@ class TryOnJobProcessConsumerTest {
                 Instant.now()
         );
 
-        doThrow(new RuntimeException("Error en worker")).when(processTryOnJobUseCase).processJob(jobId);
+        doThrow(new RuntimeException("Error transitorio de red o timeout")).when(processTryOnJobUseCase).processJob(jobId);
 
         assertThatThrownBy(() -> consumer.onTryOnJobCreated(event))
-                .isInstanceOf(AmqpRejectAndDontRequeueException.class);
+                .isInstanceOf(RuntimeException.class)
+                .isNotInstanceOf(AmqpRejectAndDontRequeueException.class);
     }
 
     @Test
@@ -118,6 +125,40 @@ class TryOnJobProcessConsumerTest {
         );
 
         doThrow(new edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException(jobId))
+                .when(processTryOnJobUseCase).processJob(jobId);
+
+        assertThatThrownBy(() -> consumer.onTryOnJobCreated(event))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                .hasMessageContaining("Desviado a DLQ");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Error permanente de consentimiento revocado desvía inmediatamente a DLQ sin reintentar")
+    void shouldRejectPermanentlyToDlqOnConsentRequiredException() {
+        UUID jobId = UUID.randomUUID();
+        TryOnJobDomainEvent event = new TryOnJobDomainEvent(
+                UUID.randomUUID(), jobId, UUID.randomUUID(), UUID.randomUUID(),
+                JobStatus.QUEUED, null, null, Instant.now()
+        );
+
+        doThrow(new edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException("Consentimiento revocado"))
+                .when(processTryOnJobUseCase).processJob(jobId);
+
+        assertThatThrownBy(() -> consumer.onTryOnJobCreated(event))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                .hasMessageContaining("Desviado a DLQ");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Error permanente de foto inválida desvía inmediatamente a DLQ sin reintentar")
+    void shouldRejectPermanentlyToDlqOnInvalidPhotoException() {
+        UUID jobId = UUID.randomUUID();
+        TryOnJobDomainEvent event = new TryOnJobDomainEvent(
+                UUID.randomUUID(), jobId, UUID.randomUUID(), UUID.randomUUID(),
+                JobStatus.QUEUED, null, null, Instant.now()
+        );
+
+        doThrow(new edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException("Foto de otro titular"))
                 .when(processTryOnJobUseCase).processJob(jobId);
 
         assertThatThrownBy(() -> consumer.onTryOnJobCreated(event))
