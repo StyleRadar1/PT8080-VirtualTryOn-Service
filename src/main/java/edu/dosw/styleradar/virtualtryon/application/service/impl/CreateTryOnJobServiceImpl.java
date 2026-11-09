@@ -72,7 +72,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             BiometricDataRepositoryPort biometricDataRepositoryPort,
             TryOnEventPublisherPort eventPublisherPort,
             List<AiInferenceStrategy> inferenceStrategies,
-            @Value("${styleradar.tryon.ai-provider:mock}") String configuredProviderName,
+            @Value("${styleradar.tryon.ai-provider:fashn}") String configuredProviderName,
             ObjectProvider<TransactionTemplate> transactionTemplateProvider
     ) {
         this.jobRepositoryPort = jobRepositoryPort;

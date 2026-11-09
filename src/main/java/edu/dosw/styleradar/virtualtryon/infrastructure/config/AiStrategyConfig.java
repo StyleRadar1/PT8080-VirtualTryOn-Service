@@ -22,10 +22,9 @@ public class AiStrategyConfig {
     @Bean
     public FashnAiStrategy fashnAiStrategy(
             AiInferenceClientPort aiInferenceClientPort,
-            BlobStoragePort blobStoragePort,
-            MockAiStrategy mockAiStrategy
+            BlobStoragePort blobStoragePort
     ) {
-        return new FashnAiStrategy(aiInferenceClientPort, blobStoragePort, mockAiStrategy);
+        return new FashnAiStrategy(aiInferenceClientPort, blobStoragePort);
     }
 }
 

@@ -120,7 +120,7 @@ public class FashnAiRestClientAdapter implements AiInferenceClientPort {
     @Override
     public JobStatus queryExternalJobStatus(String externalJobId) {
         if (apiKey == null || apiKey.isBlank()) {
-            return JobStatus.COMPLETED;
+            return JobStatus.FAILED;
         }
         try {
             Map<?, ?> statusResponse = restClient.get()

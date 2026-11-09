@@ -68,7 +68,7 @@ class FashnAiAndMockStrategyTest {
                 .thenReturn(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/render.png?sv=2024-11-04&sr=b&sp=r&spr=https"));
 
         mockAiStrategy = new MockAiStrategy(blobStoragePort);
-        fashnAiStrategy = new FashnAiStrategy(fashnAdapter, blobStoragePort, mockAiStrategy);
+        fashnAiStrategy = new FashnAiStrategy(fashnAdapter, blobStoragePort);
     }
 
     @Test
@@ -110,7 +110,7 @@ class FashnAiAndMockStrategyTest {
     void shouldThrowExceptionWhenFashnAiFailsWithoutSilentFallback() {
         FashnAiRestClientAdapter withoutKey = new FashnAiRestClientAdapter(builder, " ", Duration.ZERO, 2);
         assertThat(withoutKey.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
-        assertThat(withoutKey.queryExternalJobStatus("abc")).isEqualTo(JobStatus.COMPLETED);
+        assertThat(withoutKey.queryExternalJobStatus("abc")).isEqualTo(JobStatus.FAILED);
 
         FashnAiRestClientAdapter springConstructed = new FashnAiRestClientAdapter(FASHN_URL, "");
         assertThat(springConstructed.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();

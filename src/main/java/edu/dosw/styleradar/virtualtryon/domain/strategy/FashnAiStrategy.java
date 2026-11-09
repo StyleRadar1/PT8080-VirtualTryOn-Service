@@ -18,23 +18,13 @@ public class FashnAiStrategy implements AiInferenceStrategy {
 
     private final AiInferenceClientPort aiInferenceClientPort;
     private final BlobStoragePort blobStoragePort;
-    private final MockAiStrategy fallbackStrategy;
 
     public FashnAiStrategy(
             AiInferenceClientPort aiInferenceClientPort,
             BlobStoragePort blobStoragePort
     ) {
-        this(aiInferenceClientPort, blobStoragePort, null);
-    }
-
-    public FashnAiStrategy(
-            AiInferenceClientPort aiInferenceClientPort,
-            BlobStoragePort blobStoragePort,
-            MockAiStrategy fallbackStrategy
-    ) {
         this.aiInferenceClientPort = aiInferenceClientPort;
         this.blobStoragePort = blobStoragePort;
-        this.fallbackStrategy = fallbackStrategy;
     }
 
     @Override

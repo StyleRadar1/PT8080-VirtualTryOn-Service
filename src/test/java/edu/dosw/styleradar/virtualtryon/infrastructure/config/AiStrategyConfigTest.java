@@ -23,7 +23,7 @@ class AiStrategyConfigTest {
         AiInferenceClientPort aiInferenceClientPort = Mockito.mock(AiInferenceClientPort.class);
 
         MockAiStrategy mockAiStrategy = config.mockAiStrategy(blobStoragePort);
-        FashnAiStrategy fashnAiStrategy = config.fashnAiStrategy(aiInferenceClientPort, blobStoragePort, mockAiStrategy);
+        FashnAiStrategy fashnAiStrategy = config.fashnAiStrategy(aiInferenceClientPort, blobStoragePort);
 
         assertThat(mockAiStrategy).isNotNull();
         assertThat(fashnAiStrategy).isNotNull();
