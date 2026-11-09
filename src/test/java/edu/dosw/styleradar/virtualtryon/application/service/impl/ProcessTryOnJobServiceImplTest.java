@@ -8,7 +8,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
-import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnEventPublisherPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.strategy.AiInferenceStrategy;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
@@ -20,13 +20,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,13 +32,16 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Pruebas unitarias para ProcessTryOnJobServiceImpl (SR-RF-25) con TransactionTemplate y bloqueo pesimista.
+ * Pruebas unitarias para ProcessTryOnJobServiceImpl (SR-RF-25).
+ * Verifica transiciones atómicas con bloqueo pesimista en base de datos, idempotencia
+ * ante mensajes duplicados o reentregas, y persistencia de eventos en Transactional Outbox.
  */
 @ExtendWith(MockitoExtension.class)
 class ProcessTryOnJobServiceImplTest {
@@ -49,7 +50,7 @@ class ProcessTryOnJobServiceImplTest {
     private TryOnJobRepositoryPort jobRepositoryPort;
 
     @Mock
-    private TryOnEventPublisherPort eventPublisherPort;
+    private OutboxPublisherPort outboxPublisherPort;
 
     @Mock
     private AiInferenceStrategy fashnStrategy;
@@ -68,18 +69,19 @@ class ProcessTryOnJobServiceImplTest {
 
         processTryOnJobService = new ProcessTryOnJobServiceImpl(
                 jobRepositoryPort,
-                eventPublisherPort,
+                outboxPublisherPort,
                 List.of(fashnStrategy),
                 transactionTemplate
         );
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Cuando se procesa un job QUEUED exitosamente, pasa a PROCESSING, luego a COMPLETED y publica tryon.job.completed")
+    @DisplayName("HU SR-RF-25: Cuando se procesa un job QUEUED exitosamente, pasa a PROCESSING, luego a COMPLETED y guarda tryon.job.completed en Outbox")
     void shouldProcessJobSuccessfullyAndMarkCompleted() {
         UUID jobId = UUID.randomUUID();
         UserId userId = UserId.of(UUID.randomUUID());
         TryOnJob job = new TryOnJobBuilder()
+                .withId(jobId)
                 .withUserId(userId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
@@ -102,17 +104,19 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(job.getResultImageUrl().value()).contains("sp=r");
 
         ArgumentCaptor<TryOnJobDomainEvent> eventCaptor = ArgumentCaptor.forClass(TryOnJobDomainEvent.class);
-        verify(eventPublisherPort).publishJobEvent(eventCaptor.capture());
+        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), eventCaptor.capture());
         assertThat(eventCaptor.getValue().status()).isEqualTo(JobStatus.COMPLETED);
         assertThat(eventCaptor.getValue().routingKey()).isEqualTo("tryon.job.completed");
+        verify(outboxPublisherPort).publishPendingEvents();
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Cuando la estrategia de IA falla, marca el job como FAILED, registra auditoría y publica tryon.job.failed")
+    @DisplayName("HU SR-RF-25: Cuando la estrategia de IA falla, marca el job como FAILED, registra auditoría y guarda tryon.job.failed en Outbox")
     void shouldMarkJobFailedWhenAiStrategyThrowsException() {
         UUID jobId = UUID.randomUUID();
         UserId userId = UserId.of(UUID.randomUUID());
         TryOnJob job = new TryOnJobBuilder()
+                .withId(jobId)
                 .withUserId(userId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
@@ -135,13 +139,13 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(job.getErrorMessage()).contains("FASHN AI excedió el tiempo límite");
 
         ArgumentCaptor<TryOnJobDomainEvent> eventCaptor = ArgumentCaptor.forClass(TryOnJobDomainEvent.class);
-        verify(eventPublisherPort).publishJobEvent(eventCaptor.capture());
+        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.job.failed"), eventCaptor.capture());
         assertThat(eventCaptor.getValue().status()).isEqualTo(JobStatus.FAILED);
         assertThat(eventCaptor.getValue().routingKey()).isEqualTo("tryon.job.failed");
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Si el trabajo ya está en estado terminal (COMPLETED, FAILED, CANCELLED), omite la inferencia por idempotencia")
+    @DisplayName("HU SR-RF-25: Si el trabajo ya está en estado terminal (COMPLETED, FAILED, PROCESSING), omite la inferencia por idempotencia")
     void shouldSkipExecutionWhenJobAlreadyInTerminalStatus() {
         UUID jobId = UUID.randomUUID();
         TryOnJob completedJob = new TryOnJobBuilder()
@@ -163,7 +167,7 @@ class ProcessTryOnJobServiceImplTest {
         processTryOnJobService.processJob(jobId);
 
         verify(fashnStrategy, never()).submitTryOn(any());
-        verify(eventPublisherPort, never()).publishJobEvent(any());
+        verify(outboxPublisherPort, never()).saveOutboxEvent(any(), any(), any());
     }
 
     @Test
@@ -197,7 +201,7 @@ class ProcessTryOnJobServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Recuperación de trabajos bloqueados en PROCESSING tras caída de worker")
+    @DisplayName("HU SR-RF-25: Recuperación de trabajos bloqueados en PROCESSING tras caída de worker guarda evento outbox failed")
     void shouldSweepStaleProcessingJobs() {
         TryOnJob staleJob = new TryOnJobBuilder()
                 .withUserId(UserId.of(UUID.randomUUID()))
@@ -216,5 +220,6 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(recovered).isEqualTo(1);
         assertThat(staleJob.getStatus()).isEqualTo(JobStatus.FAILED);
         assertThat(staleJob.getErrorMessage()).contains("Timeout de procesamiento");
+        verify(outboxPublisherPort).saveOutboxEvent(eq(staleJob.getId()), eq("tryon.job.failed"), any());
     }
 }

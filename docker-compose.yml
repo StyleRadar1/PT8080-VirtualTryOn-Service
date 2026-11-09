@@ -18,7 +18,7 @@ services:
       - "${SERVER_PORT:-8500}:8500"
     environment:
       SERVER_PORT: 8500
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       DB_URL: jdbc:postgresql://probador-postgres:5432/probador_db
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}

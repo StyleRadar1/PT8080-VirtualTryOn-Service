@@ -177,30 +177,63 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     @Override
     public void purgeJobBiometricPhoto(UUID jobId, UserId callerUserId, boolean isAdmin) {
         TryOnJob job = getTryOnJob(jobId, callerUserId, isAdmin);
+
+        boolean rawPhotoNeedsPurge = job.getPhotoUrl() != null
+                && !job.isPhotoPurged()
+                && !job.getPhotoUrl().startsWith("PURGED");
+        boolean renderNeedsPurge = job.getResultImageUrl() != null;
+
         if (blobStoragePort != null) {
-            if (job.getPhotoUrl() != null && !job.isPhotoPurged() && !job.getPhotoUrl().startsWith("PURGED")) {
-                try {
-                    blobStoragePort.deleteBlob(job.getPhotoUrl());
-                } catch (Exception ex) {
-                    log.warn("Fallo al eliminar fotografía frontal en blob storage para trabajo {}: {}", jobId, ex.getMessage());
+            // 1. Borrado físico estricto de fotografía frontal de silueta (sin silenciar excepciones de Azure)
+            if (rawPhotoNeedsPurge) {
+                log.info("Iniciando borrado físico en Azure Blob Storage de silueta biométrica para trabajo {}", jobId);
+                blobStoragePort.deleteBlob(job.getPhotoUrl());
+                job.purgeRawSilhouettePhoto();
+                if (jobRepositoryPort != null) {
+                    jobRepositoryPort.saveJob(job);
+                    jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                            job.getId(),
+                            job.getStatus(),
+                            job.getStatus(),
+                            "Purga física y anonimización de fotografía frontal de silueta completada exitosamente en Azure Blob Storage (Ley 1581)"
+                    ));
                 }
             }
-            if (job.getResultImageUrl() != null) {
-                try {
-                    blobStoragePort.deleteBlob(job.getResultImageUrl().value());
-                } catch (Exception ex) {
-                    log.warn("Fallo al eliminar render de resultado en blob storage para trabajo {}: {}", jobId, ex.getMessage());
+
+            // 2. Borrado físico estricto de imagen renderizada generada (sin silenciar excepciones de Azure)
+            if (renderNeedsPurge) {
+                log.info("Iniciando borrado físico en Azure Blob Storage del render de resultado para trabajo {}", jobId);
+                blobStoragePort.deleteBlob(job.getResultImageUrl().value());
+                job.purgeResultRenderImage();
+                if (jobRepositoryPort != null) {
+                    jobRepositoryPort.saveJob(job);
+                    jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                            job.getId(),
+                            job.getStatus(),
+                            job.getStatus(),
+                            "Purga física de imagen renderizada generada completada exitosamente en Azure Blob Storage"
+                    ));
                 }
+            }
+        } else {
+            if (rawPhotoNeedsPurge) {
+                job.purgeRawSilhouettePhoto();
+            }
+            if (renderNeedsPurge) {
+                job.purgeResultRenderImage();
+            }
+            if (jobRepositoryPort != null) {
+                jobRepositoryPort.saveJob(job);
             }
         }
-        job.purgeBiometricPhoto();
+
+        // 3. Registro de auditoría de completitud integral bajo Ley 1581
         if (jobRepositoryPort != null) {
-            jobRepositoryPort.saveJob(job);
             jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
                     job.getId(),
                     job.getStatus(),
                     job.getStatus(),
-                    "Purga criptográfica y borrado físico de fotografía biométrica completado bajo Ley 1581"
+                    "Purga integral y borrado físico de datos biométricos completado bajo Ley 1581 de 2012"
             ));
         }
     }

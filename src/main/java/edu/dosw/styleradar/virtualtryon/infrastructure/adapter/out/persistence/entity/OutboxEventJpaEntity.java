@@ -5,11 +5,14 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
 /**
  * Entidad JPA para la tabla outbox_events que implementa el patrón Transactional Outbox (SR-RF-25).
+ * Soporta control de concurrencia mediante reclamo exclusivo (estado PROCESSING), lease con expiración
+ * y recuperación automática de eventos abandonados.
  */
 @Entity
 @Table(name = "outbox_events")
@@ -43,6 +46,12 @@ public class OutboxEventJpaEntity {
     @Column(name = "published_at")
     private Instant publishedAt;
 
+    @Column(name = "claimed_at")
+    private Instant claimedAt;
+
+    @Column(name = "claim_expires_at")
+    private Instant claimExpiresAt;
+
     @Column(name = "error_message", length = 1024)
     private String errorMessage;
 
@@ -59,6 +68,8 @@ public class OutboxEventJpaEntity {
             int retryCount,
             Instant createdAt,
             Instant publishedAt,
+            Instant claimedAt,
+            Instant claimExpiresAt,
             String errorMessage
     ) {
         this.id = id;
@@ -70,6 +81,8 @@ public class OutboxEventJpaEntity {
         this.retryCount = retryCount;
         this.createdAt = createdAt;
         this.publishedAt = publishedAt;
+        this.claimedAt = claimedAt;
+        this.claimExpiresAt = claimExpiresAt;
         this.errorMessage = errorMessage;
     }
 
@@ -84,18 +97,30 @@ public class OutboxEventJpaEntity {
                 0,
                 Instant.now(),
                 null,
+                null,
+                null,
                 null
         );
+    }
+
+    public void claim(Instant now, Duration leaseDuration) {
+        this.status = "PROCESSING";
+        this.claimedAt = now != null ? now : Instant.now();
+        Duration duration = leaseDuration != null ? leaseDuration : Duration.ofSeconds(30);
+        this.claimExpiresAt = this.claimedAt.plus(duration);
     }
 
     public void markPublished() {
         this.status = "PUBLISHED";
         this.publishedAt = Instant.now();
+        this.claimExpiresAt = null;
         this.errorMessage = null;
     }
 
     public void recordFailure(String error) {
+        this.status = "PENDING";
         this.retryCount++;
+        this.claimExpiresAt = null;
         this.errorMessage = (error != null && error.length() > 1000) ? error.substring(0, 1000) : error;
     }
 
@@ -171,6 +196,22 @@ public class OutboxEventJpaEntity {
         this.publishedAt = publishedAt;
     }
 
+    public Instant getClaimedAt() {
+        return claimedAt;
+    }
+
+    public void setClaimedAt(Instant claimedAt) {
+        this.claimedAt = claimedAt;
+    }
+
+    public Instant getClaimExpiresAt() {
+        return claimExpiresAt;
+    }
+
+    public void setClaimExpiresAt(Instant claimExpiresAt) {
+        this.claimExpiresAt = claimExpiresAt;
+    }
+
     public String getErrorMessage() {
         return errorMessage;
     }
@@ -179,4 +220,3 @@ public class OutboxEventJpaEntity {
         this.errorMessage = errorMessage;
     }
 }
-

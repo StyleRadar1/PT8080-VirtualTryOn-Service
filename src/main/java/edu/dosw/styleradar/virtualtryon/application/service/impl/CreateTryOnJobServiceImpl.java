@@ -16,7 +16,6 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
-import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnEventPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaRepositoryPort;
@@ -47,7 +46,8 @@ import java.util.function.Supplier;
 /**
  * Servicio de aplicación para la creación y orquestación inicial de trabajos de Virtual Try-On (SR-RF-25).
  * Valida la cadena V01..V03, descuenta la cuota con bloqueo pesimista en PostgreSQL, persiste atómicamente
- * el evento mediante Transactional Outbox y despacha a RabbitMQ.
+ * el trabajo, la auditoría y el evento tryon.job.created en la tabla outbox_events dentro de la misma
+ * transacción JDBC (Transactional Outbox), eliminando problemas de consistencia Dual-Write.
  */
 @Service
 public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
@@ -58,7 +58,6 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
     private final UserQuotaRepositoryPort quotaRepositoryPort;
     private final UserQuotaCachePort quotaCachePort;
     private final BiometricDataRepositoryPort biometricDataRepositoryPort;
-    private final TryOnEventPublisherPort eventPublisherPort;
     private final List<AiInferenceStrategy> inferenceStrategies;
     private final AiProvider configuredProvider;
     private final TryOnValidatorHandler validationChain;
@@ -71,21 +70,19 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             UserQuotaRepositoryPort quotaRepositoryPort,
             UserQuotaCachePort quotaCachePort,
             BiometricDataRepositoryPort biometricDataRepositoryPort,
-            TryOnEventPublisherPort eventPublisherPort,
             List<AiInferenceStrategy> inferenceStrategies,
             @Value("${styleradar.tryon.ai-provider:fashn}") String configuredProviderName,
             TransactionTemplate transactionTemplate,
-            @Autowired(required = false) OutboxPublisherPort outboxPublisherPort
+            OutboxPublisherPort outboxPublisherPort
     ) {
         this.jobRepositoryPort = Objects.requireNonNull(jobRepositoryPort, "jobRepositoryPort no puede ser nulo");
         this.quotaRepositoryPort = Objects.requireNonNull(quotaRepositoryPort, "quotaRepositoryPort no puede ser nulo");
         this.quotaCachePort = Objects.requireNonNull(quotaCachePort, "quotaCachePort no puede ser nulo");
         this.biometricDataRepositoryPort = Objects.requireNonNull(biometricDataRepositoryPort, "biometricDataRepositoryPort no puede ser nulo");
-        this.eventPublisherPort = Objects.requireNonNull(eventPublisherPort, "eventPublisherPort no puede ser nulo");
         this.inferenceStrategies = inferenceStrategies != null ? inferenceStrategies : List.of();
         this.configuredProvider = AiProvider.fromConfigValue(configuredProviderName);
         this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate es obligatorio para garantizar atomicidad transaccional");
-        this.outboxPublisherPort = outboxPublisherPort;
+        this.outboxPublisherPort = Objects.requireNonNull(outboxPublisherPort, "outboxPublisherPort es obligatorio para garantizar consistencia Dual-Write (Transactional Outbox)");
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
@@ -139,7 +136,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
 
         BillingPeriod currentPeriod = BillingPeriod.current();
 
-        // 4. Creación atómica del TryOnJob, consumo concurrente seguro con bloqueo pesimista y persistencia Transactional Outbox
+        // 4. Creación atómica del TryOnJob, consumo de cuota y persistencia en Outbox dentro de la misma transacción JDBC
         TryOnJob savedQueuedJob = executeInTransaction(() -> {
             UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)
                     .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
@@ -189,51 +186,24 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                     "Trabajo de prueba virtual creado y encolado tras superar validaciones V01..V03"
             ));
 
-            if (outboxPublisherPort != null) {
-                outboxPublisherPort.saveOutboxEvent(saved.getId(), "tryon.job.created", TryOnJobDomainEvent.fromJob(saved));
-            }
+            // Persistencia obligatoria del evento en el Outbox en la misma transacción PostgreSQL
+            outboxPublisherPort.saveOutboxEvent(saved.getId(), "tryon.job.created", TryOnJobDomainEvent.fromJob(saved));
             return saved;
         });
 
-        // 5. Publicación asíncrona en RabbitMQ
+        // 5. Despacho asíncrono inmediato opcional (si el broker falla, el Outbox periódico garantiza la entrega At-Least-Once)
         try {
-            if (outboxPublisherPort != null) {
-                outboxPublisherPort.publishPendingEvents();
-            } else {
-                eventPublisherPort.publishJobEvent(TryOnJobDomainEvent.fromJob(savedQueuedJob));
-            }
-        } catch (RuntimeException ex) {
-            if (outboxPublisherPort == null) {
-                compensateFailedPublication(savedQueuedJob, userId, currentPeriod, ex.getMessage());
-                throw ex;
-            }
-            log.warn("Fallo temporal al despachar evento AMQP inmediatamente. El evento Outbox garantizara la entrega: {}", ex.getMessage());
+            outboxPublisherPort.publishPendingEvents();
+        } catch (Exception ex) {
+            log.warn("Fallo temporal al despachar evento AMQP inmediatamente. El scheduler de Outbox garantizará la entrega: {}",
+                    ex.getMessage());
         }
+
         return savedQueuedJob;
     }
 
     private <T> T executeInTransaction(Supplier<T> action) {
         return transactionTemplate.execute(status -> action.get());
-    }
-
-    private void compensateFailedPublication(TryOnJob job, UserId userId, BillingPeriod period, String errorReason) {
-        executeInTransaction(() -> {
-            quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, period).ifPresent(quota -> {
-                quota.refundQuota();
-                quotaRepositoryPort.saveQuota(quota);
-                quotaCachePort.cacheUsedCount(userId, period, quota.getUsedCount());
-            });
-
-            job.markFailed("Compensacion: fallo al encolar en broker RabbitMQ (" + errorReason + ")");
-            jobRepositoryPort.saveJob(job);
-            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                    job.getId(),
-                    JobStatus.QUEUED,
-                    JobStatus.FAILED,
-                    "Compensacion: cuota reintegrada tras fallo en broker de mensajeria: " + errorReason
-            ));
-            return null;
-        });
     }
 
     private AiInferenceStrategy selectStrategy(AiProvider provider) {

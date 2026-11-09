@@ -1,6 +1,7 @@
 -- ===================================================================
 -- Migración V5: Tabla Outbox para el Patrón Transactional Outbox
 -- Requerimiento: Consistencia Dual-Write y entrega At-Least-Once (SR-RF-25)
+-- Soporta concurrencia con SKIP LOCKED, estado PROCESSING y expiración de reclamación.
 -- ===================================================================
 
 CREATE TABLE IF NOT EXISTS outbox_events (
@@ -13,8 +14,10 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     retry_count INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
     published_at TIMESTAMP WITH TIME ZONE,
+    claimed_at TIMESTAMP WITH TIME ZONE,
+    claim_expires_at TIMESTAMP WITH TIME ZONE,
     error_message VARCHAR(1024)
 );
 
 CREATE INDEX IF NOT EXISTS idx_outbox_events_status_created ON outbox_events(status, created_at);
-
+CREATE INDEX IF NOT EXISTS idx_outbox_events_claim ON outbox_events(status, claim_expires_at);

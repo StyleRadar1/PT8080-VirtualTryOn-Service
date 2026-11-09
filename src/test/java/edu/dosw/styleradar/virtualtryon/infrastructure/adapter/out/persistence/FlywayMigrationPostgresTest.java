@@ -77,7 +77,8 @@ class FlywayMigrationPostgresTest {
                         "user_quotas",
                         "biometric_consents",
                         "biometric_photos",
-                        "catalog_garments"
+                        "catalog_garments",
+                        "outbox_events"
                 );
 
                 Set<String> quotaColumns = new HashSet<>();
@@ -118,16 +119,19 @@ class FlywayMigrationPostgresTest {
         try (InputStream v1 = classLoader.getResourceAsStream("db/migration/V1__init_virtual_try_on_schema.sql");
              InputStream v2 = classLoader.getResourceAsStream("db/migration/V2__create_biometric_consent_and_domain_tables.sql");
              InputStream v3 = classLoader.getResourceAsStream("db/migration/V3__create_catalog_garments_and_update_quotas.sql");
-             InputStream v4 = classLoader.getResourceAsStream("db/migration/V4__add_try_on_job_rf25_columns.sql")) {
+             InputStream v4 = classLoader.getResourceAsStream("db/migration/V4__add_try_on_job_rf25_columns.sql");
+             InputStream v5 = classLoader.getResourceAsStream("db/migration/V5__create_outbox_events_table.sql")) {
 
             assertThat(v1).as("Script V1 debe existir en classpath").isNotNull();
             assertThat(v2).as("Script V2 debe existir en classpath").isNotNull();
             assertThat(v3).as("Script V3 debe existir en classpath").isNotNull();
             assertThat(v4).as("Script V4 debe existir en classpath").isNotNull();
+            assertThat(v5).as("Script V5 debe existir en classpath").isNotNull();
 
             String v2Content = new String(v2.readAllBytes(), StandardCharsets.UTF_8);
             String v3Content = new String(v3.readAllBytes(), StandardCharsets.UTF_8);
             String v4Content = new String(v4.readAllBytes(), StandardCharsets.UTF_8);
+            String v5Content = new String(v5.readAllBytes(), StandardCharsets.UTF_8);
 
             assertThat(v2Content)
                     .as("V2 no debe contener modificaciones posteriores a RF-23")
@@ -141,6 +145,10 @@ class FlywayMigrationPostgresTest {
             assertThat(v4Content)
                     .as("V4 debe contener la ampliación de columnas para RF-25")
                     .contains("garment_category", "ai_provider");
+
+            assertThat(v5Content)
+                    .as("V5 debe contener la creación de outbox_events para Transactional Outbox")
+                    .contains("outbox_events", "claimed_at", "claim_expires_at");
         }
     }
 }

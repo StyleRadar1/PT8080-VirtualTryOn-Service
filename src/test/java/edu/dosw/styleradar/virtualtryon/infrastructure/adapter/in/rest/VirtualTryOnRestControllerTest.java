@@ -377,4 +377,22 @@ class VirtualTryOnRestControllerTest {
                 eq(false)
         );
     }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Consulta de trabajo por un usuario que no es el propietario ni administrador retorna 403 Forbidden sin exponer información biométrica")
+    void testGetTryOnJobForbiddenForNonOwnerNonAdmin() throws Exception {
+        UUID authenticatedUserId = UUID.randomUUID();
+        UUID otherUserJobId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.getTryOnJob(eq(otherUserJobId), eq(UserId.of(authenticatedUserId)), eq(false)))
+                .thenThrow(new org.springframework.security.access.AccessDeniedException("No tiene permisos para consultar este trabajo"));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", otherUserJobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(authenticatedUserId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")))
+                .andExpect(jsonPath("$.photoUrl").doesNotExist())
+                .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
+    }
 }

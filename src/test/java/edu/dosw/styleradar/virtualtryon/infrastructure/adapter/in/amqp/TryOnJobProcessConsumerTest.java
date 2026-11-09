@@ -78,5 +78,51 @@ class TryOnJobProcessConsumerTest {
         assertThatThrownBy(() -> consumer.onTryOnJobCreated(event))
                 .isInstanceOf(AmqpRejectAndDontRequeueException.class);
     }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Consumidor que recibe el mismo mensaje dos veces delega en caso de uso idempotente sin lanzar excepción")
+    void shouldHandleDuplicateMessageIdempotently() {
+        UUID jobId = UUID.randomUUID();
+        TryOnJobDomainEvent event = new TryOnJobDomainEvent(
+                UUID.randomUUID(),
+                jobId,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                JobStatus.QUEUED,
+                null,
+                null,
+                Instant.now()
+        );
+
+        // Primera entrega
+        consumer.onTryOnJobCreated(event);
+        // Segunda entrega (mensaje duplicado por redelivery tras fallo de ack de red)
+        consumer.onTryOnJobCreated(event);
+
+        verify(processTryOnJobUseCase, org.mockito.Mockito.times(2)).processJob(jobId);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Error permanente de trabajo inexistente (JobNotFoundException) desvía inmediatamente a DLQ sin reintentar")
+    void shouldRejectPermanentlyToDlqOnJobNotFoundException() {
+        UUID jobId = UUID.randomUUID();
+        TryOnJobDomainEvent event = new TryOnJobDomainEvent(
+                UUID.randomUUID(),
+                jobId,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                JobStatus.QUEUED,
+                null,
+                null,
+                Instant.now()
+        );
+
+        doThrow(new edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException(jobId))
+                .when(processTryOnJobUseCase).processJob(jobId);
+
+        assertThatThrownBy(() -> consumer.onTryOnJobCreated(event))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                .hasMessageContaining("Desviado a DLQ");
+    }
 }
 

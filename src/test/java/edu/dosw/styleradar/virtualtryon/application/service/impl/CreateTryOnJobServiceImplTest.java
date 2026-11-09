@@ -108,6 +108,9 @@ class CreateTryOnJobServiceImplTest {
     @Mock
     private BlobStoragePort blobStoragePort;
 
+    @Mock
+    private edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort outboxPublisherPort;
+
     private TryOnRepositoryAdapter repositoryAdapter;
     private RedisQuotaCacheAdapter quotaCacheAdapter;
     private TryOnEventPublisherAdapter eventPublisherAdapter;
@@ -163,11 +166,10 @@ class CreateTryOnJobServiceImplTest {
                 repositoryAdapter,
                 quotaCacheAdapter,
                 repositoryAdapter,
-                eventPublisherAdapter,
                 List.of(mockAiStrategy),
                 "mock",
                 defaultTxTemplate,
-                null
+                outboxPublisherPort
         );
     }
 
@@ -220,11 +222,12 @@ class CreateTryOnJobServiceImplTest {
         assertThat(persistedAuditLogs).hasSize(1);
         assertThat(persistedAuditLogs.get(0).getNewStatus()).isEqualTo("QUEUED");
 
-        verify(rabbitTemplate).convertAndSend(
-                eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE),
+        verify(outboxPublisherPort).saveOutboxEvent(
+                eq(queued.getId()),
                 eq("tryon.job.created"),
                 any(TryOnJobDomainEvent.class)
         );
+        verify(outboxPublisherPort).publishPendingEvents();
     }
 
     @Test
@@ -243,11 +246,10 @@ class CreateTryOnJobServiceImplTest {
                 repositoryAdapter,
                 quotaCacheAdapter,
                 repositoryAdapter,
-                eventPublisherAdapter,
                 List.of(new MockAiStrategy(blobStoragePort)),
                 "mock",
                 mockTemplate,
-                null
+                outboxPublisherPort
         );
 
         UserId userId = UserId.of(UUID.randomUUID());
@@ -413,27 +415,19 @@ class CreateTryOnJobServiceImplTest {
             return entity;
         });
 
-        // Simular fallo en broker RabbitMQ
-        Mockito.doThrow(new RuntimeException("Broker RabbitMQ caído"))
-                .when(rabbitTemplate).convertAndSend(any(String.class), any(String.class), any(Object.class));
+        // Simular fallo temporal en el broker al intentar despacho inmediato
+        Mockito.doThrow(new RuntimeException("Broker RabbitMQ caído temporalmente"))
+                .when(outboxPublisherPort).publishPendingEvents();
 
-        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
+        TryOnJob job = createTryOnJobService.createTryOnJob(
                 userId, garmentId, "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png", true
-        )).isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("Broker RabbitMQ caído");
+        );
 
-        // Verificar que el trabajo fue marcado FAILED en la compensación
-        ArgumentCaptor<TryOnJobJpaEntity> jobCaptor = ArgumentCaptor.forClass(TryOnJobJpaEntity.class);
-        verify(tryOnJobJpaRepository, Mockito.atLeast(2)).save(jobCaptor.capture());
-        TryOnJobJpaEntity lastSavedJob = jobCaptor.getAllValues().get(jobCaptor.getAllValues().size() - 1);
-        assertThat(lastSavedJob.getStatus()).isEqualTo("FAILED");
-        assertThat(lastSavedJob.getErrorMessage()).contains("Compensacion");
-
-        // Verificar reintegro de cuota (save con saldo decrementado de vuelta a 0)
-        ArgumentCaptor<UserQuotaJpaEntity> quotaCaptor = ArgumentCaptor.forClass(UserQuotaJpaEntity.class);
-        verify(quotaJpaRepository, Mockito.atLeast(2)).save(quotaCaptor.capture());
-        UserQuotaJpaEntity lastSavedQuota = quotaCaptor.getAllValues().get(quotaCaptor.getAllValues().size() - 1);
-        assertThat(lastSavedQuota.getUsedCount()).isZero();
+        // El trabajo debe quedar creado en estado QUEUED sin abortar, garantizado por Outbox
+        assertThat(job).isNotNull();
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+        verify(outboxPublisherPort).saveOutboxEvent(eq(job.getId()), eq("tryon.job.created"), any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort).publishPendingEvents();
     }
 
     @Test
@@ -484,7 +478,6 @@ class CreateTryOnJobServiceImplTest {
                 repositoryAdapter,
                 quotaCacheAdapter,
                 repositoryAdapter,
-                eventPublisherAdapter,
                 List.of(new MockAiStrategy(blobStoragePort)),
                 "mock",
                 mockTemplate,
@@ -502,5 +495,46 @@ class CreateTryOnJobServiceImplTest {
         assertThat(job).isNotNull();
         verify(mockOutbox).saveOutboxEvent(eq(job.getId()), eq("tryon.job.created"), any());
         verify(mockOutbox).publishPendingEvents();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Si falla el guardado del evento Outbox, se propaga la excepción provocando rollback conjunto (el trabajo no queda creado)")
+    void shouldRollbackJointlyWhenOutboxSaveFails() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort failingOutbox =
+                Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort.class);
+        Mockito.doThrow(new RuntimeException("PostgreSQL outbox table locked or disk full"))
+                .when(failingOutbox).saveOutboxEvent(any(), any(), any());
+
+        org.springframework.transaction.support.TransactionTemplate mockTemplate = Mockito.mock(
+                org.springframework.transaction.support.TransactionTemplate.class
+        );
+        when(mockTemplate.execute(any())).thenAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
+            return cb.doInTransaction(null);
+        });
+
+        CreateTryOnJobServiceImpl service = new CreateTryOnJobServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                quotaCacheAdapter,
+                repositoryAdapter,
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "mock",
+                mockTemplate,
+                failingOutbox
+        );
+
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
+
+        assertThatThrownBy(() -> service.createTryOnJob(userId, garmentId, photoUrl, true))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("outbox table locked or disk full");
+
+        Mockito.verify(failingOutbox, Mockito.never()).publishPendingEvents();
     }
 }

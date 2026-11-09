@@ -101,11 +101,20 @@ public class TryOnJob {
         this.updatedAt = Instant.now();
     }
 
-    public void purgeBiometricPhoto() {
+    public void purgeRawSilhouettePhoto() {
         this.photoUrl = "PURGED_BY_USER_REQUEST";
-        this.resultImageUrl = null;
         this.photoPurged = true;
         this.updatedAt = Instant.now();
+    }
+
+    public void purgeResultRenderImage() {
+        this.resultImageUrl = null;
+        this.updatedAt = Instant.now();
+    }
+
+    public void purgeBiometricPhoto() {
+        purgeRawSilhouettePhoto();
+        purgeResultRenderImage();
     }
 
     public UUID getId() {
