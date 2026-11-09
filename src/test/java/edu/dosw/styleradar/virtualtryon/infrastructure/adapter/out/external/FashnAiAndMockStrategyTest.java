@@ -24,6 +24,7 @@ import org.springframework.web.client.RestClient;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
@@ -240,6 +241,84 @@ class FashnAiAndMockStrategyTest {
         Mockito.verify(blobStoragePort).retrieveBlobBytes(photoUrl);
         Mockito.verify(blobStoragePort).retrieveBlobBytes(garmentUrl);
         Mockito.verify(blobStoragePort).storeRenderedResult(eq(job.getUserId()), eq(job.getId()), any(byte[].class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Cuando MockAiStrategy recibe URLs nulas o vacías, o blobs ausentes, utiliza lienzos de contingencia para todas las categorías")
+    void shouldHandleFallbackCanvasesInMockAiStrategy() {
+        // Caso 1: PhotoUrl ausente en blobStorage, GarmentImageUrl nulo, categoría BOTTOMS
+        when(blobStoragePort.retrieveBlobBytes("https://empty/bottoms-user.png")).thenReturn(Optional.empty());
+        TryOnJob nullGarmentJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://empty/bottoms-user.png")
+                .withCategory(GarmentCategory.BOTTOMS)
+                .withGarmentImageUrl(null)
+                .withProvider(AiProvider.MOCK_LOCAL)
+                .build();
+        SasSignedUrl resultBottoms = mockAiStrategy.submitTryOn(nullGarmentJob);
+        assertThat(resultBottoms).isNotNull();
+
+        // Caso 2: PhotoUrl y GarmentImageUrl ausentes en blobStorage, categoría ONE_PIECES
+        when(blobStoragePort.retrieveBlobBytes("https://empty/user.png")).thenReturn(Optional.empty());
+        when(blobStoragePort.retrieveBlobBytes("https://empty/garment.png")).thenReturn(Optional.empty());
+
+        TryOnJob emptyBlobsJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://empty/user.png")
+                .withCategory(GarmentCategory.ONE_PIECES)
+                .withGarmentImageUrl("https://empty/garment.png")
+                .withProvider(AiProvider.MOCK_LOCAL)
+                .build();
+        SasSignedUrl resultOnePieces = mockAiStrategy.submitTryOn(emptyBlobsJob);
+        assertThat(resultOnePieces).isNotNull();
+
+        // Caso 3: Categoría nula y decodeImage con bytes corruptos
+        when(blobStoragePort.retrieveBlobBytes("https://empty/nullcat-user.png")).thenReturn(Optional.empty());
+        TryOnJob nullCategoryJob = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://empty/nullcat-user.png")
+                .withCategory(null)
+                .withGarmentImageUrl(null)
+                .withProvider(AiProvider.MOCK_LOCAL)
+                .build();
+        SasSignedUrl resultNullCategory = mockAiStrategy.submitTryOn(nullCategoryJob);
+        assertThat(resultNullCategory).isNotNull();
+
+        assertThat(mockAiStrategy.decodeImage(new byte[]{1, 2, 3, 4})).isNull();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: FashnAiStrategy debe manejar categorías nulas, URLs de prenda por defecto y respuestas vacías")
+    void shouldHandleFashnAiEdgeCases() {
+        // Caso 1: Categoría nula y garmentImageUrl en blanco -> defaults to TOPS y catálogo por defecto
+        server.expect(requestTo(FASHN_URL + "/run"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.inputs.category").value("tops"))
+                .andExpect(jsonPath("$.inputs.garment_image").value(org.hamcrest.Matchers.containsString("/catalog/garments/")))
+                .andRespond(withSuccess("{\"id\":\"job-def\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(FASHN_URL + "/status/job-def"))
+                .andRespond(withSuccess("{\"status\":\"completed\",\"output\":[\"data:image/png;base64,AQID\"]}", MediaType.APPLICATION_JSON));
+
+        TryOnJob jobWithDefaults = new TryOnJobBuilder()
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(MODEL_IMAGE_URL)
+                .withCategory(null)
+                .withGarmentImageUrl("   ")
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+
+        SasSignedUrl url = fashnAiStrategy.submitTryOn(jobWithDefaults);
+        assertThat(url).isNotNull();
+        server.verify();
+        server.reset();
+
+        // Caso 2: checkStatus con null o blanco lanza excepción
+        assertThatThrownBy(() -> fashnAiStrategy.checkStatus(null))
+                .isInstanceOf(AiProviderTimeoutException.class);
     }
 }
 
