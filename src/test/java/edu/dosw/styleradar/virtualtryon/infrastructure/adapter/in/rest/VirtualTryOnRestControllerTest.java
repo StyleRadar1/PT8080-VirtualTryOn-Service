@@ -491,6 +491,5 @@ class VirtualTryOnRestControllerTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")))
                 .andExpect(jsonPath("$.title", is("Acceso Denegado")));
->>>>>>> develop
     }
 }
