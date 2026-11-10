@@ -56,7 +56,19 @@ public class TryOnEventPublisherAdapter implements TryOnEventPublisherPort {
         if (event == null) {
             return;
         }
-        String routingKey = event.routingKey();
+        sendAndConfirm(event.routingKey(), event, event.eventId(), event.jobId());
+    }
+
+    @Override
+    public void publishPhotoPurgedEvent(edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent event) {
+        if (event == null) {
+            return;
+        }
+        String routingKey = event.routingKey() != null ? event.routingKey() : edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.ROUTING_KEY;
+        sendAndConfirm(routingKey, event, event.eventId(), event.userId());
+    }
+
+    private void sendAndConfirm(String routingKey, Object event, UUID eventId, Object contextId) {
         if (rabbitTemplate == null) {
             throw new IllegalStateException(
                     "RabbitTemplate no está disponible en este entorno. No es posible publicar ni confirmar el evento " + routingKey
@@ -65,7 +77,7 @@ public class TryOnEventPublisherAdapter implements TryOnEventPublisherPort {
 
         try {
             CorrelationData correlationData = new CorrelationData(
-                    event.eventId() != null ? event.eventId().toString() : UUID.randomUUID().toString()
+                    eventId != null ? eventId.toString() : UUID.randomUUID().toString()
             );
             rabbitTemplate.convertAndSend(exchangeName, routingKey, event, correlationData);
 
@@ -91,11 +103,11 @@ public class TryOnEventPublisherAdapter implements TryOnEventPublisherPort {
                 }
             }
 
-            log.info("Evento AMQP {} publicado y confirmado en exchange {} para el trabajo {}",
-                    routingKey, exchangeName, event.jobId());
+            log.info("Evento AMQP {} publicado y confirmado en exchange {} para {}",
+                    routingKey, exchangeName, contextId);
         } catch (RuntimeException ex) {
-            log.error("Fallo al publicar o confirmar evento {} en RabbitMQ para el trabajo {}: {}",
-                    routingKey, event.jobId(), ex.getMessage(), ex);
+            log.error("Fallo al publicar o confirmar evento {} en RabbitMQ para {}: {}",
+                    routingKey, contextId, ex.getMessage(), ex);
             throw ex;
         }
     }

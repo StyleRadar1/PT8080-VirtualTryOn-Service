@@ -41,6 +41,10 @@ public class RabbitConfig {
     public static final String DEFAULT_TRYON_PROCESS_DLQ = "q.tryon.job.process.dlq";
     public static final String DEFAULT_TRYON_PROCESS_DLQ_ROUTING_KEY = "tryon.job.process.dead";
 
+    public static final String DEFAULT_USER_EVENTS_EXCHANGE = "styleradar.user.events";
+    public static final String DEFAULT_USER_ACCOUNT_DELETED_QUEUE = "q.tryon.user.account.deleted";
+    public static final String DEFAULT_USER_ACCOUNT_DELETED_ROUTING_KEY = "user.account.deleted";
+
     @Bean
     public TopicExchange catalogEventsExchange(
             @Value("${styleradar.tryon.amqp.catalog-exchange:" + DEFAULT_CATALOG_EXCHANGE + "}") String exchangeName
@@ -141,6 +145,29 @@ public class RabbitConfig {
             @Value("${styleradar.tryon.amqp.created-routing-key:" + DEFAULT_TRYON_ROUTING_KEY_CREATED + "}") String routingKey
     ) {
         return BindingBuilder.bind(tryOnJobProcessQueue).to(tryOnEventsExchange).with(routingKey);
+    }
+
+    @Bean
+    public TopicExchange userEventsExchange(
+            @Value("${styleradar.tryon.amqp.user-exchange:" + DEFAULT_USER_EVENTS_EXCHANGE + "}") String exchangeName
+    ) {
+        return ExchangeBuilder.topicExchange(exchangeName).durable(true).build();
+    }
+
+    @Bean
+    public Queue userAccountDeletedQueue(
+            @Value("${styleradar.tryon.amqp.user-account-deleted-queue:" + DEFAULT_USER_ACCOUNT_DELETED_QUEUE + "}") String queueName
+    ) {
+        return QueueBuilder.durable(queueName).build();
+    }
+
+    @Bean
+    public Binding userAccountDeletedBinding(
+            Queue userAccountDeletedQueue,
+            TopicExchange userEventsExchange,
+            @Value("${styleradar.tryon.amqp.user-account-deleted-routing-key:" + DEFAULT_USER_ACCOUNT_DELETED_ROUTING_KEY + "}") String routingKey
+    ) {
+        return BindingBuilder.bind(userAccountDeletedQueue).to(userEventsExchange).with(routingKey);
     }
 
     @Bean

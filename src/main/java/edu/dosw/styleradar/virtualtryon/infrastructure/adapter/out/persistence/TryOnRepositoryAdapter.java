@@ -147,6 +147,17 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     }
 
     @Override
+    public Optional<BiometricPhoto> findPhotoById(UUID photoId) {
+        return photoJpaRepository.findById(photoId)
+                .map(persistenceMapper::toPhotoDomain);
+    }
+
+    @Override
+    public void deletePhotoByUserId(UserId userId) {
+        photoJpaRepository.deleteByUserId(userId.value());
+    }
+
+    @Override
     public UserQuota saveQuota(UserQuota userQuota) {
         Optional<UserQuotaJpaEntity> existing = quotaJpaRepository.findByUserIdAndBillingPeriod(
                 userQuota.getUserId().value(),

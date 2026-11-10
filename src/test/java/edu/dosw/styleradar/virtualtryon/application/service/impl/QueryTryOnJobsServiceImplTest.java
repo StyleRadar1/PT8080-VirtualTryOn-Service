@@ -544,6 +544,38 @@ class QueryTryOnJobsServiceImplTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-27 (Escenario 3): purgeJobBiometricPhoto lanza JobNotFoundException si el trabajo ya fue purgado")
+    void shouldThrowJobNotFoundExceptionWhenJobWasAlreadyPurgedInQueryService() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort.class);
+        edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort blobPort =
+                org.mockito.Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort.class);
+
+        QueryTryOnJobsServiceImpl service = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                jobRepo,
+                blobPort
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        TryOnJob purgedJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("PURGED_BY_USER_REQUEST")
+                .build();
+        purgedJob.purgeBiometricPhoto();
+
+        when(jobRepo.findJobById(jobId)).thenReturn(Optional.of(purgedJob));
+
+        assertThrows(JobNotFoundException.class,
+                () -> service.purgeJobBiometricPhoto(jobId, ownerId, false));
+    }
+
+    @Test
     @DisplayName("HU SR-RF-25: Purga biométrica con fallo en Azure Storage no marca foto como purgada y propaga la excepción")
     void shouldNotMarkPhotoPurgedAndPropagateExceptionWhenAzurePhotoDeleteFails() {
         edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo =

@@ -118,11 +118,39 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
                     : resultUrl.value().split("\\?", 2)[0]);
             long elapsed = System.currentTimeMillis() - startTime;
 
-            // 3. Persistencia atómica de estado COMPLETED, auditoría y evento Outbox en la misma transacción JDBC
-            executeInTransaction(() -> {
-                job.complete(persistedResultUrl, elapsed);
-                TryOnJob saved = jobRepositoryPort.saveJob(job);
-                TryOnJob targetJob = saved != null ? saved : job;
+            // 3. Persistencia atómica de estado COMPLETED, auditoría y evento Outbox en la misma transacción JDBC,
+            // validando el estado actualizado del trabajo contra purgas concurrentes (SR-RF-27)
+            TryOnJob completedJob = executeInTransaction(() -> {
+                TryOnJob lockedJob = jobRepositoryPort.findJobByIdForUpdate(jobId)
+                        .orElse(null);
+
+                if (lockedJob == null) {
+                    log.warn("El trabajo {} ya no existe en la base de datos tras la inferencia; descartando render", jobId);
+                    discardGeneratedImage(resultUrl.value(), jobId);
+                    return null;
+                }
+
+                // Condición de carrera (RF-27): El trabajo fue purgado o cancelado concurrentemente mientras la IA ejecutaba
+                if (lockedJob.isPhotoPurged() || lockedJob.getStatus() != JobStatus.PROCESSING) {
+                    log.warn("El trabajo {} fue purgado o cancelado durante la inferencia IA (estado: {}, purgado: {}). Descartando render generado.",
+                            jobId, lockedJob.getStatus(), lockedJob.isPhotoPurged());
+                    discardGeneratedImage(resultUrl.value(), jobId);
+                    return null;
+                }
+
+                // Condición de carrera (RF-27): La fotografía de perfil biométrico fue eliminada durante la inferencia
+                if (biometricDataRepositoryPort != null && biometricDataRepositoryPort.findPhotoByUserId(lockedJob.getUserId()).isEmpty()) {
+                    log.warn("Los datos biométricos del usuario {} fueron eliminados concurrentemente durante la inferencia del trabajo {}. Descartando render y purgando trabajo.",
+                            lockedJob.getUserId().value(), jobId);
+                    discardGeneratedImage(resultUrl.value(), jobId);
+                    lockedJob.purgeBiometricPhoto();
+                    jobRepositoryPort.saveJob(lockedJob);
+                    return null;
+                }
+
+                lockedJob.complete(persistedResultUrl, elapsed);
+                TryOnJob saved = jobRepositoryPort.saveJob(lockedJob);
+                TryOnJob targetJob = saved != null ? saved : lockedJob;
                 jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
                         targetJob.getId(),
                         JobStatus.PROCESSING,
@@ -134,14 +162,18 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
                 return targetJob;
             });
 
-            // Disparo opcional inmediato al Outbox
-            try {
-                outboxPublisherPort.publishPendingEvents();
-            } catch (Exception pubEx) {
-                log.warn("Despacho inmediato de evento tryon.job.completed diferido al publicador de outbox: {}", pubEx.getMessage());
-            }
+            if (completedJob != null) {
+                // Disparo opcional inmediato al Outbox
+                try {
+                    outboxPublisherPort.publishPendingEvents();
+                } catch (Exception pubEx) {
+                    log.warn("Despacho inmediato de evento tryon.job.completed diferido al publicador de outbox: {}", pubEx.getMessage());
+                }
 
-            log.info("Trabajo de prueba virtual {} finalizado con éxito en {} ms", jobId, elapsed);
+                log.info("Trabajo de prueba virtual {} finalizado con éxito en {} ms", jobId, elapsed);
+            } else {
+                log.info("Trabajo de prueba virtual {} finalizado sin persistir render debido a purga o cancelación previa", jobId);
+            }
         } catch (ConsentRequiredException | InvalidPhotoException | AiInferencePermanentException ex) {
             log.error("Fallo definitivo no reintentable para el trabajo {}: {}", jobId, ex.getMessage());
             markFailedAfterRetries(jobId, ex.getMessage());
@@ -270,5 +302,72 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
                 || !(jobPath.equals(currentPath) || jobPath.endsWith("/" + currentPath))) {
             throw new InvalidPhotoException("La fotografía del trabajo no pertenece al titular autenticado");
         }
+    }
+
+    private void discardGeneratedImage(String imagePathOrUrl, UUID jobId) {
+        if (blobStoragePort == null || imagePathOrUrl == null || imagePathOrUrl.isBlank()) {
+            return;
+        }
+
+        int maxRetries = 3;
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                blobStoragePort.deleteBlob(imagePathOrUrl);
+                log.info("Render generado descartado y eliminado de Azure Blob Storage tras purga concurrente: {}", imagePathOrUrl);
+                return;
+            } catch (Exception ex) {
+                log.warn("Intento {}/{} fallido al descartar render de Azure Blob Storage (ruta: {}, causa: {})",
+                        attempt, maxRetries, imagePathOrUrl, ex.getMessage());
+                if (attempt < maxRetries) {
+                    try {
+                        Thread.sleep(50L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Si la eliminación física falla tras los reintentos locales, registrar para limpieza persistente (SR-RF-27 / Ley 1581)
+        registerPendingBlobCleanup(imagePathOrUrl, jobId);
+    }
+
+    private void registerPendingBlobCleanup(String imagePathOrUrl, UUID jobId) {
+        String cleanBlobPath = normalizeBlobPath(imagePathOrUrl);
+        log.error("[ORPHAN_CLEANUP_REQUIRED] Fallo definitivo al descartar render tras reintentos (blob: {}, jobId: {}). Registrando para limpieza persistente",
+                cleanBlobPath, jobId);
+        if (jobRepositoryPort != null && jobId != null) {
+            try {
+                jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                        jobId,
+                        JobStatus.PROCESSING,
+                        JobStatus.FAILED,
+                        "PENDING_BLOB_CLEANUP: Fallo al descartar render (" + cleanBlobPath + ") tras purga concurrente. Registrado para reintento"
+                ));
+            } catch (Exception ex) {
+                log.warn("No fue posible registrar log de auditoría para limpieza pendiente de blob: {}", ex.getMessage());
+            }
+        }
+        if (outboxPublisherPort != null && jobId != null) {
+            try {
+                outboxPublisherPort.saveOutboxEvent(jobId, "tryon.blob.cleanup", cleanBlobPath);
+            } catch (Exception ex) {
+                log.warn("No fue posible persistir evento outbox de limpieza pendiente de blob: {}", ex.getMessage());
+            }
+        }
+    }
+
+    private String normalizeBlobPath(String imagePathOrUrl) {
+        if (imagePathOrUrl == null || imagePathOrUrl.isBlank()) {
+            return imagePathOrUrl;
+        }
+        String normalized = blobStoragePort != null
+                ? blobStoragePort.normalizeBlobReference(imagePathOrUrl)
+                : imagePathOrUrl;
+        if (normalized != null && normalized.contains("?")) {
+            normalized = normalized.substring(0, normalized.indexOf('?'));
+        }
+        return normalized != null ? normalized.trim() : null;
     }
 }

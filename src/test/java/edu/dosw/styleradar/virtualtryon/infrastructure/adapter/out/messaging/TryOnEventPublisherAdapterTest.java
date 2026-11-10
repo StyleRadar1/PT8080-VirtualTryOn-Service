@@ -58,7 +58,24 @@ class TryOnEventPublisherAdapterTest {
     @DisplayName("HU SR-RF-25: publishJobEvent no realiza acciones si el evento es nulo")
     void shouldDoNothingWhenEventIsNull() {
         adapter.publishJobEvent(null);
+        adapter.publishPhotoPurgedEvent(null);
         verify(rabbitTemplate, never()).convertAndSend(any(String.class), any(String.class), any(TryOnJobDomainEvent.class), any(CorrelationData.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: publishPhotoPurgedEvent publica evento tryon.photo.purged con CorrelationData en el exchange")
+    void shouldPublishPhotoPurgedEventSuccessfully() {
+        edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent event =
+                edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.of(UUID.randomUUID(), UUID.randomUUID());
+
+        adapter.publishPhotoPurgedEvent(event);
+
+        verify(rabbitTemplate).convertAndSend(
+                eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE),
+                eq("tryon.photo.purged"),
+                eq(event),
+                any(CorrelationData.class)
+        );
     }
 
     @Test
@@ -172,5 +189,42 @@ class TryOnEventPublisherAdapterTest {
         assertThatThrownBy(() -> adapter.publishJobEvent(event))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("connection reset");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: sendAndConfirm detecta NACK inmediato si el future ya está completado con NACK cuando requirePublisherConfirms=false")
+    void shouldDetectNackWhenFutureAlreadyCompletedWithNack() {
+        TryOnJobDomainEvent event = new TryOnJobDomainEvent(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                JobStatus.QUEUED, null, null, Instant.now()
+        );
+
+        doAnswer(inv -> {
+            CorrelationData cd = inv.getArgument(3);
+            cd.getFuture().complete(new CorrelationData.Confirm(false, "Unroutable"));
+            return null;
+        }).when(rabbitTemplate).convertAndSend(any(String.class), any(String.class), any(TryOnJobDomainEvent.class), any(CorrelationData.class));
+
+        assertThatThrownBy(() -> adapter.publishJobEvent(event))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("NACK");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: sendAndConfirm tiene éxito si future ya está completado con ACK cuando requirePublisherConfirms=false")
+    void shouldSucceedWhenFutureAlreadyCompletedWithAck() {
+        TryOnJobDomainEvent event = new TryOnJobDomainEvent(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                JobStatus.QUEUED, null, null, Instant.now()
+        );
+
+        doAnswer(inv -> {
+            CorrelationData cd = inv.getArgument(3);
+            cd.getFuture().complete(new CorrelationData.Confirm(true, null));
+            return null;
+        }).when(rabbitTemplate).convertAndSend(any(String.class), any(String.class), any(TryOnJobDomainEvent.class), any(CorrelationData.class));
+
+        adapter.publishJobEvent(event);
+        verify(rabbitTemplate).convertAndSend(any(String.class), any(String.class), eq(event), any(CorrelationData.class));
     }
 }

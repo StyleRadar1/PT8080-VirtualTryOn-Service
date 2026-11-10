@@ -73,6 +73,16 @@ class RabbitConfigTest {
         assertThat(tryOnBinding.getDestination()).isEqualTo("test.tryon.process.queue");
         assertThat(tryOnBinding.getRoutingKey()).isEqualTo("tryon.job.created");
 
+        TopicExchange userExchange = config.userEventsExchange("test.user.events");
+        Queue userDeletedQueue = config.userAccountDeletedQueue("test.user.deleted.queue");
+        Binding userDeletedBinding = config.userAccountDeletedBinding(userDeletedQueue, userExchange, "user.account.deleted");
+
+        assertThat(userExchange.getName()).isEqualTo("test.user.events");
+        assertThat(userDeletedQueue.getName()).isEqualTo("test.user.deleted.queue");
+        assertThat(userDeletedBinding.getDestination()).isEqualTo("test.user.deleted.queue");
+        assertThat(userDeletedBinding.getExchange()).isEqualTo("test.user.events");
+        assertThat(userDeletedBinding.getRoutingKey()).isEqualTo("user.account.deleted");
+
         assertThat(converter).isNotNull();
     }
 }

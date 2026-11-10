@@ -49,6 +49,9 @@ class TransactionalOutboxPublisherAdapterTest {
     @Mock
     private TransactionTemplate transactionTemplate;
 
+    @Mock
+    private edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort blobStoragePort;
+
     private ObjectMapper objectMapper;
     private TransactionalOutboxPublisherAdapter outboxPublisher;
 
@@ -65,7 +68,8 @@ class TransactionalOutboxPublisherAdapterTest {
                 outboxEventRepository,
                 tryOnEventPublisherPort,
                 objectMapper,
-                transactionTemplate
+                transactionTemplate,
+                blobStoragePort
         );
     }
 
@@ -117,6 +121,30 @@ class TransactionalOutboxPublisherAdapterTest {
         assertThat(pendingEntity.getStatus()).isEqualTo("PUBLISHED");
         assertThat(pendingEntity.getPublishedAt()).isNotNull();
         assertThat(pendingEntity.getClaimExpiresAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Despacha evento tryon.photo.purged mediante publishPhotoPurgedEvent y confirma como PUBLISHED")
+    void shouldPublishPhotoPurgedEventFromOutbox() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent purgeEvent =
+                edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.of(jobId, userId);
+        String jsonPayload = objectMapper.writeValueAsString(purgeEvent);
+
+        OutboxEventJpaEntity pendingEntity = OutboxEventJpaEntity.pending(
+                UUID.randomUUID(), "TRY_ON_JOB", jobId.toString(), "tryon.photo.purged", jsonPayload
+        );
+
+        when(outboxEventRepository.findClaimableEventsForUpdate(any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(pendingEntity));
+        when(outboxEventRepository.findById(pendingEntity.getId()))
+                .thenReturn(Optional.of(pendingEntity));
+
+        outboxPublisher.publishPendingEvents();
+
+        verify(tryOnEventPublisherPort).publishPhotoPurgedEvent(any(edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.class));
+        assertThat(pendingEntity.getStatus()).isEqualTo("PUBLISHED");
     }
 
     @Test
@@ -225,5 +253,50 @@ class TransactionalOutboxPublisherAdapterTest {
         verify(tryOnEventPublisherPort, times(2)).publishJobEvent(any());
         assertThat(entity1.getStatus()).isEqualTo("PUBLISHED");
         assertThat(entity2.getStatus()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Despacha evento tryon.blob.cleanup ejecutando deleteBlob y marcando PUBLISHED")
+    void shouldExecuteBlobCleanupWhenOutboxEventIsTryonBlobCleanup() throws Exception {
+        String blobUrl = "https://storage.blob.core.windows.net/renders/pending-render.png";
+        OutboxEventJpaEntity entity = OutboxEventJpaEntity.pending(
+                UUID.randomUUID(), "TRY_ON_JOB", UUID.randomUUID().toString(), "tryon.blob.cleanup", objectMapper.writeValueAsString(blobUrl)
+        );
+
+        when(outboxEventRepository.findClaimableEventsForUpdate(any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(entity));
+        when(outboxEventRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+        outboxPublisher.publishPendingEvents();
+
+        verify(blobStoragePort).deleteBlob(blobUrl);
+        assertThat(entity.getStatus()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Falla y mantiene evento en PENDING con reintento si blobStoragePort es null al procesar tryon.blob.cleanup")
+    void shouldFailAndKeepPendingWhenBlobStoragePortIsNullForBlobCleanup() throws Exception {
+        TransactionalOutboxPublisherAdapter adapterWithoutStorage = new TransactionalOutboxPublisherAdapter(
+                outboxEventRepository,
+                tryOnEventPublisherPort,
+                objectMapper,
+                transactionTemplate,
+                null
+        );
+
+        String blobUrl = "https://storage.blob.core.windows.net/renders/pending-render.png";
+        OutboxEventJpaEntity entity = OutboxEventJpaEntity.pending(
+                UUID.randomUUID(), "TRY_ON_JOB", UUID.randomUUID().toString(), "tryon.blob.cleanup", objectMapper.writeValueAsString(blobUrl)
+        );
+
+        when(outboxEventRepository.findClaimableEventsForUpdate(any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(entity));
+        when(outboxEventRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+        adapterWithoutStorage.publishPendingEvents();
+
+        assertThat(entity.getStatus()).isEqualTo("PENDING");
+        assertThat(entity.getRetryCount()).isEqualTo(1);
+        assertThat(entity.getErrorMessage()).contains("BlobStoragePort no está disponible");
     }
 }
