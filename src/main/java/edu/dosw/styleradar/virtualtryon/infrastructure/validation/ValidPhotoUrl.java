@@ -11,7 +11,8 @@ import java.lang.annotation.Target;
 
 /**
  * Validador perimetral contra Server-Side Request Forgery (SSRF - OWASP A10).
- * En ambientes de QA y PROD restringe estrictamente el origen a Azure Blob Storage (*.blob.core.windows.net).
+ * En ambientes de QA y PROD restringe estrictamente el origen al almacenamiento autorizado de StyleRadar en Azure Blob Storage.
+ * Bloquea de forma explícita cuentas de almacenamiento externas en Azure.
  * En desarrollo local admite excepciones controladas de localhost / 127.0.0.1.
  */
 @Target({ElementType.FIELD, ElementType.PARAMETER, ElementType.RECORD_COMPONENT})
@@ -20,7 +21,7 @@ import java.lang.annotation.Target;
 @Documented
 public @interface ValidPhotoUrl {
 
-    String message() default "La URL de la fotografía frontal debe pertenecer al almacenamiento autorizado de Azure Blob Storage (*.blob.core.windows.net)";
+    String message() default "La URL de la fotografía frontal debe pertenecer al almacenamiento autorizado de Azure Blob Storage de StyleRadar";
 
     Class<?>[] groups() default {};
 

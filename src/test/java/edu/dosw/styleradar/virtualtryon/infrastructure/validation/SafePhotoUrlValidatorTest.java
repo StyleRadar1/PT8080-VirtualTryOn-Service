@@ -9,8 +9,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SafePhotoUrlValidatorTest {
 
     @Test
-    @DisplayName("SSRF QA/PROD: Acepta URLs oficiales pertenecientes a Azure Blob Storage (*.blob.core.windows.net)")
-    void shouldAcceptAzureBlobStorageUrlsInAnyEnvironment() {
+    @DisplayName("SSRF QA/PROD: Acepta URLs oficiales de almacenamiento autorizado de StyleRadar en Azure Blob Storage")
+    void shouldAcceptOfficialStyleRadarBlobStorageUrlsInAnyEnvironment() {
         MockEnvironment prodEnv = new MockEnvironment();
         prodEnv.setActiveProfiles("prod");
         prodEnv.setProperty("styleradar.tryon.security.allow-localhost-urls", "false");
@@ -18,7 +18,39 @@ class SafePhotoUrlValidatorTest {
         SafePhotoUrlValidator validator = new SafePhotoUrlValidator(prodEnv);
 
         assertThat(validator.isValid("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes-prod/photo.jpg", null)).isTrue();
-        assertThat(validator.isValid("https://storageaccount.blob.core.windows.net/container/item.png", null)).isTrue();
+        assertThat(validator.isValid("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/photo.png", null)).isTrue();
+        assertThat(validator.isValid("https://styleradar.blob.core.windows.net/photos/photo.jpg", null)).isTrue();
+    }
+
+    @Test
+    @DisplayName("SSRF QA/PROD: Rechaza estrictamente cuentas externas y no autorizadas de Azure Blob Storage")
+    void shouldRejectExternalAzureBlobStorageAccounts() {
+        MockEnvironment prodEnv = new MockEnvironment();
+        prodEnv.setActiveProfiles("prod");
+        prodEnv.setProperty("styleradar.tryon.security.allow-localhost-urls", "false");
+
+        SafePhotoUrlValidator validator = new SafePhotoUrlValidator(prodEnv);
+
+        // Cuentas de terceros o atacantes en Azure Blob Storage
+        assertThat(validator.isValid("https://attackeraccount.blob.core.windows.net/container/item.png", null)).isFalse();
+        assertThat(validator.isValid("https://storageaccount.blob.core.windows.net/container/item.png", null)).isFalse();
+        assertThat(validator.isValid("https://mystorage.blob.core.windows.net/container/test.jpg", null)).isFalse();
+        assertThat(validator.isValid("https://externalaccount.blob.core.windows.net/malicious/photo.jpg", null)).isFalse();
+        assertThat(validator.isValid("https://randomuser.blob.core.windows.net/images/exploit.png", null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("SSRF Dinámico: Permite host configurado explícitamente en el ambiente actual")
+    void shouldAllowCustomAuthorizedHostConfiguredInEnvironment() {
+        MockEnvironment customEnv = new MockEnvironment();
+        customEnv.setActiveProfiles("qa");
+        customEnv.setProperty("styleradar.tryon.blob-base-url", "https://styleradar-custom-storage.blob.core.windows.net");
+
+        SafePhotoUrlValidator validator = new SafePhotoUrlValidator(customEnv);
+
+        assertThat(validator.isValid("https://styleradar-custom-storage.blob.core.windows.net/silhouettes/photo.jpg", null)).isTrue();
+        // Sigue rechazando cuentas externas no autorizadas
+        assertThat(validator.isValid("https://attackeraccount.blob.core.windows.net/container/item.png", null)).isFalse();
     }
 
     @Test
@@ -90,12 +122,13 @@ class SafePhotoUrlValidatorTest {
     }
 
     @Test
-    @DisplayName("Constructor por defecto sin contexto de Spring opera en modo seguro bloqueando localhost")
+    @DisplayName("Constructor por defecto sin contexto de Spring opera en modo seguro con hosts de StyleRadar")
     void defaultConstructorOperatesInSecureMode() {
         SafePhotoUrlValidator validator = new SafePhotoUrlValidator();
 
         assertThat(validator.isLocalhostAllowed()).isFalse();
         assertThat(validator.isValid("http://localhost:8500/test.jpg", null)).isFalse();
-        assertThat(validator.isValid("https://mystorage.blob.core.windows.net/container/test.jpg", null)).isTrue();
+        assertThat(validator.isValid("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes/photo.jpg", null)).isTrue();
+        assertThat(validator.isValid("https://mystorage.blob.core.windows.net/container/test.jpg", null)).isFalse();
     }
 }

@@ -189,6 +189,20 @@ class VirtualTryOnRestControllerTest {
                         .content(objectMapper.writeValueAsString(externalHostSsrf)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+
+        // 4. Intento de SSRF hacia cuenta externa de Azure Blob Storage no autorizada
+        StartTryOnRequest externalAzureSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "https://attackeraccount.blob.core.windows.net/exploit.jpg",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(externalAzureSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
     }
 
     @Test
