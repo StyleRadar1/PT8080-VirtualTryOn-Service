@@ -570,7 +570,7 @@ El proyecto exige una cobertura de código mínima del **85%** verificada autom�
 
 ### Métricas Actuales de Cobertura en el Repositorio (Sprint 2 Completo · RF-23 a RF-27)
 
-* **Pruebas Totales Ejecutadas:** **72 pruebas automatizadas** (unitarias de dominio, servicios de aplicación, adaptadores JPA/Redis/RabbitMQ/Azure Blob Storage/FASHN AI y pruebas de contrato MockMvc con seguridad JWT real).
+* **Pruebas Totales Ejecutadas:** **229 pruebas automatizadas** (unitarias de dominio, servicios de aplicación, adaptadores JPA/Redis/RabbitMQ/Azure Blob Storage/FASHN AI y pruebas de contrato MockMvc con seguridad JWT real).
 * **Fallos y Errores:** 0 fallos, 0 errores.
 * **Cobertura de Líneas:** **≥ 90%** (supera el umbral mínimo del 85%).
 * **Cobertura de Ramas:** **≥ 82%** (supera el umbral mínimo del 80%).
