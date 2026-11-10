@@ -458,5 +458,58 @@ class ProcessTryOnJobBiometricAndRetryTest {
         assertThat(initialJob.getStatus()).isNotEqualTo(JobStatus.COMPLETED);
         verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), any(TryOnJobDomainEvent.class));
     }
+
+    @Test
+    @DisplayName("Condición de carrera (RF-27): Cuando falla el descarte del render tras reintentos, se registra como pendiente de limpieza en Outbox y auditoría")
+    void shouldRegisterPendingCleanupWhenDiscardGeneratedRenderFailsAfterRetries() {
+        TryOnJob initialJob = createSampleJob(JobStatus.QUEUED);
+        UUID jobId = initialJob.getId();
+        UserId userId = initialJob.getUserId();
+
+        BiometricConsent activeConsent = new BiometricConsent(
+                UUID.randomUUID(), userId, "v1.0", true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"), Instant.now(), null, "127.0.0.1"
+        );
+        BiometricPhoto photo = new BiometricPhoto(
+                UUID.randomUUID(), userId, "image/png", 1024, 1024, 2048L,
+                "photos/user1/photo.png", SasSignedUrl.of("https://storage/user1/photo.png"), Instant.now()
+        );
+
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(activeConsent));
+        when(biometricDataRepositoryPort.findPhotoByUserId(userId)).thenReturn(Optional.of(photo));
+        when(blobStoragePort.normalizeBlobReference(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        TryOnJob purgedJob = createSampleJob(JobStatus.PROCESSING);
+        purgedJob.purgeBiometricPhoto();
+
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId))
+                .thenReturn(Optional.of(initialJob))
+                .thenReturn(Optional.of(purgedJob));
+        when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        when(fashnStrategy.supportsProvider(AiProvider.FASHN_AI)).thenReturn(true);
+        SasSignedUrl renderUrl = SasSignedUrl.of("https://storage.blob.core.windows.net/renders/failed-render.png");
+        when(fashnStrategy.submitTryOn(any(TryOnJob.class))).thenReturn(renderUrl);
+
+        // Simular que la eliminación de Azure Blob Storage falla consistentemente (3 reintentos)
+        doThrow(new IllegalStateException("Azure Blob Storage 503 Service Unavailable"))
+                .when(blobStoragePort).deleteBlob(renderUrl.value());
+
+        processTryOnJobService.processJob(jobId);
+
+        // Verifica que se realizaron los 3 intentos de eliminación (reintentos)
+        verify(blobStoragePort, times(3)).deleteBlob(renderUrl.value());
+
+        // Verifica que se registró el borrado fallido como pendiente de limpieza en Transactional Outbox
+        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.blob.cleanup"), eq(renderUrl.value()));
+
+        // Verifica que se registró en la auditoría como PENDING_BLOB_CLEANUP
+        ArgumentCaptor<edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog> auditCaptor =
+                ArgumentCaptor.forClass(edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog.class);
+        verify(jobRepositoryPort, org.mockito.Mockito.atLeastOnce()).saveAuditLog(auditCaptor.capture());
+        boolean hasPendingCleanupLog = auditCaptor.getAllValues().stream()
+                .anyMatch(log -> log.getTransitionReason() != null && log.getTransitionReason().contains("PENDING_BLOB_CLEANUP"));
+        assertThat(hasPendingCleanupLog).isTrue();
+    }
 }
 

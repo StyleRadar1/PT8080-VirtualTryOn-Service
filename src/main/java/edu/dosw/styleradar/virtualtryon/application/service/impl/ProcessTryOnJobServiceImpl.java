@@ -126,7 +126,7 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
 
                 if (lockedJob == null) {
                     log.warn("El trabajo {} ya no existe en la base de datos tras la inferencia; descartando render", jobId);
-                    discardGeneratedImage(resultUrl.value());
+                    discardGeneratedImage(resultUrl.value(), jobId);
                     return null;
                 }
 
@@ -134,7 +134,7 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
                 if (lockedJob.isPhotoPurged() || lockedJob.getStatus() != JobStatus.PROCESSING) {
                     log.warn("El trabajo {} fue purgado o cancelado durante la inferencia IA (estado: {}, purgado: {}). Descartando render generado.",
                             jobId, lockedJob.getStatus(), lockedJob.isPhotoPurged());
-                    discardGeneratedImage(resultUrl.value());
+                    discardGeneratedImage(resultUrl.value(), jobId);
                     return null;
                 }
 
@@ -142,7 +142,7 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
                 if (biometricDataRepositoryPort != null && biometricDataRepositoryPort.findPhotoByUserId(lockedJob.getUserId()).isEmpty()) {
                     log.warn("Los datos biométricos del usuario {} fueron eliminados concurrentemente durante la inferencia del trabajo {}. Descartando render y purgando trabajo.",
                             lockedJob.getUserId().value(), jobId);
-                    discardGeneratedImage(resultUrl.value());
+                    discardGeneratedImage(resultUrl.value(), jobId);
                     lockedJob.purgeBiometricPhoto();
                     jobRepositoryPort.saveJob(lockedJob);
                     return null;
@@ -304,14 +304,55 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
         }
     }
 
-    private void discardGeneratedImage(String imagePathOrUrl) {
-        if (blobStoragePort != null && imagePathOrUrl != null && !imagePathOrUrl.isBlank()) {
+    private void discardGeneratedImage(String imagePathOrUrl, UUID jobId) {
+        if (blobStoragePort == null || imagePathOrUrl == null || imagePathOrUrl.isBlank()) {
+            return;
+        }
+
+        int maxRetries = 3;
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 blobStoragePort.deleteBlob(imagePathOrUrl);
                 log.info("Render generado descartado y eliminado de Azure Blob Storage tras purga concurrente: {}", imagePathOrUrl);
+                return;
             } catch (Exception ex) {
-                log.warn("Advertencia al descartar render de Azure Blob Storage (ruta: {}, causa: {})",
-                        imagePathOrUrl, ex.getMessage());
+                log.warn("Intento {}/{} fallido al descartar render de Azure Blob Storage (ruta: {}, causa: {})",
+                        attempt, maxRetries, imagePathOrUrl, ex.getMessage());
+                if (attempt < maxRetries) {
+                    try {
+                        Thread.sleep(50L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Si la eliminación física falla tras los reintentos locales, registrar para limpieza persistente (SR-RF-27 / Ley 1581)
+        registerPendingBlobCleanup(imagePathOrUrl, jobId);
+    }
+
+    private void registerPendingBlobCleanup(String imagePathOrUrl, UUID jobId) {
+        log.error("[ORPHAN_CLEANUP_REQUIRED] Fallo definitivo al descartar render tras reintentos (blob: {}, jobId: {}). Registrando para limpieza persistente",
+                imagePathOrUrl, jobId);
+        if (jobRepositoryPort != null && jobId != null) {
+            try {
+                jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                        jobId,
+                        JobStatus.PROCESSING,
+                        JobStatus.FAILED,
+                        "PENDING_BLOB_CLEANUP: Fallo al descartar render (" + imagePathOrUrl + ") tras purga concurrente. Registrado para reintento"
+                ));
+            } catch (Exception ex) {
+                log.warn("No fue posible registrar log de auditoría para limpieza pendiente de blob: {}", ex.getMessage());
+            }
+        }
+        if (outboxPublisherPort != null && jobId != null) {
+            try {
+                outboxPublisherPort.saveOutboxEvent(jobId, "tryon.blob.cleanup", imagePathOrUrl);
+            } catch (Exception ex) {
+                log.warn("No fue posible persistir evento outbox de limpieza pendiente de blob: {}", ex.getMessage());
             }
         }
     }

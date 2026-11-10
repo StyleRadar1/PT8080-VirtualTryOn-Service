@@ -3,12 +3,14 @@ package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.messaging;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnEventPublisherPort;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.OutboxEventJpaEntity;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.OutboxEventJpaRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -38,6 +40,22 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
     private final TryOnEventPublisherPort tryOnEventPublisherPort;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
+    private final BlobStoragePort blobStoragePort;
+
+    @Autowired
+    public TransactionalOutboxPublisherAdapter(
+            OutboxEventJpaRepository outboxEventRepository,
+            TryOnEventPublisherPort tryOnEventPublisherPort,
+            ObjectMapper objectMapper,
+            TransactionTemplate transactionTemplate,
+            @Autowired(required = false) BlobStoragePort blobStoragePort
+    ) {
+        this.outboxEventRepository = Objects.requireNonNull(outboxEventRepository, "outboxEventRepository no puede ser nulo");
+        this.tryOnEventPublisherPort = Objects.requireNonNull(tryOnEventPublisherPort, "tryOnEventPublisherPort no puede ser nulo");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper no puede ser nulo");
+        this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate no puede ser nulo");
+        this.blobStoragePort = blobStoragePort;
+    }
 
     public TransactionalOutboxPublisherAdapter(
             OutboxEventJpaRepository outboxEventRepository,
@@ -45,10 +63,7 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
             ObjectMapper objectMapper,
             TransactionTemplate transactionTemplate
     ) {
-        this.outboxEventRepository = Objects.requireNonNull(outboxEventRepository, "outboxEventRepository no puede ser nulo");
-        this.tryOnEventPublisherPort = Objects.requireNonNull(tryOnEventPublisherPort, "tryOnEventPublisherPort no puede ser nulo");
-        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper no puede ser nulo");
-        this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate no puede ser nulo");
+        this(outboxEventRepository, tryOnEventPublisherPort, objectMapper, transactionTemplate, null);
     }
 
     @Override
@@ -104,6 +119,11 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
                     edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent domainEvent =
                             objectMapper.readValue(event.getPayload(), edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.class);
                     tryOnEventPublisherPort.publishPhotoPurgedEvent(domainEvent);
+                } else if ("tryon.blob.cleanup".equals(event.getEventType())) {
+                    if (blobStoragePort != null) {
+                        String blobUrl = objectMapper.readValue(event.getPayload(), String.class);
+                        blobStoragePort.deleteBlob(blobUrl);
+                    }
                 }
 
                 // Confirmación exitosa en broker: marcar como PUBLISHED en base de datos

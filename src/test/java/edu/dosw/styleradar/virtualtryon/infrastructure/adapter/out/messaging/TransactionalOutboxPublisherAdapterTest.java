@@ -49,6 +49,9 @@ class TransactionalOutboxPublisherAdapterTest {
     @Mock
     private TransactionTemplate transactionTemplate;
 
+    @Mock
+    private edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort blobStoragePort;
+
     private ObjectMapper objectMapper;
     private TransactionalOutboxPublisherAdapter outboxPublisher;
 
@@ -65,7 +68,8 @@ class TransactionalOutboxPublisherAdapterTest {
                 outboxEventRepository,
                 tryOnEventPublisherPort,
                 objectMapper,
-                transactionTemplate
+                transactionTemplate,
+                blobStoragePort
         );
     }
 
@@ -249,5 +253,23 @@ class TransactionalOutboxPublisherAdapterTest {
         verify(tryOnEventPublisherPort, times(2)).publishJobEvent(any());
         assertThat(entity1.getStatus()).isEqualTo("PUBLISHED");
         assertThat(entity2.getStatus()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Despacha evento tryon.blob.cleanup ejecutando deleteBlob y marcando PUBLISHED")
+    void shouldExecuteBlobCleanupWhenOutboxEventIsTryonBlobCleanup() throws Exception {
+        String blobUrl = "https://storage.blob.core.windows.net/renders/pending-render.png";
+        OutboxEventJpaEntity entity = OutboxEventJpaEntity.pending(
+                UUID.randomUUID(), "TRY_ON_JOB", UUID.randomUUID().toString(), "tryon.blob.cleanup", objectMapper.writeValueAsString(blobUrl)
+        );
+
+        when(outboxEventRepository.findClaimableEventsForUpdate(any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(entity));
+        when(outboxEventRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+        outboxPublisher.publishPendingEvents();
+
+        verify(blobStoragePort).deleteBlob(blobUrl);
+        assertThat(entity.getStatus()).isEqualTo("PUBLISHED");
     }
 }
