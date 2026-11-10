@@ -7,6 +7,7 @@ on:
 
 env:
   IMAGE_NAME: pt8080-virtualtryon-service
+  AZURE_WEBAPP_NAME: styleradar-virtualtryon-qa
 
 jobs:
   test-and-sonar:
@@ -80,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: qa
-      url: https://${{ secrets.AZURE_WEBAPP_NAME_QA }}.azurewebsites.net/swagger-ui/index.html
+      url: https://styleradar-virtualtryon-qa.azurewebsites.net/swagger-ui/index.html
     steps:
       - uses: azure/login@v2
         with:
@@ -90,9 +91,13 @@ jobs:
         uses: azure/cli@v2
         with:
           inlineScript: |
-            RG=$(az webapp list --query "[?name=='${{ secrets.AZURE_WEBAPP_NAME_QA }}'].resourceGroup | [0]" -o tsv)
+            RG=$(az webapp list --query "[?name=='${{ env.AZURE_WEBAPP_NAME }}'].resourceGroup | [0]" -o tsv)
+            if [ -z "$RG" ] || [ "$RG" = "null" ]; then
+              echo "Error: No se encontró el grupo de recursos para ${{ env.AZURE_WEBAPP_NAME }} en Azure."
+              exit 1
+            fi
             az webapp config appsettings set \
-              --name "${{ secrets.AZURE_WEBAPP_NAME_QA }}" \
+              --name "${{ env.AZURE_WEBAPP_NAME }}" \
               --resource-group "$RG" \
               --output none \
               --settings \
@@ -119,13 +124,13 @@ jobs:
       - uses: azure/webapps-deploy@v3
         id: deploy
         with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME_QA }}
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
           images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:qa-${{ github.sha }}
 
       - name: Smoke Test en Azure QA (Commit SHA y /v3/api-docs)
         run: |
-          SWAGGER_URL="https://${{ secrets.AZURE_WEBAPP_NAME_QA }}.azurewebsites.net/v3/api-docs"
-          INFO_URL="https://${{ secrets.AZURE_WEBAPP_NAME_QA }}.azurewebsites.net/actuator/info"
+          SWAGGER_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/v3/api-docs"
+          INFO_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/actuator/info"
           EXPECTED_SHA="${{ github.sha }}"
           echo "Iniciando Smoke Test en QA. Validando commit esperado: $EXPECTED_SHA"
           for i in $(seq 1 30); do
