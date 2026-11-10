@@ -120,10 +120,11 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
                             objectMapper.readValue(event.getPayload(), edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.class);
                     tryOnEventPublisherPort.publishPhotoPurgedEvent(domainEvent);
                 } else if ("tryon.blob.cleanup".equals(event.getEventType())) {
-                    if (blobStoragePort != null) {
-                        String blobUrl = objectMapper.readValue(event.getPayload(), String.class);
-                        blobStoragePort.deleteBlob(blobUrl);
+                    if (blobStoragePort == null) {
+                        throw new IllegalStateException("BlobStoragePort no está disponible para procesar tryon.blob.cleanup en evento " + event.getId());
                     }
+                    String blobUrl = objectMapper.readValue(event.getPayload(), String.class);
+                    blobStoragePort.deleteBlob(blobUrl);
                 }
 
                 // Confirmación exitosa en broker: marcar como PUBLISHED en base de datos

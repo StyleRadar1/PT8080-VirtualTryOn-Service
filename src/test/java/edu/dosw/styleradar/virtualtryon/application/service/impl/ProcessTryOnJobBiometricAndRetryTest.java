@@ -511,5 +511,62 @@ class ProcessTryOnJobBiometricAndRetryTest {
                 .anyMatch(log -> log.getTransitionReason() != null && log.getTransitionReason().contains("PENDING_BLOB_CLEANUP"));
         assertThat(hasPendingCleanupLog).isTrue();
     }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Normaliza URL con firma SAS antes de persistir en Outbox y auditoría ante fallo de descarte")
+    void shouldNormalizeSasUrlBeforeRegisteringPendingBlobCleanupInOutboxAndAudit() {
+        TryOnJob initialJob = createSampleJob(JobStatus.QUEUED);
+        UUID jobId = initialJob.getId();
+        UserId userId = initialJob.getUserId();
+
+        BiometricConsent activeConsent = new BiometricConsent(
+                UUID.randomUUID(), userId, "v1.0", true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"), Instant.now(), null, "127.0.0.1"
+        );
+        BiometricPhoto photo = new BiometricPhoto(
+                UUID.randomUUID(), userId, "image/png", 1024, 1024, 2048L,
+                "photos/user1/photo.png", SasSignedUrl.of("https://storage/user1/photo.png"), Instant.now()
+        );
+
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(activeConsent));
+        when(biometricDataRepositoryPort.findPhotoByUserId(userId)).thenReturn(Optional.of(photo));
+        when(blobStoragePort.normalizeBlobReference(any())).thenAnswer(inv -> {
+            String path = inv.getArgument(0);
+            return path != null && path.contains("?") ? path.substring(0, path.indexOf("?")) : path;
+        });
+
+        TryOnJob purgedJob = createSampleJob(JobStatus.PROCESSING);
+        purgedJob.purgeBiometricPhoto();
+
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId))
+                .thenReturn(Optional.of(initialJob))
+                .thenReturn(Optional.of(purgedJob));
+        when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        when(fashnStrategy.supportsProvider(AiProvider.FASHN_AI)).thenReturn(true);
+        String sasTokenUrl = "https://storage.blob.core.windows.net/renders/failed-render.png?sv=2021-06-08&sr=b&sig=temporalSecretSignatureKey123";
+        SasSignedUrl renderWithSas = SasSignedUrl.of(sasTokenUrl);
+        when(fashnStrategy.submitTryOn(any(TryOnJob.class))).thenReturn(renderWithSas);
+
+        doThrow(new IllegalStateException("Azure Blob Storage 503 Service Unavailable"))
+                .when(blobStoragePort).deleteBlob(sasTokenUrl);
+
+        processTryOnJobService.processJob(jobId);
+
+        // Verifica que outbox guarda la URL limpia SIN credenciales temporales SAS
+        String expectedNormalizedUrl = "https://storage.blob.core.windows.net/renders/failed-render.png";
+        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.blob.cleanup"), eq(expectedNormalizedUrl));
+
+        // Verifica que la auditoría no contiene la firma SAS
+        ArgumentCaptor<edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog> auditCaptor =
+                ArgumentCaptor.forClass(edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog.class);
+        verify(jobRepositoryPort, org.mockito.Mockito.atLeastOnce()).saveAuditLog(auditCaptor.capture());
+        boolean hasCleanAuditLog = auditCaptor.getAllValues().stream()
+                .anyMatch(log -> log.getTransitionReason() != null
+                        && log.getTransitionReason().contains("PENDING_BLOB_CLEANUP")
+                        && log.getTransitionReason().contains(expectedNormalizedUrl)
+                        && !log.getTransitionReason().contains("sig="));
+        assertThat(hasCleanAuditLog).isTrue();
+    }
 }
 

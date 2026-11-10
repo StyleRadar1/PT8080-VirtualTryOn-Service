@@ -334,15 +334,16 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
     }
 
     private void registerPendingBlobCleanup(String imagePathOrUrl, UUID jobId) {
+        String cleanBlobPath = normalizeBlobPath(imagePathOrUrl);
         log.error("[ORPHAN_CLEANUP_REQUIRED] Fallo definitivo al descartar render tras reintentos (blob: {}, jobId: {}). Registrando para limpieza persistente",
-                imagePathOrUrl, jobId);
+                cleanBlobPath, jobId);
         if (jobRepositoryPort != null && jobId != null) {
             try {
                 jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
                         jobId,
                         JobStatus.PROCESSING,
                         JobStatus.FAILED,
-                        "PENDING_BLOB_CLEANUP: Fallo al descartar render (" + imagePathOrUrl + ") tras purga concurrente. Registrado para reintento"
+                        "PENDING_BLOB_CLEANUP: Fallo al descartar render (" + cleanBlobPath + ") tras purga concurrente. Registrado para reintento"
                 ));
             } catch (Exception ex) {
                 log.warn("No fue posible registrar log de auditoría para limpieza pendiente de blob: {}", ex.getMessage());
@@ -350,10 +351,23 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
         }
         if (outboxPublisherPort != null && jobId != null) {
             try {
-                outboxPublisherPort.saveOutboxEvent(jobId, "tryon.blob.cleanup", imagePathOrUrl);
+                outboxPublisherPort.saveOutboxEvent(jobId, "tryon.blob.cleanup", cleanBlobPath);
             } catch (Exception ex) {
                 log.warn("No fue posible persistir evento outbox de limpieza pendiente de blob: {}", ex.getMessage());
             }
         }
+    }
+
+    private String normalizeBlobPath(String imagePathOrUrl) {
+        if (imagePathOrUrl == null || imagePathOrUrl.isBlank()) {
+            return imagePathOrUrl;
+        }
+        String normalized = blobStoragePort != null
+                ? blobStoragePort.normalizeBlobReference(imagePathOrUrl)
+                : imagePathOrUrl;
+        if (normalized != null && normalized.contains("?")) {
+            normalized = normalized.substring(0, normalized.indexOf('?'));
+        }
+        return normalized != null ? normalized.trim() : null;
     }
 }

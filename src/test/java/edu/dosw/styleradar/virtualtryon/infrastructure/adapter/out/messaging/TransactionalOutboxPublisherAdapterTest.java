@@ -272,4 +272,31 @@ class TransactionalOutboxPublisherAdapterTest {
         verify(blobStoragePort).deleteBlob(blobUrl);
         assertThat(entity.getStatus()).isEqualTo("PUBLISHED");
     }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Falla y mantiene evento en PENDING con reintento si blobStoragePort es null al procesar tryon.blob.cleanup")
+    void shouldFailAndKeepPendingWhenBlobStoragePortIsNullForBlobCleanup() throws Exception {
+        TransactionalOutboxPublisherAdapter adapterWithoutStorage = new TransactionalOutboxPublisherAdapter(
+                outboxEventRepository,
+                tryOnEventPublisherPort,
+                objectMapper,
+                transactionTemplate,
+                null
+        );
+
+        String blobUrl = "https://storage.blob.core.windows.net/renders/pending-render.png";
+        OutboxEventJpaEntity entity = OutboxEventJpaEntity.pending(
+                UUID.randomUUID(), "TRY_ON_JOB", UUID.randomUUID().toString(), "tryon.blob.cleanup", objectMapper.writeValueAsString(blobUrl)
+        );
+
+        when(outboxEventRepository.findClaimableEventsForUpdate(any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(entity));
+        when(outboxEventRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+        adapterWithoutStorage.publishPendingEvents();
+
+        assertThat(entity.getStatus()).isEqualTo("PENDING");
+        assertThat(entity.getRetryCount()).isEqualTo(1);
+        assertThat(entity.getErrorMessage()).contains("BlobStoragePort no está disponible");
+    }
 }
