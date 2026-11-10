@@ -39,12 +39,19 @@ spring:
         enabled: ${REDIS_SSL_ENABLED:false}
       timeout: 2000ms
 
-  # Broker de Mensajería RabbitMQ en Producción
+  # Broker de Mensajería RabbitMQ en Producción (Azure Broker con TLS)
   rabbitmq:
-    host: ${RABBITMQ_HOST:localhost}
-    port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_USER:guest}
-    password: ${RABBITMQ_PASSWORD:guest}
+    host: ${RABBITMQ_HOST:styleradar-rabbitmq-qa.northcentralus.cloudapp.azure.com}
+    port: ${RABBITMQ_PORT:5671}
+    username: ${RABBITMQ_USER:ms_probador}
+    password: ${RABBITMQ_PASSWORD}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    ssl:
+      enabled: ${RABBITMQ_SSL_ENABLED:true}
+      trust-store: ${RABBITMQ_TRUSTSTORE:file:/app/rabbitmq-truststore.jks}
+      trust-store-password: ${RABBITMQ_TRUSTSTORE_PASSWORD:changeit}
+      trust-store-type: ${RABBITMQ_TRUSTSTORE_TYPE:JKS}
+      verify-hostname: ${RABBITMQ_VERIFY_HOSTNAME:true}
 
 # Configuración de monitoreo restringida en Producción (OWASP A05 Security Misconfiguration)
 management:
@@ -75,3 +82,12 @@ styleradar:
     amqp:
       publisher-confirms: true
       listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:true}
+      catalog-exchange: ${CATALOG_EXCHANGE:styleradar.exchange}
+      catalog-garment-queue: ${CATALOG_GARMENT_QUEUE:styleradar.probador.prenda-publicada.q}
+      catalog-garment-routing-key: ${CATALOG_GARMENT_ROUTING_KEY:styleradar.catalogo.prenda.publicada}
+      user-exchange: ${USER_EXCHANGE:styleradar.exchange}
+      user-account-deleted-queue: ${USER_ACCOUNT_DELETED_QUEUE:styleradar.probador.cuenta-eliminada.q}
+      user-account-deleted-routing-key: ${USER_ACCOUNT_DELETED_ROUTING_KEY:styleradar.usuarios.cuenta.eliminada}
+      catalog-dlx: ${CATALOG_DLX:styleradar.dlx}
+      catalog-garment-dlq: ${CATALOG_GARMENT_DLQ:styleradar.probador.dlq}
+      catalog-garment-dlq-routing-key: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:styleradar.probador.dlq}

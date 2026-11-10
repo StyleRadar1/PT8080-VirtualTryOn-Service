@@ -3,6 +3,7 @@ package edu.dosw.styleradar.virtualtryon.infrastructure.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.ExchangeBuilder;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
@@ -26,13 +27,13 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class RabbitConfig {
 
-    public static final String DEFAULT_CATALOG_EXCHANGE = "styleradar.catalog.events";
-    public static final String DEFAULT_CATALOG_QUEUE = "q.tryon.catalog.garment.updated";
-    public static final String DEFAULT_CATALOG_ROUTING_KEY = "catalog.garment.updated";
+    public static final String DEFAULT_CATALOG_EXCHANGE = "styleradar.exchange";
+    public static final String DEFAULT_CATALOG_QUEUE = "styleradar.probador.prenda-publicada.q";
+    public static final String DEFAULT_CATALOG_ROUTING_KEY = "styleradar.catalogo.prenda.publicada";
 
-    public static final String DEFAULT_CATALOG_DLX = "styleradar.catalog.dlx";
-    public static final String DEFAULT_CATALOG_DLQ = "q.tryon.catalog.garment.updated.dlq";
-    public static final String DEFAULT_CATALOG_DLQ_ROUTING_KEY = "catalog.garment.updated.dead";
+    public static final String DEFAULT_CATALOG_DLX = "styleradar.dlx";
+    public static final String DEFAULT_CATALOG_DLQ = "styleradar.probador.dlq";
+    public static final String DEFAULT_CATALOG_DLQ_ROUTING_KEY = "styleradar.probador.dlq";
 
     public static final String DEFAULT_TRYON_EXCHANGE = "styleradar.tryon.events";
     public static final String DEFAULT_TRYON_PROCESS_QUEUE = "q.tryon.job.process";
@@ -41,9 +42,9 @@ public class RabbitConfig {
     public static final String DEFAULT_TRYON_PROCESS_DLQ = "q.tryon.job.process.dlq";
     public static final String DEFAULT_TRYON_PROCESS_DLQ_ROUTING_KEY = "tryon.job.process.dead";
 
-    public static final String DEFAULT_USER_EVENTS_EXCHANGE = "styleradar.user.events";
-    public static final String DEFAULT_USER_ACCOUNT_DELETED_QUEUE = "q.tryon.user.account.deleted";
-    public static final String DEFAULT_USER_ACCOUNT_DELETED_ROUTING_KEY = "user.account.deleted";
+    public static final String DEFAULT_USER_EVENTS_EXCHANGE = "styleradar.exchange";
+    public static final String DEFAULT_USER_ACCOUNT_DELETED_QUEUE = "styleradar.probador.cuenta-eliminada.q";
+    public static final String DEFAULT_USER_ACCOUNT_DELETED_ROUTING_KEY = "styleradar.usuarios.cuenta.eliminada";
 
     @Bean
     public TopicExchange catalogEventsExchange(
@@ -53,10 +54,10 @@ public class RabbitConfig {
     }
 
     @Bean
-    public TopicExchange catalogDeadLetterExchange(
+    public DirectExchange catalogDeadLetterExchange(
             @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxName
     ) {
-        return ExchangeBuilder.topicExchange(dlxName).durable(true).build();
+        return ExchangeBuilder.directExchange(dlxName).durable(true).build();
     }
 
     @Bean
@@ -69,7 +70,7 @@ public class RabbitConfig {
     @Bean
     public Binding catalogGarmentUpdatedDlqBinding(
             Queue catalogGarmentUpdatedDlq,
-            TopicExchange catalogDeadLetterExchange,
+            DirectExchange catalogDeadLetterExchange,
             @Value("${styleradar.tryon.amqp.catalog-garment-dlq-routing-key:" + DEFAULT_CATALOG_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
     ) {
         return BindingBuilder.bind(catalogGarmentUpdatedDlq).to(catalogDeadLetterExchange).with(dlqRoutingKey);
@@ -172,7 +173,9 @@ public class RabbitConfig {
 
     @Bean
     public MessageConverter jackson2JsonMessageConverter(ObjectMapper objectMapper) {
-        return new Jackson2JsonMessageConverter(objectMapper);
+        Jackson2JsonMessageConverter converter = new Jackson2JsonMessageConverter(objectMapper);
+        converter.setAlwaysConvertToInferredType(true);
+        return converter;
     }
 
     @Bean

@@ -32,10 +32,16 @@ FROM eclipse-temurin:21-jre-alpine AS runtime
 LABEL maintainer="Squad Portal8080 - StyleRadar (DOSW 2026)"
 LABEL description="Microservicio de Probador Virtual con IA (ms-probador-virtual · Puerto 8500)"
 
-# Crear usuario y grupo sin privilegios para ejecución segura (no-root)
-RUN addgroup -S styleradar && adduser -S styleradar -G styleradar
-
+# Importar CA pública de StyleRadar al keystore de la JVM y generar truststore
 WORKDIR /app
+COPY rabbitmq-ca.pem /tmp/rabbitmq-ca.pem
+RUN keytool -importcert -trustcacerts -cacerts -storepass changeit -noprompt -alias styleradar-rabbitmq-ca -file /tmp/rabbitmq-ca.pem \
+    && keytool -importcert -trustcacerts -noprompt -alias styleradar-rabbitmq-ca -file /tmp/rabbitmq-ca.pem -keystore /app/rabbitmq-truststore.jks -storepass changeit \
+    && rm /tmp/rabbitmq-ca.pem
+
+# Crear usuario y grupo sin privilegios para ejecución segura (no-root)
+RUN addgroup -S styleradar && adduser -S styleradar -G styleradar \
+    && chown -R styleradar:styleradar /app
 
 # Copiar el binario ejecutable desde la etapa de compilación
 COPY --from=builder --chown=styleradar:styleradar /build/target/*.jar app.jar

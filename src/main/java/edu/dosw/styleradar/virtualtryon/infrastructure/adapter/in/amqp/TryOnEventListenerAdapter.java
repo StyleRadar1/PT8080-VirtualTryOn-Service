@@ -25,8 +25,8 @@ import java.time.Instant;
 public class TryOnEventListenerAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(TryOnEventListenerAdapter.class);
-    public static final String CATALOG_GARMENT_UPDATED_QUEUE = "q.tryon.catalog.garment.updated";
-    public static final String USER_ACCOUNT_DELETED_QUEUE = "q.tryon.user.account.deleted";
+    public static final String CATALOG_GARMENT_UPDATED_QUEUE = "styleradar.probador.prenda-publicada.q";
+    public static final String USER_ACCOUNT_DELETED_QUEUE = "styleradar.probador.cuenta-eliminada.q";
 
     private final QueryTryOnJobsService queryTryOnJobsService;
     private final DeleteBiometricDataService deleteBiometricDataService;
