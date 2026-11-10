@@ -60,6 +60,11 @@ management:
   info:
     env:
       enabled: true
+    git:
+      mode: full
+      enabled: true
+    build:
+      enabled: true
 
 # Metadatos del despliegue para verificación de Smoke Tests (Commit SHA y Build)
 info:
@@ -69,7 +74,7 @@ info:
     description: "Microservicio de Probador Virtual con IA"
   git:
     commit:
-      id: ${APP_GIT_COMMIT_SHA:${GIT_COMMIT_SHA:unknown}}
+      id: ${git.commit.id:${APP_GIT_COMMIT_SHA:unknown}}
 
 # Configuración transversal de seguridad JWT y almacenamiento Azure Blob Storage
 # Las credenciales (JWT_SECRET_BASE64 y AZURE_STORAGE_ACCOUNT_KEY) deben inyectarse por variables de entorno o secretos de despliegue
@@ -79,6 +84,8 @@ styleradar:
       secret-base64: ${JWT_SECRET_BASE64}
       duration: ${JWT_DURATION:PT60M}
   tryon:
+    security:
+      allow-localhost-urls: ${ALLOW_LOCALHOST_URLS:false}
     # El proveedor real se habilita exclusivamente en qa/prod. Los perfiles locales
     # deben declarar mock explícitamente para evitar consumo accidental de FASHN.
     ai-provider: ${TRYON_AI_PROVIDER:mock}

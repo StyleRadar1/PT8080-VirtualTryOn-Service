@@ -44,6 +44,8 @@ spring:
 # Parámetros del Negocio Virtual Try-On
 styleradar:
   tryon:
+    security:
+      allow-localhost-urls: true
     ai-provider: ${TRYON_AI_PROVIDER:mock} # mock o fashn
     daily-quota-limit: 10
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}

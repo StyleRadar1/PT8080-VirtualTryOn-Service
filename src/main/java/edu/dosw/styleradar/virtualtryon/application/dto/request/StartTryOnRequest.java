@@ -1,9 +1,9 @@
 package edu.dosw.styleradar.virtualtryon.application.dto.request;
 
+import edu.dosw.styleradar.virtualtryon.infrastructure.validation.ValidPhotoUrl;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
 
 import java.util.UUID;
 
@@ -23,10 +23,7 @@ public record StartTryOnRequest(
 
         @Schema(description = "URL segura HTTPS de la fotografía frontal subida por el usuario", example = "https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes-qa/user-front-123.jpg")
         @NotBlank(message = "La URL de la fotografía frontal es obligatoria")
-        @Pattern(
-                regexp = "^https://[a-zA-Z0-9-]+\\.blob\\.core\\.windows\\.net/[^\\s]+$|^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?/[^\\s]+$",
-                message = "La URL de la fotografía frontal debe pertenecer al almacenamiento autorizado de Azure Blob Storage (*.blob.core.windows.net) o localhost controlado (prevención SSRF)"
-        )
+        @ValidPhotoUrl
         String photoUrl,
 
         @Schema(description = "Consentimiento explícito de tratamiento de datos biométricos según Ley 1581 de 2012", example = "true")
@@ -34,4 +31,3 @@ public record StartTryOnRequest(
         Boolean biometricConsent
 ) {
 }
-

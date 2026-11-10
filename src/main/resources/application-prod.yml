@@ -41,7 +41,7 @@ spring:
 
   # Broker de Mensajería RabbitMQ en Producción (Azure Broker con TLS)
   rabbitmq:
-    host: ${RABBITMQ_HOST:styleradar-rabbitmq-qa.northcentralus.cloudapp.azure.com}
+    host: ${RABBITMQ_HOST:styleradar-rabbitmq-prod.northcentralus.cloudapp.azure.com}
     port: ${RABBITMQ_PORT:5671}
     username: ${RABBITMQ_USER:ms_probador}
     password: ${RABBITMQ_PASSWORD}
@@ -73,6 +73,8 @@ styleradar:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:https://styleradar.co,https://styleradar-prod.azurewebsites.net}
   tryon:
+    security:
+      allow-localhost-urls: false
     ai-provider: ${TRYON_AI_PROVIDER:fashn}
     daily-quota-limit: ${MAX_DAILY_QUOTA:10}
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
@@ -82,12 +84,16 @@ styleradar:
     amqp:
       publisher-confirms: true
       listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:true}
-      catalog-exchange: ${CATALOG_EXCHANGE:styleradar.exchange}
-      catalog-garment-queue: ${CATALOG_GARMENT_QUEUE:styleradar.probador.prenda-publicada.q}
+      catalog-exchange: ${CATALOG_EXCHANGE:styleradar.exchange.prod}
+      catalog-garment-queue: ${CATALOG_GARMENT_QUEUE:styleradar.probador.prenda-publicada.prod.q}
       catalog-garment-routing-key: ${CATALOG_GARMENT_ROUTING_KEY:styleradar.catalogo.prenda.publicada}
-      user-exchange: ${USER_EXCHANGE:styleradar.exchange}
-      user-account-deleted-queue: ${USER_ACCOUNT_DELETED_QUEUE:styleradar.probador.cuenta-eliminada.q}
+      user-exchange: ${USER_EXCHANGE:styleradar.exchange.prod}
+      user-account-deleted-queue: ${USER_ACCOUNT_DELETED_QUEUE:styleradar.probador.cuenta-eliminada.prod.q}
       user-account-deleted-routing-key: ${USER_ACCOUNT_DELETED_ROUTING_KEY:styleradar.usuarios.cuenta.eliminada}
-      catalog-dlx: ${CATALOG_DLX:styleradar.dlx}
-      catalog-garment-dlq: ${CATALOG_GARMENT_DLQ:styleradar.probador.dlq}
+      catalog-dlx: ${CATALOG_DLX:styleradar.dlx.prod}
+      catalog-garment-dlq: ${CATALOG_GARMENT_DLQ:styleradar.probador.prod.dlq}
       catalog-garment-dlq-routing-key: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:styleradar.probador.dlq}
+      exchange: ${TRYON_EXCHANGE:styleradar.tryon.events.prod}
+      process-queue: ${TRYON_PROCESS_QUEUE:q.tryon.job.process.prod}
+      dlx: ${TRYON_DLX:styleradar.tryon.dlx.prod}
+      process-dlq: ${TRYON_PROCESS_DLQ:q.tryon.job.process.prod.dlq}
