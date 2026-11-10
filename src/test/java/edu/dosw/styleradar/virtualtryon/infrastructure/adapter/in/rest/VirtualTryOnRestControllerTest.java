@@ -143,6 +143,55 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
+    @DisplayName("OWASP A10:2025 SSRF: Dado un photoUrl apuntando a metadatos de Azure o redes internas privadas, Cuando se envía POST /api/v1/try-on/jobs, Entonces es rechazado con 400 Bad Request")
+    void testStartTryOnSsrfRejectionForInternalAndUnauthorizedHosts() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+
+        // 1. Intento de SSRF hacia servicio de metadatos de instancia Azure (169.254.169.254)
+        StartTryOnRequest metadataSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "http://169.254.169.254/metadata/identity/oauth2/token",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(metadataSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+
+        // 2. Intento de SSRF hacia red interna privada RFC 1918 (10.0.0.1)
+        StartTryOnRequest internalIpSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "http://10.0.0.1:8080/internal/admin",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(internalIpSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+
+        // 3. Intento de SSRF hacia dominio externo no autorizado
+        StartTryOnRequest externalHostSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "https://malicious-external-site.com/exploit.jpg",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(externalHostSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+    }
+
+    @Test
     @DisplayName("HU SR-RF-23 (V03): Dado un cuerpo de solicitud vacío sin campos obligatorios, Cuando se envía POST /api/v1/try-on/jobs, Entonces responde 400 Bad Request con ProblemDetail de validación")
     void testStartTryOnInvalidRequest() throws Exception {
         UUID userId = UUID.randomUUID();

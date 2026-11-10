@@ -21,11 +21,11 @@ public record StartTryOnRequest(
         @NotNull(message = "El identificador de la prenda es obligatorio")
         UUID garmentId,
 
-        @Schema(description = "URL segura HTTPS de la fotografía frontal subida por el usuario", example = "https://styleradar.blob.core.windows.net/photos/user-front-123.jpg")
+        @Schema(description = "URL segura HTTPS de la fotografía frontal subida por el usuario", example = "https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes-qa/user-front-123.jpg")
         @NotBlank(message = "La URL de la fotografía frontal es obligatoria")
         @Pattern(
-                regexp = "^https?://[^\\s]+$",
-                message = "La URL de la fotografía frontal debe utilizar el esquema HTTP o HTTPS válido (prevención SSRF)"
+                regexp = "^https://[a-zA-Z0-9-]+\\.blob\\.core\\.windows\\.net/[^\\s]+$|^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?/[^\\s]+$",
+                message = "La URL de la fotografía frontal debe pertenecer al almacenamiento autorizado de Azure Blob Storage (*.blob.core.windows.net) o localhost controlado (prevención SSRF)"
         )
         String photoUrl,
 

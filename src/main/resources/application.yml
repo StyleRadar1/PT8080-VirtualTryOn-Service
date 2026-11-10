@@ -53,10 +53,23 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
   endpoint:
     health:
       show-details: when-authorized
+  info:
+    env:
+      enabled: true
+
+# Metadatos del despliegue para verificación de Smoke Tests (Commit SHA y Build)
+info:
+  app:
+    name: "pt8080-virtualtryon-service"
+    version: "1.0.0-SNAPSHOT"
+    description: "Microservicio de Probador Virtual con IA"
+  git:
+    commit:
+      id: ${APP_GIT_COMMIT_SHA:${GIT_COMMIT_SHA:unknown}}
 
 # Configuración transversal de seguridad JWT y almacenamiento Azure Blob Storage
 # Las credenciales (JWT_SECRET_BASE64 y AZURE_STORAGE_ACCOUNT_KEY) deben inyectarse por variables de entorno o secretos de despliegue

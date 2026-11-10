@@ -71,6 +71,7 @@ styleradar:
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
     fashn-api-key: ${FASHN_API_KEY:}
     blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes-prod}
+    blob-account-key: ${AZURE_STORAGE_ACCOUNT_KEY}
     amqp:
       publisher-confirms: true
-      listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:false}
+      listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:true}

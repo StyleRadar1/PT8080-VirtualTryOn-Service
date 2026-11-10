@@ -97,6 +97,9 @@ jobs:
                 WEBSITES_PORT=8500 \
                 SERVER_PORT=8500 \
                 SPRING_PROFILES_ACTIVE=qa \
+                APP_GIT_COMMIT_SHA="${{ github.sha }}" \
+                TRYON_AMQP_LISTENERS_ENABLED=true \
+                AZURE_STORAGE_ACCOUNT_KEY="${{ secrets.AZURE_STORAGE_ACCOUNT_KEY_QA || secrets.AZURE_STORAGE_ACCOUNT_KEY }}" \
                 DB_URL="${{ secrets.DB_URL_QA }}" \
                 DB_USER="${{ secrets.DB_USERNAME_QA }}" \
                 DB_PASSWORD="${{ secrets.DB_PASSWORD_QA }}" \
@@ -118,17 +121,22 @@ jobs:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME_QA }}
           images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:qa-${{ github.sha }}
 
-      - name: Smoke Test en Azure QA (/v3/api-docs y /actuator/health)
+      - name: Smoke Test en Azure QA (Commit SHA y /v3/api-docs)
         run: |
-          URL="https://${{ secrets.AZURE_WEBAPP_NAME_QA }}.azurewebsites.net/v3/api-docs"
+          SWAGGER_URL="https://${{ secrets.AZURE_WEBAPP_NAME_QA }}.azurewebsites.net/v3/api-docs"
+          INFO_URL="https://${{ secrets.AZURE_WEBAPP_NAME_QA }}.azurewebsites.net/actuator/info"
+          EXPECTED_SHA="${{ github.sha }}"
+          echo "Iniciando Smoke Test en QA. Validando commit esperado: $EXPECTED_SHA"
           for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || true)
-            echo "Intento $i: $STATUS"
-            if [ "$STATUS" = "200" ]; then
+            SWAGGER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SWAGGER_URL" || true)
+            INFO_BODY=$(curl -s "$INFO_URL" || true)
+            echo "Intento $i: Swagger HTTP $SWAGGER_STATUS | Actuator Info: $INFO_BODY"
+            if [ "$SWAGGER_STATUS" = "200" ] && echo "$INFO_BODY" | grep -q "$EXPECTED_SHA"; then
+              echo "Smoke Test exitoso: Servicio respondiendo HTTP 200 y commit SHA verificado ($EXPECTED_SHA)"
               exit 0
             fi
-            sleep 20
+            sleep 15
           done
-          echo "El servicio no respondió en $URL"
+          echo "Error en Smoke Test: El servicio no respondió con el commit esperado ($EXPECTED_SHA) tras 30 intentos"
           exit 1
 
