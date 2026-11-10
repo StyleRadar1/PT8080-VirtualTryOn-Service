@@ -1,6 +1,8 @@
 package edu.dosw.styleradar.virtualtryon.application.dto.request;
 
+import edu.dosw.styleradar.virtualtryon.infrastructure.validation.ValidPhotoUrl;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 import java.util.UUID;
@@ -19,8 +21,9 @@ public record StartTryOnRequest(
         @NotNull(message = "El identificador de la prenda es obligatorio")
         UUID garmentId,
 
-        @Schema(description = "URL segura de la fotografía frontal subida por el usuario", example = "https://styleradar.blob.core.windows.net/photos/user-front-123.jpg")
-        @NotNull(message = "La URL de la fotografía frontal es obligatoria")
+        @Schema(description = "URL segura HTTPS de la fotografía frontal subida por el usuario", example = "https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes-qa/user-front-123.jpg")
+        @NotBlank(message = "La URL de la fotografía frontal es obligatoria")
+        @ValidPhotoUrl
         String photoUrl,
 
         @Schema(description = "Consentimiento explícito de tratamiento de datos biométricos según Ley 1581 de 2012", example = "true")
@@ -28,4 +31,3 @@ public record StartTryOnRequest(
         Boolean biometricConsent
 ) {
 }
-

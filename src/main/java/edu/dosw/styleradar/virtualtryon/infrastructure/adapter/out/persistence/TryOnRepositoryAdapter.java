@@ -249,7 +249,7 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
         TryOnOutfitJpaEntity toSave = persistenceMapper.toOutfitJpaEntity(outfit);
         existing.ifPresent(entity -> toSave.setId(entity.getId()));
         TryOnOutfitJpaEntity saved = tryOnOutfitJpaRepository.save(toSave);
-        return saved != null ? persistenceMapper.toOutfitDomain(saved) : outfit;
+        return persistenceMapper.toOutfitDomain(saved);
     }
 
     @Override

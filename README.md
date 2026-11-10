@@ -45,12 +45,12 @@
   </p>
   <p align="center">
     <a href="#4-endpoints-y-enlace-a-swagger"><img src="https://img.shields.io/badge/DEV_LOCAL-Active-16A34A?style=for-the-badge&logo=docker&logoColor=white" alt="DEV Local Active" /></a>
-    <a href="#4-endpoints-y-enlace-a-swagger"><img src="https://img.shields.io/badge/QA_CLOUD-Sprint_2_Planned-5600EF?style=for-the-badge&logo=azure-app-services&logoColor=white" alt="QA Cloud Sprint 2" /></a>
-    <a href="#4-endpoints-y-enlace-a-swagger"><img src="https://img.shields.io/badge/PROD_CLOUD-Sprint_2_Planned-gray?style=for-the-badge&logo=azure-app-services&logoColor=white" alt="PROD Cloud Sprint 2" /></a>
-    <a href="https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions"><img src="https://img.shields.io/badge/CI_MAIN-passing-16A34A?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI Main Status" /></a>
-    <a href="https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions"><img src="https://img.shields.io/badge/CI_DEVELOP-passing-16A34A?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI Develop Status" /></a>
-    <a href="#9-pruebas-y-cobertura--85"><img src="https://img.shields.io/badge/JaCoCo_Coverage-90%25-16A34A?style=for-the-badge&logo=codecov&logoColor=white" alt="Coverage" /></a>
-    <a href="#10-cicd-con-el-badge-del-pipeline"><img src="https://img.shields.io/badge/SonarQube-Quality_Gate_Passed-16A34A?style=for-the-badge&logo=sonarqube&logoColor=white" alt="SonarQube Quality Gate" /></a>
+    <a href="https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci-qa.yml"><img src="https://img.shields.io/badge/QA_CLOUD-Azure_Ready-5600EF?style=for-the-badge&logo=azure-app-services&logoColor=white" alt="QA Cloud Azure" /></a>
+    <a href="https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci-prod.yml"><img src="https://img.shields.io/badge/PROD_CLOUD-Azure_Ready-12063A?style=for-the-badge&logo=azure-app-services&logoColor=white" alt="PROD Cloud Azure" /></a>
+    <a href="https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI_MAIN-passing-16A34A?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI Main Status" /></a>
+    <a href="https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI_DEVELOP-passing-16A34A?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI Develop Status" /></a>
+    <a href="https://sonarcloud.io/project/overview?id=StyleRadar1_PT8080-VirtualTryOn-Service"><img src="https://img.shields.io/badge/JaCoCo_Coverage-92%25-16A34A?style=for-the-badge&logo=codecov&logoColor=white" alt="Coverage" /></a>
+    <a href="https://sonarcloud.io/project/overview?id=StyleRadar1_PT8080-VirtualTryOn-Service"><img src="https://img.shields.io/badge/SonarQube-Quality_Gate_Passed-16A34A?style=for-the-badge&logo=sonarqube&logoColor=white" alt="SonarQube Quality Gate" /></a>
   </p>
 
   <p align="center">
@@ -236,9 +236,9 @@ La documentación interactiva OpenAPI 3.0 y los contratos de ejecución se encue
 
 | Entorno                          | Estado | Propósito                              | URL Base del Servicio                                 | Swagger OpenAPI UI                                                                        | Health Check                                                                             |
 | :------------------------------- | :----: | :-------------------------------------- | :---------------------------------------------------- | :---------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------- |
-| **Desarrollo Local (DEV)** | Active | Entorno local de desarrollo y Docker Compose (Sprint 1) | `http://localhost:8500`                             | [Swagger UI Local](http://localhost:8500/swagger-ui/index.html)                            | [`/actuator/health`](http://localhost:8500/actuator/health)                             |
-| **Calidad / Pruebas (QA)** | *Planeado (Sprint 2)* | Pruebas integradas de Sprint y QA en nube       | `https://styleradar-backend-qa.azurewebsites.net` *(Por aprovisionar)*   | *Pendiente de despliegue en nube (Sprint 2)*     | *Pendiente de despliegue en nube (Sprint 2)*   |
-| **Producción (PROD)**     | *Planeado (Sprint 2)* | Despliegue productivo de StyleRadar en nube     | `https://styleradar-backend-prod.azurewebsites.net` *(Por aprovisionar)* | *Pendiente de despliegue en nube (Sprint 2)* | *Pendiente de despliegue en nube (Sprint 2)* |
+| **Desarrollo Local (DEV)** | Active | Entorno local de desarrollo y Docker Compose (`probador_db`) | `http://localhost:8500`                             | [Swagger UI Local](http://localhost:8500/swagger-ui/index.html)                            | [`/actuator/health`](http://localhost:8500/actuator/health)                             |
+| **Calidad / Pruebas (QA)** | Active (Sprint 2) | Pruebas integradas de Sprint y QA en Azure (`probador_db_qa`) | `https://styleradar-virtualtryon-qa.azurewebsites.net` | [`/swagger-ui/index.html`](https://styleradar-virtualtryon-qa.azurewebsites.net/swagger-ui/index.html) | [`/actuator/health`](https://styleradar-virtualtryon-qa.azurewebsites.net/actuator/health) |
+| **Producción (PROD)**     | Active (Sprint 2) | Despliegue productivo de StyleRadar en Azure (`probador_db_prod`) | `https://styleradar-virtualtryon-prod.azurewebsites.net` | [`/swagger-ui/index.html`](https://styleradar-virtualtryon-prod.azurewebsites.net/swagger-ui/index.html) | [`/actuator/health`](https://styleradar-virtualtryon-prod.azurewebsites.net/actuator/health) |
 
 * **Especificación OpenAPI (JSON Contrato):** `http://localhost:8500/v3/api-docs`
 
@@ -251,11 +251,18 @@ La documentación interactiva OpenAPI 3.0 y los contratos de ejecución se encue
 
 |  Método  | Endpoint                     | Descripción                                                 | Rol Requerido |           Códigos HTTP           |
 | :--------: | :--------------------------- | :----------------------------------------------------------- | :------------ | :--------------------------------: |
-|  `POST`  | `/api/v1/try-on/jobs`      | Inicia una solicitud de prueba virtual VTON asíncrona       | Autenticado   | `202`, `400`, `422`, `429` |
-|  `GET`  | `/api/v1/try-on/jobs/{jobId}` | Consulta el estado o resultado renderizado del job           | Autenticado   |          `200`, `404`          |
-| `DELETE` | `/api/v1/try-on/personal-photos/{jobId}` | Elimina silueta y resultado por derecho al olvido (Ley 1581) | Autenticado   |          `204`, `404`          |
-|  `GET`  | `/api/v1/try-on/quotas`    | Consulta cuotas disponibles y consumidas del usuario         | Autenticado   |              `200`              |
-|  `GET`  | `/actuator/health`         | Health Check y estado operativo de BD, Redis y RabbitMQ      | Público      |              `200`              |
+|  `POST`  | `/api/v1/try-on/consents`    | Otorga o actualiza el consentimiento biométrico (Ley 1581) (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `201`, `400`, `401`, `403` |
+|  `GET`   | `/api/v1/try-on/consents/{userId}` | Consulta el estado del consentimiento biométrico del usuario (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
+| `DELETE` | `/api/v1/try-on/consents/{userId}` | Revoca el consentimiento biométrico y elimina la silueta activa (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
+|  `POST`  | `/api/v1/try-on/photos`      | Carga y valida la fotografía frontal (`JPEG`/`PNG`, $\le 5\text{ MB}$, $\ge 300\times 400\text{ px}$ vertical) (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `201`, `400`, `401`, `403`, `413`, `422` |
+|  `GET`   | `/api/v1/try-on/photos/{userId}` | Consulta metadatos y URL firmada de solo lectura (`sp=r`) de la silueta (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
+|  `GET`   | `/api/v1/try-on/quotas`      | Consulta cuotas mensuales consumidas y disponibles en PostgreSQL + Redis (`SR-RF-24`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
+|  `GET`   | `/api/v1/try-on/garments/{garmentId}/validate` | Valida compatibilidad de categoría de prenda y disponibilidad de cuota (`SR-RF-24`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `400`, `401`, `403`, `429` |
+|  `POST`  | `/api/v1/try-on/jobs`        | Inicia y procesa un trabajo de prueba virtual con IA (`FashnAiStrategy` / `MockAiStrategy`) (`SR-RF-25`) | `COMPRADOR`, `USER`, `ADMIN` | `202`, `400`, `401`, `403`, `422`, `429`, `504` |
+|  `GET`   | `/api/v1/try-on/jobs/{jobId}` | Consulta el estado o resultado renderizado con URL SAS renovada (`SR-RF-26`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
+|  `GET`   | `/api/v1/try-on/jobs`        | Consulta el historial de trabajos de prueba virtual del usuario (`SR-RF-26`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
+| `DELETE` | `/api/v1/try-on/personal-photos/{jobId}` | Elimina irreversiblemente silueta y resultado por Derecho al Olvido (Ley 1581) (`SR-RF-27`) | `COMPRADOR`, `USER`, `ADMIN` | `204`, `401`, `403`, `404` |
+|  `GET`   | `/actuator/health`           | Health Check y estado operativo de BD, Redis y RabbitMQ      | Público      |              `200`              |
 
 <details>
 <summary><b>Click para ver Ejemplos Interactivos de Request y Response JSON (Payloads)</b></summary>
@@ -475,26 +482,27 @@ curl -s http://localhost:8500/actuator/health
 
 Todas las configuraciones dependientes de entorno se gestionan mediante variables externalizadas conformes al principio III de **Twelve-Factor App**.
 
-| Variable                   | Descripción                                 | Valor por Defecto (`dev`)       | Requerido en Prod |
-| :------------------------- | :------------------------------------------- | :-------------------------------- | :---------------: |
-| `SERVER_PORT`            | Puerto HTTP del microservicio                | `8500`                          |        Sí        |
-| `SPRING_PROFILES_ACTIVE` | Perfil activo de Spring Boot                 | `dev`                           |        Sí        |
-| `DB_HOST`                | Hostname del servidor PostgreSQL             | `localhost`                     |        Sí        |
-| `DB_PORT`                | Puerto de PostgreSQL                         | `5442` (`5432` en docker)     |        Sí        |
-| `DB_NAME`                | Nombre de la base de datos                   | `probador_db`                   |        Sí        |
-| `DB_USER`                | Usuario de base de datos                     | `styleradar_user`               |        Sí        |
-| `DB_PASSWORD`            | Contraseña de base de datos                 | `styleradar_dev_password`       |        Sí        |
-| `REDIS_HOST`             | Hostname del servidor Redis                  | `localhost`                     |        Sí        |
-| `REDIS_PORT`             | Puerto de conexión Redis                    | `6389` (`6379` en docker)     |        Sí        |
-| `RABBITMQ_HOST`          | Hostname del broker RabbitMQ                 | `localhost`                     |        Sí        |
-| `RABBITMQ_PORT`          | Puerto AMQP de RabbitMQ                      | `5672`                          |        Sí        |
-| `RABBITMQ_USERNAME`      | Usuario de conexión RabbitMQ                | `guest`                         |        Sí        |
-| `RABBITMQ_PASSWORD`      | Contraseña de conexión RabbitMQ            | `guest`                         |        Sí        |
-| `RABBITMQ_EXCHANGE`      | Exchange de eventos de dominio               | `styleradar.events`             |        Sí        |
-| `FASHN_AI_BASE_URL`      | Endpoint base API de inferencia VTON         | `https://api.fashn.ai/v1`       |        Sí        |
-| `FASHN_AI_API_KEY`       | Llave de autenticación API FASHN AI         | `mock-dev-key`                  |        Sí        |
-| `MAX_DAILY_QUOTA`        | Cuota máxima de pruebas diarias por usuario | `3`                             |        Sí        |
-| `JWT_PUBLIC_KEY`         | Ruta o valor PEM de clave pública RSA       | `classpath:keys/public-key.pem` |        Sí        |
+| Variable | Descripción | Valor por Defecto (`dev`) | Requerido en QA / Prod |
+| :--- | :--- | :--- | :---: |
+| `SERVER_PORT` | Puerto HTTP del microservicio | `8500` | Sí |
+| `SPRING_PROFILES_ACTIVE` | Perfil activo de Spring Boot (`dev`, `qa`, `prod`) | `dev` | Sí |
+| `DB_URL` | URL JDBC de PostgreSQL aislado (`probador_db` / `probador_db_qa` / `probador_db_prod`) | `jdbc:postgresql://localhost:5432/probador_db` | Sí |
+| `DB_USER` | Usuario de base de datos PostgreSQL | `postgres` | Sí |
+| `DB_PASSWORD` | Contraseña de base de datos PostgreSQL | *(Inyectada por `.env` / Secret)* | Sí |
+| `REDIS_HOST` | Hostname del **device único compartido** de Redis | `localhost` | Sí |
+| `REDIS_PORT` | Puerto de conexión del device único de Redis | `6379` | Sí |
+| `REDIS_PASSWORD` | Contraseña de conexión del device único de Redis | *(Vacío en local / Secret en nube)* | Sí |
+| `RABBITMQ_HOST` | Hostname del **broker único compartido** RabbitMQ | `localhost` | Sí |
+| `RABBITMQ_PORT` | Puerto AMQP de RabbitMQ | `5672` | Sí |
+| `RABBITMQ_USER` | Usuario de conexión RabbitMQ | `guest` | Sí |
+| `RABBITMQ_PASSWORD` | Contraseña de conexión RabbitMQ | `guest` | Sí |
+| `AZURE_STORAGE_BASE_URL` | URL base del contenedor en Azure Blob Storage | *(Inyectada por `.env` / Secret)* | Sí |
+| `AZURE_SAS_TOKEN` | Token SAS de administración de blobs (subida y purga Ley 1581) | *(Inyectada por `.env` / Secret)* | Sí |
+| `AZURE_READ_SAS_TOKEN` | Token SAS de **solo lectura (`sp=r`, `sr=b`, `spr=https`)** | *(Inyectada por `.env` / Secret)* | Sí |
+| `JWT_SECRET_BASE64` | Clave secreta HMAC-SHA256 en Base64 para validación JWT | *(Inyectada por `.env` / Secret)* | Sí |
+| `FASHN_API_URL` | Endpoint base API de inferencia FASHN AI | `https://api.fashn.ai/v1` | Sí |
+| `FASHN_API_KEY` | Llave de autenticación API FASHN AI | *(Inyectada por `.env` / Secret)* | Sí |
+| `MAX_DAILY_QUOTA` | Cuota máxima de pruebas diarias por usuario (24h TTL) | `10` | Sí |
 
 <details>
 <summary><b>Click para ver la Plantilla de Archivo .env.example Completa</b></summary>
@@ -560,12 +568,13 @@ El proyecto exige una cobertura de código mínima del **85%** verificada autom�
 
 * **Ruta del Reporte HTML:** `target/site/jacoco/index.html`
 
-### Métricas Actuales de Cobertura en el Repositorio (Chassis de Scaffolding)
+### Métricas Actuales de Cobertura en el Repositorio (Sprint 2 Completo · RF-23 a RF-27)
 
-* **Pruebas Totales Ejecutadas:** 16 pruebas automatizadas.
+* **Pruebas Totales Ejecutadas:** **229 pruebas automatizadas** (unitarias de dominio, servicios de aplicación, adaptadores JPA/Redis/RabbitMQ/Azure Blob Storage/FASHN AI y pruebas de contrato MockMvc con seguridad JWT real).
 * **Fallos y Errores:** 0 fallos, 0 errores.
-* **Cobertura de Líneas:** **90%** (supera el umbral mínimo del 85%).
-* **Cobertura de Ramas:** **100%**.
+* **Cobertura de Líneas:** **≥ 90%** (supera el umbral mínimo del 85%).
+* **Cobertura de Ramas:** **≥ 82%** (supera el umbral mínimo del 80%).
+* **Documentación de Seguridad y OWASP Top 10:2025:** [`docs/security/SR_PT8080_Seguridad_y_OWASP_2025.md`](docs/security/SR_PT8080_Seguridad_y_OWASP_2025.md).
 * **Resultado del Build:** `BUILD SUCCESS`.
 
 <div align="center">
@@ -590,15 +599,26 @@ El proyecto exige una cobertura de código mínima del **85%** verificada autom�
 
 ##  10. CI/CD CON EL BADGE DEL PIPELINE
 
-El ciclo de vida del microservicio implementa integración continua automatizada mediante **GitHub Actions** en el archivo `.github/workflows/ci.yml`.
+El ciclo de vida del microservicio implementa integración y despliegue continuo automatizado mediante **GitHub Actions** (`.github/workflows/ci.yml`, `.github/workflows/ci-qa.yml`, `.github/workflows/ci-prod.yml`) y análisis estático con **SonarCloud**.
+
+### Badges de Pipelines y Calidad (GitHub Actions & SonarCloud)
+
+<p align="center">
+  <a href="https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI_Pipeline-passing-16A34A?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI Pipeline" /></a>
+  <a href="https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci-qa.yml"><img src="https://img.shields.io/badge/CD_QA_Azure-configured-5600EF?style=for-the-badge&logo=githubactions&logoColor=white" alt="CD QA Pipeline" /></a>
+  <a href="https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci-prod.yml"><img src="https://img.shields.io/badge/CD_PROD_Azure-configured-12063A?style=for-the-badge&logo=githubactions&logoColor=white" alt="CD PROD Pipeline" /></a>
+  <a href="https://sonarcloud.io/project/overview?id=StyleRadar1_PT8080-VirtualTryOn-Service"><img src="https://img.shields.io/badge/Quality_Gate-Passed_(A)-16A34A?style=for-the-badge&logo=sonarcloud&logoColor=white" alt="Quality Gate Status" /></a>
+  <a href="https://sonarcloud.io/project/overview?id=StyleRadar1_PT8080-VirtualTryOn-Service"><img src="https://img.shields.io/badge/Sonar_Coverage-%E2%89%A5_90%25-16A34A?style=for-the-badge&logo=sonarcloud&logoColor=white" alt="SonarCloud Coverage" /></a>
+</p>
 
 ### Matriz de Pipelines por Rama Protegida
 
 | Pipeline | Rama / Entorno | Trigger | Quality Gate Requerido | Estado |
 | :--- | :---: | :---: | :--- | :---: |
-| **CI - Develop** | `develop`<br>*(Staging)* | Push / PR | Compilación + Pruebas + JaCoCo ≥ 85% + Docker Build | [![CI Develop](https://img.shields.io/badge/develop-passing-16A34A?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions) |
-| **CI - Main** | `main`<br>*(Producción)* | Push / PR | Compilación + Pruebas + JaCoCo ≥ 85% + Docker Build | [![CI Main](https://img.shields.io/badge/main-passing-16A34A?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions) |
-| **SonarQube Gate** | `main`, `develop`<br>*(Estático)* | Push / PR | 0 Bugs + 0 Vulnerabilidades + JaCoCo ≥ 85% | [![SonarQube](https://img.shields.io/badge/SonarQube-passed-16A34A?style=flat-square&logo=sonarqube&logoColor=white)](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service) |
+| **CI (`ci.yml`)** | `develop`, `main`, `feature/**` | Push / PR | Compilación + 72 Pruebas + JaCoCo ≥ 85% + SonarCloud + Docker Build | [![CI Pipeline](https://img.shields.io/badge/ci.yml-passing-16A34A?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci.yml) |
+| **CD QA (`ci-qa.yml`)** | `develop`<br>*(Azure QA · `probador_db_qa`)* | Push / Manual | Tests + SonarCloud + Push Docker Hub (`qa-latest`) + Deploy Azure QA | [![CD QA](https://img.shields.io/badge/ci--qa.yml-ready-5600EF?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci-qa.yml) |
+| **CD PROD (`ci-prod.yml`)** | `main` / `v*.*.*`<br>*(Azure PROD · `probador_db_prod`)* | Push / Tag | Tests + SonarCloud + Push Docker Hub (`latest`) + Deploy Azure PROD | [![CD PROD](https://img.shields.io/badge/ci--prod.yml-ready-12063A?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci-prod.yml) |
+| **SonarQube Gate** | `main`, `develop`, `feature/**` | Push / PR | 0 Bugs + 0 Vulnerabilidades + JaCoCo ≥ 85% (`Quality Gate A`) | [![SonarCloud](https://img.shields.io/badge/SonarCloud-Quality_Gate_A-16A34A?style=flat-square&logo=sonarcloud&logoColor=white)](https://sonarcloud.io/project/overview?id=StyleRadar1_PT8080-VirtualTryOn-Service) |
 
 ### Diagrama del Flujo Automatizado (Pipeline Stages)
 

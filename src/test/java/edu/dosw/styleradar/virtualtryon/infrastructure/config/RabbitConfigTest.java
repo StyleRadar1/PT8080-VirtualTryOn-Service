@@ -22,7 +22,7 @@ class RabbitConfigTest {
         ObjectMapper objectMapper = new ObjectMapper();
 
         TopicExchange exchange = config.catalogEventsExchange("test.catalog.events");
-        TopicExchange dlx = config.catalogDeadLetterExchange("test.catalog.dlx");
+        org.springframework.amqp.core.DirectExchange dlx = config.catalogDeadLetterExchange("test.catalog.dlx");
         Queue dlq = config.catalogGarmentUpdatedDlq("test.catalog.garment.dlq");
         Binding dlqBinding = config.catalogGarmentUpdatedDlqBinding(dlq, dlx, "test.catalog.dlq.routing.key");
         Queue queue = config.catalogGarmentUpdatedQueue("test.catalog.garment.queue", "test.catalog.dlx", "test.catalog.dlq.routing.key");

@@ -95,7 +95,7 @@ class VirtualTryOnRestControllerTest {
     void testStartTryOnSuccess() throws Exception {
         UUID userId = UUID.randomUUID();
         UUID garmentId = UUID.randomUUID();
-        String photoUrl = "https://styleradar.blob.core.windows.net/photos/user-test.jpg";
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/photos/user-test.jpg";
         StartTryOnRequest request = new StartTryOnRequest(
                 userId,
                 garmentId,
@@ -122,8 +122,101 @@ class VirtualTryOnRestControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isAccepted())
                 .andExpect(header().exists("Location"))
+                .andExpect(header().string("X-Content-Type-Options", is("nosniff")))
+                .andExpect(header().string("X-Frame-Options", is("DENY")))
                 .andExpect(jsonPath("$.jobId", is(createdJob.getId().toString())))
                 .andExpect(jsonPath("$.status", is("QUEUED")));
+
+        // Verificar prevención SSRF (OWASP A10): esquema file:// en photoUrl debe ser rechazado con 400 Bad Request
+        StartTryOnRequest ssrfRequest = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "file:///etc/passwd",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(ssrfRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+    }
+
+    @Test
+    @DisplayName("OWASP A10:2025 SSRF: Dado un photoUrl apuntando a metadatos de Azure o redes internas privadas, Cuando se envía POST /api/v1/try-on/jobs, Entonces es rechazado con 400 Bad Request")
+    void testStartTryOnSsrfRejectionForInternalAndUnauthorizedHosts() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+
+        // 1. Intento de SSRF hacia servicio de metadatos de instancia Azure (169.254.169.254)
+        StartTryOnRequest metadataSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "http://169.254.169.254/metadata/identity/oauth2/token",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(metadataSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+
+        // 2. Intento de SSRF hacia red interna privada RFC 1918 (10.0.0.1)
+        StartTryOnRequest internalIpSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "http://10.0.0.1:8080/internal/admin",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(internalIpSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+
+        // 3. Intento de SSRF hacia dominio externo no autorizado
+        StartTryOnRequest externalHostSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "https://malicious-external-site.com/exploit.jpg",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(externalHostSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+
+        // 4. Intento de SSRF hacia cuenta externa de Azure Blob Storage no autorizada
+        StartTryOnRequest externalAzureSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "https://attackeraccount.blob.core.windows.net/exploit.jpg",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(externalAzureSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+
+        // 5. Intento de SSRF / desalineación de ambiente: cuenta de otro ambiente de Azure (aislamiento QA vs PROD)
+        StartTryOnRequest crossEnvSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "https://styleradarpt8080blobqa.blob.core.windows.net/photos/user-qa.jpg",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(crossEnvSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
     }
 
     @Test

@@ -1,35 +1,99 @@
 # ===================================================================
-# Perfil de homologación (qa)
-# Usa FASHN AI y servicios de QA reales. Las credenciales se inyectan
-# exclusivamente mediante secretos/variables del entorno de despliegue.
+# Perfil de Calidad / Homologación en Azure Cloud (qa)
+# Microservicio: PT8080-VirtualTryOn-Service · Base de datos: probador_db_qa
 # ===================================================================
 
 spring:
   config:
     activate:
       on-profile: qa
+
+  # Persistencia PostgreSQL aislada en Azure para QA (probador_db_qa)
   datasource:
-    url: ${DB_URL:?DB_URL debe configurarse en QA}
-    username: ${DB_USER:?DB_USER debe configurarse en QA}
-    password: ${DB_PASSWORD:?DB_PASSWORD debe configurarse en QA}
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 30000
+
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # Caching Redis en QA
   data:
     redis:
-      host: ${REDIS_HOST:?REDIS_HOST debe configurarse en QA}
+      host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
-  rabbitmq:
-    host: ${RABBITMQ_HOST:?RABBITMQ_HOST debe configurarse en QA}
-    port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_USER:?RABBITMQ_USER debe configurarse en QA}
-    password: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD debe configurarse en QA}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
 
+  # Broker de Mensajería RabbitMQ en QA (Azure Broker con TLS)
+  rabbitmq:
+    host: ${RABBITMQ_HOST:styleradar-rabbitmq-qa.northcentralus.cloudapp.azure.com}
+    port: ${RABBITMQ_PORT:5671}
+    username: ${RABBITMQ_USER:ms_probador}
+    password: ${RABBITMQ_PASSWORD}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    ssl:
+      enabled: ${RABBITMQ_SSL_ENABLED:true}
+      trust-store: ${RABBITMQ_TRUSTSTORE:file:/app/rabbitmq-truststore.jks}
+      trust-store-password: ${RABBITMQ_TRUSTSTORE_PASSWORD:changeit}
+      trust-store-type: ${RABBITMQ_TRUSTSTORE_TYPE:JKS}
+      verify-hostname: ${RABBITMQ_VERIFY_HOSTNAME:true}
+
+management:
+  health:
+    redis:
+      enabled: ${REDIS_HEALTH_ENABLED:false}
+    rabbit:
+      enabled: ${RABBIT_HEALTH_ENABLED:false}
+
+# Documentación interactiva OpenAPI 3.0 activa en QA para validación del Sprint
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui/index.html
+    enabled: true
+
+# Parámetros del Negocio Virtual Try-On en QA
 styleradar:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,https://styleradar-qa.azurewebsites.net}
   tryon:
-    ai-provider: fashn
-    fashn-api-key: ${FASHN_API_KEY:?FASHN_API_KEY debe configurarse explícitamente en QA}
-    blob-container: ${AZURE_STORAGE_CONTAINER:?AZURE_STORAGE_CONTAINER debe configurarse explícitamente en QA}
+    security:
+      allow-localhost-urls: false
+    ai-provider: ${TRYON_AI_PROVIDER:fashn}
+    daily-quota-limit: ${MAX_DAILY_QUOTA:10}
+    fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
+    fashn-api-key: ${FASHN_API_KEY:}
+    blob-base-url: ${AZURE_STORAGE_BASE_URL:https://styleradarpt8080blobqa.blob.core.windows.net}
+    blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes-qa}
+    blob-account-key: ${AZURE_STORAGE_ACCOUNT_KEY}
     amqp:
       publisher-confirms: true
+      listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:true}
+      catalog-exchange: ${CATALOG_EXCHANGE:styleradar.exchange.qa}
+      catalog-garment-queue: ${CATALOG_GARMENT_QUEUE:styleradar.probador.prenda-publicada.qa.q}
+      catalog-garment-routing-key: ${CATALOG_GARMENT_ROUTING_KEY:styleradar.catalogo.prenda.publicada}
+      user-exchange: ${USER_EXCHANGE:styleradar.exchange.qa}
+      user-account-deleted-queue: ${USER_ACCOUNT_DELETED_QUEUE:styleradar.probador.cuenta-eliminada.qa.q}
+      user-account-deleted-routing-key: ${USER_ACCOUNT_DELETED_ROUTING_KEY:styleradar.usuarios.cuenta.eliminada}
+      catalog-dlx: ${CATALOG_DLX:styleradar.dlx.qa}
+      catalog-garment-dlq: ${CATALOG_GARMENT_DLQ:styleradar.probador.qa.dlq}
+      catalog-garment-dlq-routing-key: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:styleradar.probador.dlq}
+      exchange: ${TRYON_EXCHANGE:styleradar.tryon.events.qa}
+      process-queue: ${TRYON_PROCESS_QUEUE:q.tryon.job.process.qa}
+      dlx: ${TRYON_DLX:styleradar.tryon.dlx.qa}
+      process-dlq: ${TRYON_PROCESS_DLQ:q.tryon.job.process.qa.dlq}
