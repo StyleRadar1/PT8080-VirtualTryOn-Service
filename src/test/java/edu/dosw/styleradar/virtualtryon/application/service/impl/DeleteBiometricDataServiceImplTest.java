@@ -353,4 +353,65 @@ class DeleteBiometricDataServiceImplTest {
                 any(PhotoPurgedDomainEvent.class)
         );
     }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Soporta fallback con TryOnEventPublisherPort cuando no se inyecta OutboxPublisherPort")
+    void shouldSupportFallbackToEventPublisherPort() {
+        DeleteBiometricDataServiceImpl directService = new DeleteBiometricDataServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                blobStoragePort,
+                eventPublisherPort
+        );
+
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID jobId = UUID.randomUUID();
+        TryOnJob job = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("silueta.png")
+                .build();
+
+        when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(mapper.toJobJpaEntity(job)));
+        when(photoJpaRepository.findByUserId(ownerId.value())).thenReturn(Optional.empty());
+
+        directService.deleteBiometricPhoto(jobId, ownerId, false);
+
+        verify(eventPublisherPort).publishPhotoPurgedEvent(any(PhotoPurgedDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Tolera fallo temporal en dispatch inmediato de outbox registrando advertencia")
+    void shouldTolerateOutboxImmediateDispatchFailure() {
+        org.mockito.Mockito.doThrow(new RuntimeException("Broker down")).when(outboxPublisherPort).publishPendingEvents();
+
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID jobId = UUID.randomUUID();
+        TryOnJob job = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("silueta.png")
+                .build();
+
+        when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(mapper.toJobJpaEntity(job)));
+        when(photoJpaRepository.findByUserId(ownerId.value())).thenReturn(Optional.empty());
+
+        deleteService.deleteBiometricPhoto(jobId, ownerId, false);
+
+        verify(outboxPublisherPort).saveOutboxEvent(org.mockito.ArgumentMatchers.eq(jobId), org.mockito.ArgumentMatchers.eq(PhotoPurgedDomainEvent.ROUTING_KEY), any(PhotoPurgedDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Purga datos biométricos de usuario sin trabajos y publica evento a nivel de usuario")
+    void shouldPurgeBiometricDataForUserWithoutJobs() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        when(photoJpaRepository.findByUserId(userId.value())).thenReturn(Optional.empty());
+        when(tryOnJobJpaRepository.findByUserIdOrderByCreatedAtDesc(userId.value())).thenReturn(List.of());
+
+        deleteService.purgeAllBiometricDataForUser(userId);
+
+        verify(outboxPublisherPort).saveOutboxEvent(any(), org.mockito.ArgumentMatchers.eq(PhotoPurgedDomainEvent.ROUTING_KEY), any(PhotoPurgedDomainEvent.class));
+    }
 }

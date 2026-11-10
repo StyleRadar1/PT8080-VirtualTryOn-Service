@@ -148,7 +148,7 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
 
     private void purgeSingleJobAndUserPhoto(TryOnJob job) {
         // 1. Borrado físico de la fotografía frontal (URL absoluta o ruta relativa en Azure Blob Storage)
-        if (!job.isPhotoPurged() && job.getPhotoUrl() != null && !job.getPhotoUrl().isBlank() && !job.getPhotoUrl().startsWith("PURGED")) {
+        if (job.getPhotoUrl() != null && !job.getPhotoUrl().startsWith("PURGED")) {
             try {
                 blobStoragePort.deleteBlob(job.getPhotoUrl());
             } catch (Exception ex) {
