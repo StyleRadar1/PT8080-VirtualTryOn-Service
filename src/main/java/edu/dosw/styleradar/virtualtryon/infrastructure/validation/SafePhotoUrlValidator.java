@@ -8,28 +8,24 @@ import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
  * Validador de URL segura para fotografías frontales en Try-On.
  * Mitiga Server-Side Request Forgery (SSRF - OWASP A10).
- * En producción (prod) y homologación (qa), restringe estrictamente a los hosts
- * autorizados de Azure Blob Storage pertenecientes a StyleRadar.
- * Bloquea de forma explícita cuentas de almacenamiento externas o de terceros en Azure.
+ * En producción (prod) y homologación (qa), restringe estrictamente al host
+ * de Azure Blob Storage autorizado y configurado exclusivamente para el ambiente activo.
+ * Bloquea de forma explícita cuentas de almacenamiento externas o de terceros en Azure,
+ * así como cuentas de almacenamiento entre distintos entornos (aislamiento estricto QA vs PROD).
  * Las excepciones para localhost / 127.0.0.1 quedan limitadas exclusivamente al entorno de desarrollo local (dev/test).
  */
 @Component
 public class SafePhotoUrlValidator implements ConstraintValidator<ValidPhotoUrl, String> {
 
     /**
-     * Cuentas y hosts oficiales de Azure Blob Storage autorizados para StyleRadar.
+     * Host por defecto en producción en caso de ausencia de configuración en el entorno.
      */
-    private static final Set<String> OFFICIAL_STYLERADAR_STORAGE_HOSTS = Set.of(
-            "styleradarpt8080blob.blob.core.windows.net",
-            "styleradarblob.blob.core.windows.net",
-            "styleradar.blob.core.windows.net"
-    );
+    private static final String DEFAULT_AUTHORIZED_STORAGE_HOST = "styleradarpt8080blob.blob.core.windows.net";
 
     private static final Pattern LOCALHOST_PATTERN =
             Pattern.compile("^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?/[^\\s]+$");
@@ -51,7 +47,7 @@ public class SafePhotoUrlValidator implements ConstraintValidator<ValidPhotoUrl,
             return true; // Se delega la obligatoriedad a @NotBlank
         }
 
-        // 1. Almacenamiento autorizado oficial de StyleRadar en Azure Blob Storage
+        // 1. Almacenamiento autorizado oficial del ambiente en Azure Blob Storage
         if (isAuthorizedAzureStorageUrl(value)) {
             return true;
         }
@@ -65,8 +61,8 @@ public class SafePhotoUrlValidator implements ConstraintValidator<ValidPhotoUrl,
     }
 
     /**
-     * Valida si la URL pertenece estrictamente al host de Azure Blob Storage autorizado para StyleRadar.
-     * Rechaza cualquier cuenta externa de Azure (ej. attacker.blob.core.windows.net) o dominio no autorizado.
+     * Valida si la URL pertenece exclusivamente al host de Azure Blob Storage autorizado para el ambiente activo.
+     * Rechaza cualquier cuenta externa de Azure (ej. attacker.blob.core.windows.net) o cuentas de otros ambientes (aislamiento QA vs PROD).
      */
     boolean isAuthorizedAzureStorageUrl(String url) {
         if (!url.startsWith("https://")) {
@@ -85,38 +81,34 @@ public class SafePhotoUrlValidator implements ConstraintValidator<ValidPhotoUrl,
                 return false;
             }
 
-            // Validar contra el host configurado dinámicamente en el entorno (application.yml o variable de Azure)
-            String configuredHost = getConfiguredAuthorizedHost();
-            if (configuredHost != null && host.equalsIgnoreCase(configuredHost)) {
-                return true;
-            }
-
-            // Validar contra las cuentas oficiales autorizadas de StyleRadar
-            return OFFICIAL_STYLERADAR_STORAGE_HOSTS.contains(host);
+            // Validar EXCLUSIVAMENTE contra el host configurado para el ambiente activo
+            String authorizedHost = getConfiguredAuthorizedHost();
+            return authorizedHost != null && host.equalsIgnoreCase(authorizedHost);
         } catch (Exception e) {
             return false;
         }
     }
 
     /**
-     * Extrae el host autorizado configurado en el ambiente actual (vía blob-base-url o AZURE_STORAGE_BASE_URL).
+     * Extrae el host autorizado configurado en el ambiente actual (vía styleradar.tryon.security.authorized-storage-host,
+     * styleradar.tryon.blob-base-url o AZURE_STORAGE_BASE_URL).
+     * Si no se encuentra propiedad en el entorno, recurre al host por defecto de producción.
      */
     String getConfiguredAuthorizedHost() {
-        if (environment == null) {
-            return null;
+        if (environment != null) {
+            String explicitHost = environment.getProperty("styleradar.tryon.security.authorized-storage-host");
+            if (explicitHost != null && !explicitHost.isBlank()) {
+                return extractHostFromUrlOrHost(explicitHost.trim());
+            }
+            String baseUrl = environment.getProperty("styleradar.tryon.blob-base-url");
+            if (baseUrl == null || baseUrl.isBlank()) {
+                baseUrl = environment.getProperty("AZURE_STORAGE_BASE_URL");
+            }
+            if (baseUrl != null && !baseUrl.isBlank()) {
+                return extractHostFromUrlOrHost(baseUrl.trim());
+            }
         }
-        String explicitHost = environment.getProperty("styleradar.tryon.security.authorized-storage-host");
-        if (explicitHost != null && !explicitHost.isBlank()) {
-            return extractHostFromUrlOrHost(explicitHost.trim());
-        }
-        String baseUrl = environment.getProperty("styleradar.tryon.blob-base-url");
-        if (baseUrl == null || baseUrl.isBlank()) {
-            baseUrl = environment.getProperty("AZURE_STORAGE_BASE_URL");
-        }
-        if (baseUrl != null && !baseUrl.isBlank()) {
-            return extractHostFromUrlOrHost(baseUrl.trim());
-        }
-        return null;
+        return DEFAULT_AUTHORIZED_STORAGE_HOST;
     }
 
     private String extractHostFromUrlOrHost(String urlOrHost) {

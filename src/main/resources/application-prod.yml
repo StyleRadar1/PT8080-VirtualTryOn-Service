@@ -79,6 +79,7 @@ styleradar:
     daily-quota-limit: ${MAX_DAILY_QUOTA:10}
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
     fashn-api-key: ${FASHN_API_KEY:}
+    blob-base-url: ${AZURE_STORAGE_BASE_URL:https://styleradarpt8080blob.blob.core.windows.net}
     blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes-prod}
     blob-account-key: ${AZURE_STORAGE_ACCOUNT_KEY}
     amqp:

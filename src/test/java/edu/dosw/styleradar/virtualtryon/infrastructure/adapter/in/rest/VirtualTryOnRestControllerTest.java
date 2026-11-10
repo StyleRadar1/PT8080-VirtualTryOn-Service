@@ -95,7 +95,7 @@ class VirtualTryOnRestControllerTest {
     void testStartTryOnSuccess() throws Exception {
         UUID userId = UUID.randomUUID();
         UUID garmentId = UUID.randomUUID();
-        String photoUrl = "https://styleradar.blob.core.windows.net/photos/user-test.jpg";
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/photos/user-test.jpg";
         StartTryOnRequest request = new StartTryOnRequest(
                 userId,
                 garmentId,
@@ -201,6 +201,20 @@ class VirtualTryOnRestControllerTest {
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(externalAzureSsrf)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
+
+        // 5. Intento de SSRF / desalineación de ambiente: cuenta de otro ambiente de Azure (aislamiento QA vs PROD)
+        StartTryOnRequest crossEnvSsrf = new StartTryOnRequest(
+                userId,
+                garmentId,
+                "https://styleradarpt8080blobqa.blob.core.windows.net/photos/user-qa.jpg",
+                true
+        );
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(crossEnvSsrf)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode", is("VALIDATION_FAILED")));
     }

@@ -9,17 +9,50 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SafePhotoUrlValidatorTest {
 
     @Test
-    @DisplayName("SSRF QA/PROD: Acepta URLs oficiales de almacenamiento autorizado de StyleRadar en Azure Blob Storage")
-    void shouldAcceptOfficialStyleRadarBlobStorageUrlsInAnyEnvironment() {
+    @DisplayName("SSRF QA/PROD: Acepta URL oficial de almacenamiento autorizado de StyleRadar configurado para el ambiente")
+    void shouldAcceptConfiguredStyleRadarBlobStorageUrlInEnvironment() {
         MockEnvironment prodEnv = new MockEnvironment();
         prodEnv.setActiveProfiles("prod");
+        prodEnv.setProperty("styleradar.tryon.blob-base-url", "https://styleradarpt8080blob.blob.core.windows.net");
         prodEnv.setProperty("styleradar.tryon.security.allow-localhost-urls", "false");
 
         SafePhotoUrlValidator validator = new SafePhotoUrlValidator(prodEnv);
 
         assertThat(validator.isValid("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes-prod/photo.jpg", null)).isTrue();
-        assertThat(validator.isValid("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/photo.png", null)).isTrue();
-        assertThat(validator.isValid("https://styleradar.blob.core.windows.net/photos/photo.jpg", null)).isTrue();
+    }
+
+    @Test
+    @DisplayName("Aislamiento QA/PROD: Valida exclusivamente el host configurado por ambiente y rechaza URLs de otros entornos")
+    void shouldRejectCrossEnvironmentAzureBlobStorageUrlsBetweenQaAndProd() {
+        // 1. Entorno de Homologación / QA
+        MockEnvironment qaEnv = new MockEnvironment();
+        qaEnv.setActiveProfiles("qa");
+        qaEnv.setProperty("styleradar.tryon.blob-base-url", "https://styleradarpt8080blobqa.blob.core.windows.net");
+        qaEnv.setProperty("styleradar.tryon.security.allow-localhost-urls", "false");
+
+        SafePhotoUrlValidator qaValidator = new SafePhotoUrlValidator(qaEnv);
+
+        // Acepta host oficial de QA
+        assertThat(qaValidator.isValid("https://styleradarpt8080blobqa.blob.core.windows.net/biometric-silhouettes-qa/photo.jpg", null)).isTrue();
+        // Rechaza URL de Producción en entorno de QA (Aislamiento estricto de ambientes)
+        assertThat(qaValidator.isValid("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes-prod/photo.jpg", null)).isFalse();
+        // Rechaza cuentas de terceros / atacantes en Azure
+        assertThat(qaValidator.isValid("https://attackeraccount.blob.core.windows.net/biometric-silhouettes-qa/photo.jpg", null)).isFalse();
+
+        // 2. Entorno de Producción / PROD
+        MockEnvironment prodEnv = new MockEnvironment();
+        prodEnv.setActiveProfiles("prod");
+        prodEnv.setProperty("styleradar.tryon.blob-base-url", "https://styleradarpt8080blob.blob.core.windows.net");
+        prodEnv.setProperty("styleradar.tryon.security.allow-localhost-urls", "false");
+
+        SafePhotoUrlValidator prodValidator = new SafePhotoUrlValidator(prodEnv);
+
+        // Acepta host oficial de Producción
+        assertThat(prodValidator.isValid("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes-prod/photo.jpg", null)).isTrue();
+        // Rechaza URL de QA en entorno de Producción (Aislamiento estricto de ambientes)
+        assertThat(prodValidator.isValid("https://styleradarpt8080blobqa.blob.core.windows.net/biometric-silhouettes-qa/photo.jpg", null)).isFalse();
+        // Rechaza cuentas de terceros / atacantes en Azure
+        assertThat(prodValidator.isValid("https://attackeraccount.blob.core.windows.net/biometric-silhouettes-prod/photo.jpg", null)).isFalse();
     }
 
     @Test
@@ -129,6 +162,7 @@ class SafePhotoUrlValidatorTest {
         assertThat(validator.isLocalhostAllowed()).isFalse();
         assertThat(validator.isValid("http://localhost:8500/test.jpg", null)).isFalse();
         assertThat(validator.isValid("https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes/photo.jpg", null)).isTrue();
+        assertThat(validator.isValid("https://styleradarpt8080blobqa.blob.core.windows.net/test.jpg", null)).isFalse();
         assertThat(validator.isValid("https://mystorage.blob.core.windows.net/container/test.jpg", null)).isFalse();
     }
 }
