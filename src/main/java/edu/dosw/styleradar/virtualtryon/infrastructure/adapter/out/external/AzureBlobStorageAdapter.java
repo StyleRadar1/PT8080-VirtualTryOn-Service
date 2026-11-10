@@ -257,6 +257,9 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
                         .toBodilessEntity();
                 log.info("Objeto binario eliminado exitosamente de Azure Blob Storage: {}", safeBlobPath);
                 return;
+            } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
+                log.info("Objeto binario ya no existe en Azure Blob Storage (404 Not Found), eliminación confirmada: {}", safeBlobPath);
+                return;
             } catch (RestClientException ex) {
                 log.warn("Intento {}/{} fallido al eliminar objeto binario en Azure Blob Storage (ruta: {}, causa: {})",
                         attempt, maxAttempts, safeBlobPath, ex.getClass().getSimpleName());

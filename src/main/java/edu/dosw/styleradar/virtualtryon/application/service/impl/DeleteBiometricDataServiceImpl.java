@@ -148,33 +148,27 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
 
     private void purgeSingleJobAndUserPhoto(TryOnJob job) {
         // 1. Borrado físico de la fotografía frontal (URL absoluta o ruta relativa en Azure Blob Storage)
+        // Las excepciones de almacenamiento NO se capturan silenciosamente: deben propagarse para abortar la transacción
+        // y evitar responder HTTP 204 o marcar purga exitosa cuando la eliminación física no ocurrió (Ley 1581 / GDPR).
         if (job.getPhotoUrl() != null && !job.getPhotoUrl().startsWith("PURGED")) {
-            try {
-                blobStoragePort.deleteBlob(job.getPhotoUrl());
-            } catch (Exception ex) {
-                log.warn("Advertencia al eliminar silueta directa {} de Azure Blob Storage: {}", job.getPhotoUrl(), ex.getMessage());
-            }
+            blobStoragePort.deleteBlob(job.getPhotoUrl());
         }
 
         // 2. Borrado físico de imagen de resultado generada
         if (job.getResultImageUrl() != null) {
-            try {
-                blobStoragePort.deleteBlob(job.getResultImageUrl());
-            } catch (Exception ex) {
-                log.warn("Advertencia al eliminar render de Azure Blob Storage para trabajo {}: {}", job.getId(), ex.getMessage());
-            }
+            blobStoragePort.deleteBlob(job.getResultImageUrl());
         }
 
         // 3. Eliminar fotografía de perfil biométrico si existe
         biometricDataRepositoryPort.findPhotoByUserId(job.getUserId()).ifPresent(photo -> {
-            try {
-                blobStoragePort.deleteBlob(photo.getPhotoUrl());
-            } catch (Exception ignored) {
-            }
+            blobStoragePort.deleteBlob(photo.getPhotoUrl());
             biometricDataRepositoryPort.deletePhotoByUserId(job.getUserId());
         });
 
         JobStatus previousStatus = job.getStatus();
+        if (job.getStatus() == JobStatus.QUEUED || job.getStatus() == JobStatus.PROCESSING) {
+            job.cancel("PHOTO_PURGED: Cancelado por solicitud de purga de datos biométricos");
+        }
         job.purgeBiometricPhoto();
         jobRepositoryPort.saveJob(job);
         jobRepositoryPort.deleteOutfitByJobId(job.getId());

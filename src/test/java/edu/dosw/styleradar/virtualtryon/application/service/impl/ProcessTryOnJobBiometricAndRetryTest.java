@@ -376,5 +376,87 @@ class ProcessTryOnJobBiometricAndRetryTest {
         assertThat(recovered).isEqualTo(1);
         assertThat(candidateRecoverable.getStatus()).isEqualTo(JobStatus.FAILED);
     }
+
+    @Test
+    @DisplayName("Condición de carrera (RF-27): Si el trabajo fue purgado mientras la IA ejecutaba, descarta el render generado en Azure y no completa el trabajo")
+    void shouldDiscardGeneratedRenderWhenJobPurgedDuringAiInference() {
+        TryOnJob initialJob = createSampleJob(JobStatus.QUEUED);
+        UUID jobId = initialJob.getId();
+        UserId userId = initialJob.getUserId();
+
+        BiometricConsent activeConsent = new BiometricConsent(
+                UUID.randomUUID(), userId, "v1.0", true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"), Instant.now(), null, "127.0.0.1"
+        );
+        BiometricPhoto photo = new BiometricPhoto(
+                UUID.randomUUID(), userId, "image/png", 1024, 1024, 2048L,
+                "photos/user1/photo.png", SasSignedUrl.of("https://storage/user1/photo.png"), Instant.now()
+        );
+
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(activeConsent));
+        when(biometricDataRepositoryPort.findPhotoByUserId(userId)).thenReturn(Optional.of(photo));
+        when(blobStoragePort.normalizeBlobReference(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        TryOnJob purgedJob = createSampleJob(JobStatus.PROCESSING);
+        purgedJob.purgeBiometricPhoto(); // photoPurged = true, photoUrl = PURGED_BY_USER_REQUEST
+
+        // En la primera llamada (bloqueo 1), está QUEUED; en la segunda llamada (bloqueo 3 tras inferencia), ya fue purgado por el usuario
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId))
+                .thenReturn(Optional.of(initialJob))
+                .thenReturn(Optional.of(purgedJob));
+        when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        when(fashnStrategy.supportsProvider(AiProvider.FASHN_AI)).thenReturn(true);
+        SasSignedUrl renderUrl = SasSignedUrl.of("https://storage.blob.core.windows.net/renders/generated-output.png?sp=r");
+        when(fashnStrategy.submitTryOn(any(TryOnJob.class))).thenReturn(renderUrl);
+
+        processTryOnJobService.processJob(jobId);
+
+        // Verifica que se descartó físicamente la imagen generada llamando a deleteBlob
+        verify(blobStoragePort).deleteBlob(renderUrl.value());
+        // Verifica que el trabajo purgado NO se transicionó a COMPLETED ni se guardó evento de completed
+        assertThat(purgedJob.getStatus()).isNotEqualTo(JobStatus.COMPLETED);
+        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), any(TryOnJobDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("Condición de carrera (RF-27): Si la foto biométrica fue eliminada mientras la IA ejecutaba, descarta render y purga trabajo")
+    void shouldDiscardGeneratedRenderAndPurgeJobWhenPhotoDeletedDuringAiInference() {
+        TryOnJob initialJob = createSampleJob(JobStatus.QUEUED);
+        UUID jobId = initialJob.getId();
+        UserId userId = initialJob.getUserId();
+
+        BiometricConsent activeConsent = new BiometricConsent(
+                UUID.randomUUID(), userId, "v1.0", true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"), Instant.now(), null, "127.0.0.1"
+        );
+        BiometricPhoto photo = new BiometricPhoto(
+                UUID.randomUUID(), userId, "image/png", 1024, 1024, 2048L,
+                "photos/user1/photo.png", SasSignedUrl.of("https://storage/user1/photo.png"), Instant.now()
+        );
+
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(activeConsent));
+        // Primera consulta (revalidate) tiene foto; segunda consulta (step 3) ya no tiene foto (usuario borró sus datos biométricos)
+        when(biometricDataRepositoryPort.findPhotoByUserId(userId))
+                .thenReturn(Optional.of(photo))
+                .thenReturn(Optional.empty());
+        when(blobStoragePort.normalizeBlobReference(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId)).thenReturn(Optional.of(initialJob));
+        when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        when(fashnStrategy.supportsProvider(AiProvider.FASHN_AI)).thenReturn(true);
+        SasSignedUrl renderUrl = SasSignedUrl.of("https://storage.blob.core.windows.net/renders/generated-output.png?sp=r");
+        when(fashnStrategy.submitTryOn(any(TryOnJob.class))).thenReturn(renderUrl);
+
+        processTryOnJobService.processJob(jobId);
+
+        // Verifica que se descartó físicamente el render en Azure
+        verify(blobStoragePort).deleteBlob(renderUrl.value());
+        // Verifica que el trabajo fue purgado y no quedó en COMPLETED
+        assertThat(initialJob.isPhotoPurged()).isTrue();
+        assertThat(initialJob.getStatus()).isNotEqualTo(JobStatus.COMPLETED);
+        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), any(TryOnJobDomainEvent.class));
+    }
 }
 

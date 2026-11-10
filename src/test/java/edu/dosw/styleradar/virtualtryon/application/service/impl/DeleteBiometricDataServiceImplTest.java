@@ -44,6 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -413,5 +414,52 @@ class DeleteBiometricDataServiceImplTest {
         deleteService.purgeAllBiometricDataForUser(userId);
 
         verify(outboxPublisherPort).saveOutboxEvent(any(), org.mockito.ArgumentMatchers.eq(PhotoPurgedDomainEvent.ROUTING_KEY), any(PhotoPurgedDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Si la eliminación física de la silueta en Azure falla, propaga la excepción y no marca el trabajo como purgado")
+    void shouldPropagateExceptionAndNotMarkJobPurgedWhenSilhouetteBlobDeletionFails() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID jobId = UUID.randomUUID();
+        TryOnJob job = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://storage/silueta.png")
+                .build();
+
+        when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(mapper.toJobJpaEntity(job)));
+        org.mockito.Mockito.doThrow(new IllegalStateException("Azure Blob Storage 500 error"))
+                .when(blobStoragePort).deleteBlob("https://storage/silueta.png");
+
+        assertThrows(IllegalStateException.class, () -> deleteService.deleteBiometricPhoto(jobId, ownerId, false));
+
+        // Verificar que no se guardó el trabajo como purgado ni se eliminó outfit ni se publicó evento
+        verify(tryOnJobJpaRepository, never()).save(any(TryOnJobJpaEntity.class));
+        verify(tryOnOutfitJpaRepository, never()).deleteByJobId(jobId);
+        verify(outboxPublisherPort, never()).saveOutboxEvent(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Si la eliminación del render en Azure falla, propaga la excepción y no confirma la purga")
+    void shouldPropagateExceptionWhenRenderBlobDeletionFails() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID jobId = UUID.randomUUID();
+        TryOnJob job = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("PURGED_BY_USER_REQUEST")
+                .build();
+        job.complete(SasSignedUrl.of("https://storage/render.png"), 1500L);
+
+        when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(mapper.toJobJpaEntity(job)));
+        org.mockito.Mockito.doThrow(new IllegalStateException("Azure Blob Storage Timeout"))
+                .when(blobStoragePort).deleteBlob(any(SasSignedUrl.class));
+
+        assertThrows(IllegalStateException.class, () -> deleteService.deleteBiometricPhoto(jobId, ownerId, false));
+
+        verify(tryOnJobJpaRepository, never()).save(any(TryOnJobJpaEntity.class));
+        verify(outboxPublisherPort, never()).saveOutboxEvent(any(), any(), any());
     }
 }
