@@ -1,5 +1,5 @@
 # ===================================================================
-# Perfil de Producción en Nube (prod)
+# Perfil de Producción en Azure Cloud (prod)
 # Microservicio: PT8080-VirtualTryOn-Service · Base de datos: probador_db_prod
 # ===================================================================
 
@@ -21,7 +21,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: ${JPA_DDL_AUTO:update}
+      ddl-auto: ${JPA_DDL_AUTO:validate}
     show-sql: false
     open-in-view: false
     properties:
@@ -29,7 +29,7 @@ spring:
         format_sql: false
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
-  # Caching Redis en Producción (conectado al device único compartido de Redis)
+  # Caching Redis en Producción
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -39,7 +39,7 @@ spring:
         enabled: ${REDIS_SSL_ENABLED:false}
       timeout: 2000ms
 
-  # Broker de Mensajería RabbitMQ en Producción (conectado al broker único compartido)
+  # Broker de Mensajería RabbitMQ en Producción
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
@@ -56,6 +56,10 @@ management:
   endpoint:
     health:
       show-details: when_authorized
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
 
 # Parámetros del Negocio Virtual Try-On en Producción
 styleradar:
@@ -68,5 +72,5 @@ styleradar:
     fashn-api-key: ${FASHN_API_KEY:}
     blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes-prod}
     amqp:
+      publisher-confirms: true
       listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:false}
-

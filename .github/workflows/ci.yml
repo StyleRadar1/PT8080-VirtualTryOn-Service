@@ -5,6 +5,7 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -32,7 +33,7 @@ jobs:
       - name: Grant execute permission for Maven Wrapper
         run: chmod +x mvnw
 
-      - name: Execute Maven Clean Verify (72 Tests & JaCoCo >= 85% Line / >= 80% Branch)
+      - name: Execute Maven Clean Verify (229 Tests & JaCoCo >= 85% Line / >= 80% Branch)
         run: ./mvnw clean verify -B
 
       - name: Run SonarQube / SonarCloud Static Analysis (Quality Gate A)

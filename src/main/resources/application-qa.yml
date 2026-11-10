@@ -1,5 +1,5 @@
 # ===================================================================
-# Perfil de Calidad / Pruebas Integradas en Nube (qa)
+# Perfil de Calidad / Homologación en Azure Cloud (qa)
 # Microservicio: PT8080-VirtualTryOn-Service · Base de datos: probador_db_qa
 # ===================================================================
 
@@ -21,7 +21,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: ${JPA_DDL_AUTO:update}
+      ddl-auto: ${JPA_DDL_AUTO:validate}
     show-sql: false
     open-in-view: false
     properties:
@@ -29,7 +29,7 @@ spring:
         format_sql: false
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
-  # Caching Redis en QA (conectado al device único compartido de Redis)
+  # Caching Redis en QA
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -37,7 +37,7 @@ spring:
       password: ${REDIS_PASSWORD:}
       timeout: 2000ms
 
-  # Broker de Mensajería RabbitMQ en QA (conectado al broker único compartido)
+  # Broker de Mensajería RabbitMQ en QA
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
@@ -65,11 +65,11 @@ styleradar:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,https://styleradar-qa.azurewebsites.net}
   tryon:
-    ai-provider: ${TRYON_AI_PROVIDER:mock}
+    ai-provider: ${TRYON_AI_PROVIDER:fashn}
     daily-quota-limit: ${MAX_DAILY_QUOTA:10}
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
     fashn-api-key: ${FASHN_API_KEY:}
     blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes-qa}
     amqp:
+      publisher-confirms: true
       listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:false}
-

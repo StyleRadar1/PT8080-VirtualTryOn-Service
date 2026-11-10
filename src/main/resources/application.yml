@@ -14,11 +14,28 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 
+  # Configuración Multipart para carga de siluetas de hasta 5 MB (SR-RF-23)
+  servlet:
+    multipart:
+      max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:5MB}
+      max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:10MB}
+
   # Configuración de Jackson para JSON estándar
   jackson:
     serialization:
       indent-output: true
       write-dates-as-timestamps: false
+
+  # Configuración de RabbitMQ con Publisher Confirms para el Transactional Outbox
+  rabbitmq:
+    publisher-confirm-type: correlated
+    publisher-returns: true
+
+  # Migraciones de esquema PostgreSQL con Flyway
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
+    locations: classpath:db/migration
 
 # Documentación interactiva OpenAPI 3.0 / Swagger UI
 springdoc:
@@ -36,22 +53,42 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
 
 # Configuración transversal de seguridad JWT y almacenamiento Azure Blob Storage
-# Las credenciales (JWT_SECRET_BASE64 y AZURE_SAS_TOKEN) deben inyectarse por variables de entorno o secretos de despliegue
+# Las credenciales (JWT_SECRET_BASE64 y AZURE_STORAGE_ACCOUNT_KEY) deben inyectarse por variables de entorno o secretos de despliegue
 styleradar:
   security:
     jwt:
       secret-base64: ${JWT_SECRET_BASE64}
       duration: ${JWT_DURATION:PT60M}
   tryon:
+    # El proveedor real se habilita exclusivamente en qa/prod. Los perfiles locales
+    # deben declarar mock explícitamente para evitar consumo accidental de FASHN.
+    ai-provider: ${TRYON_AI_PROVIDER:mock}
+    daily-quota-limit: ${TRYON_DAILY_QUOTA_LIMIT:10}
+    fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
+    fashn-api-key: ${FASHN_API_KEY:}
     blob-base-url: ${AZURE_STORAGE_BASE_URL}
     blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes}
-    blob-sas-token: ${AZURE_SAS_TOKEN:}
-    blob-read-sas-token: ${AZURE_READ_SAS_TOKEN:}
+    blob-account-key: ${AZURE_STORAGE_ACCOUNT_KEY}
+    blob-read-sas-duration: ${AZURE_READ_SAS_DURATION:PT15M}
+    estimated-processing-duration: ${TRYON_ESTIMATED_PROCESSING_DURATION:PT30S}
     blob-api-version: ${AZURE_STORAGE_API_VERSION:2024-11-04}
+    outbox:
+      poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
+    amqp:
+      retry:
+        max-attempts: ${TRYON_AMQP_RETRY_MAX_ATTEMPTS:4}
+        initial-interval-ms: ${TRYON_AMQP_RETRY_INITIAL_INTERVAL_MS:2000}
+        multiplier: ${TRYON_AMQP_RETRY_MULTIPLIER:2.0}
+        max-interval-ms: ${TRYON_AMQP_RETRY_MAX_INTERVAL_MS:10000}
+    stale-job:
+      enabled: ${STALE_JOB_SWEEP_ENABLED:true}
+      sweep-interval-ms: ${STALE_JOB_SWEEP_INTERVAL_MS:60000}
+      initial-delay-ms: ${STALE_JOB_INITIAL_DELAY_MS:10000}
+      max-processing-age-minutes: ${STALE_JOB_MAX_PROCESSING_AGE_MINUTES:10}
 

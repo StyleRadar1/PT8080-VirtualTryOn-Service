@@ -1,5 +1,6 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.external;
 
+import edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.AiInferenceClientPort;
@@ -7,10 +8,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.util.Base64;
@@ -103,14 +107,24 @@ public class FashnAiRestClientAdapter implements AiInferenceClientPort {
                     return Optional.of(decodeBase64Output(String.valueOf(outputList.get(0))));
                 }
                 if ("failed".equals(statusValue) || "canceled".equals(statusValue)) {
-                    log.warn("FASHN AI finalizó la ejecución {} con estado {}: {}",
-                            executionId, statusValue, statusResponse.get("error"));
-                    return Optional.empty();
+                    String errorMsg = String.valueOf(statusResponse.get("error"));
+                    log.error("FASHN AI finalizó definitivamente la ejecución {} con estado {}: {}",
+                            executionId, statusValue, errorMsg);
+                    throw new AiInferencePermanentException("Ejecución en FASHN AI rechazada (" + statusValue + "): " + errorMsg);
                 }
             }
             log.warn("FASHN AI agotó los intentos de sondeo para la ejecución {}", executionId);
+        } catch (AiInferencePermanentException ex) {
+            throw ex;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
+        } catch (RestClientResponseException ex) {
+            HttpStatusCode status = ex.getStatusCode();
+            if (status.is4xxClientError()) {
+                log.error("Error definitivo HTTP {} devuelto por FASHN AI: {}", status, ex.getResponseBodyAsString());
+                throw new AiInferencePermanentException("Credenciales o solicitud inválida en FASHN AI (HTTP " + status + ")", ex);
+            }
+            log.warn("Error transitorio HTTP {} al invocar FASHN AI: {}", status, ex.getMessage());
         } catch (RuntimeException ex) {
             log.warn("Error al invocar FASHN AI para prueba virtual: {}", ex.getMessage());
         }
@@ -120,7 +134,7 @@ public class FashnAiRestClientAdapter implements AiInferenceClientPort {
     @Override
     public JobStatus queryExternalJobStatus(String externalJobId) {
         if (apiKey == null || apiKey.isBlank()) {
-            return JobStatus.COMPLETED;
+            return JobStatus.FAILED;
         }
         try {
             Map<?, ?> statusResponse = restClient.get()

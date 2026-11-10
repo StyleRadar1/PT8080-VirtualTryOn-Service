@@ -204,13 +204,13 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Captura accesos denegados por rol o titularidad de datos biométricos (403 Forbidden) (SR-RF-23)
+     * Captura accesos denegados por rol o titularidad de datos biométricos y probador virtual (403 Forbidden) (SR-RF-23, SR-RF-26)
      */
-    @ExceptionHandler(AccessDeniedException.class)
-    public ProblemDetail handleAccessDeniedException(AccessDeniedException ex) {
-        log.warn("Acceso denegado a recurso biométrico: {}", ex.getMessage());
+    @ExceptionHandler({AccessDeniedException.class, edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException.class})
+    public ProblemDetail handleAccessDeniedException(Exception ex) {
+        log.warn("Acceso denegado a recurso biométrico o probador virtual: {}", ex.getMessage());
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
-        problem.setTitle("Acceso Denegado a Datos Biométricos");
+        problem.setTitle("Acceso Denegado");
         problem.setType(URI.create(BASE_TYPE_URL + "forbidden"));
         problem.setProperty("errorCode", "FORBIDDEN");
         problem.setProperty("timestamp", Instant.now());
