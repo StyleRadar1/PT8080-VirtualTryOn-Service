@@ -1,0 +1,148 @@
+name: CD QA · PT8080-VirtualTryOn-Service
+
+on:
+  push:
+    branches: [ develop ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: pt8080-virtualtryon-service
+  AZURE_WEBAPP_NAME: styleradar-virtualtryon-qa
+
+jobs:
+  test-and-sonar:
+    name: Pruebas, Cobertura JaCoCo y SonarQube Gate (A)
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Otorgar permisos a Maven Wrapper
+        run: chmod +x mvnw
+
+      - name: Ejecutar pruebas y verificar cobertura JaCoCo (>= 85%)
+        run: ./mvnw -B clean verify
+
+      - name: Ejecutar análisis SonarQube / SonarCloud
+        if: env.SONAR_TOKEN != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: ./mvnw -B sonar:sonar -Dsonar.qualitygate.wait=true
+
+      - name: Publicar reporte de cobertura JaCoCo
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report-qa
+          path: target/site/jacoco/
+
+  build-push-qa:
+    name: Construir y publicar imagen QA en Docker Hub
+    needs: test-and-sonar
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            GIT_COMMIT_SHA=${{ github.sha }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:qa-${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:qa-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-qa:
+    name: Despliegue en Azure App Service QA (probador_db_qa)
+    needs: build-push-qa
+    runs-on: ubuntu-latest
+    environment:
+      name: qa
+      url: https://styleradar-virtualtryon-qa.azurewebsites.net/swagger-ui/index.html
+    steps:
+      - uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Configurar variables de entorno del App Service QA
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            RG=$(az webapp list --query "[?name=='${{ env.AZURE_WEBAPP_NAME }}'].resourceGroup | [0]" -o tsv)
+            if [ -z "$RG" ] || [ "$RG" = "null" ]; then
+              echo "Error: No se encontró el grupo de recursos para ${{ env.AZURE_WEBAPP_NAME }} en Azure."
+              exit 1
+            fi
+            az webapp config appsettings set \
+              --name "${{ env.AZURE_WEBAPP_NAME }}" \
+              --resource-group "$RG" \
+              --output none \
+              --settings \
+                WEBSITES_PORT=8500 \
+                SERVER_PORT=8500 \
+                SPRING_PROFILES_ACTIVE=qa \
+                TRYON_AMQP_LISTENERS_ENABLED=true \
+                AZURE_STORAGE_ACCOUNT_KEY="${{ secrets.AZURE_STORAGE_ACCOUNT_KEY_QA || secrets.AZURE_STORAGE_ACCOUNT_KEY }}" \
+                DB_URL="${{ secrets.DB_URL_QA }}" \
+                DB_USER="${{ secrets.DB_USERNAME_QA }}" \
+                DB_PASSWORD="${{ secrets.DB_PASSWORD_QA }}" \
+                JWT_SECRET_BASE64="${{ secrets.JWT_SECRET_QA }}" \
+                AZURE_STORAGE_BASE_URL="${{ secrets.AZURE_STORAGE_BASE_URL_QA }}" \
+                AZURE_SAS_TOKEN="${{ secrets.AZURE_SAS_TOKEN_QA }}" \
+                AZURE_READ_SAS_TOKEN="${{ secrets.AZURE_READ_SAS_TOKEN_QA }}" \
+                REDIS_HOST="${{ secrets.REDIS_HOST }}" \
+                REDIS_PORT="${{ secrets.REDIS_PORT }}" \
+                REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+                RABBITMQ_HOST="${{ secrets.RABBITMQ_HOST_QA || secrets.RABBITMQ_HOST }}" \
+                RABBITMQ_PORT="${{ secrets.RABBITMQ_PORT }}" \
+                RABBITMQ_USER="${{ secrets.RABBITMQ_USER }}" \
+                RABBITMQ_PASSWORD="${{ secrets.RABBITMQ_PASSWORD }}"
+
+      - uses: azure/webapps-deploy@v3
+        id: deploy
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:qa-${{ github.sha }}
+
+      - name: Smoke Test en Azure QA (Commit SHA y /v3/api-docs)
+        run: |
+          SWAGGER_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/v3/api-docs"
+          INFO_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/actuator/info"
+          EXPECTED_SHA="${{ github.sha }}"
+          echo "Iniciando Smoke Test en QA. Validando commit esperado: $EXPECTED_SHA"
+          for i in $(seq 1 30); do
+            SWAGGER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SWAGGER_URL" || true)
+            INFO_BODY=$(curl -s "$INFO_URL" || true)
+            echo "Intento $i: Swagger HTTP $SWAGGER_STATUS | Actuator Info: $INFO_BODY"
+            if [ "$SWAGGER_STATUS" = "200" ] && echo "$INFO_BODY" | grep -q "$EXPECTED_SHA"; then
+              echo "Smoke Test exitoso: Servicio respondiendo HTTP 200 y commit SHA verificado ($EXPECTED_SHA)"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Error en Smoke Test: El servicio no respondió con el commit esperado ($EXPECTED_SHA) tras 30 intentos"
+          exit 1
+

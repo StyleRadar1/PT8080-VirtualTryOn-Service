@@ -1,0 +1,60 @@
+# ===================================================================
+# Perfil de Desarrollo Local (dev)
+# ===================================================================
+
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+  # Persistencia PostgreSQL (probador_db)
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/probador_db}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # Caching Redis
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+
+  # Broker de Mensajería RabbitMQ
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+
+# Parámetros del Negocio Virtual Try-On
+styleradar:
+  tryon:
+    security:
+      allow-localhost-urls: true
+    ai-provider: ${TRYON_AI_PROVIDER:mock} # mock o fashn
+    daily-quota-limit: 10
+    fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
+    fashn-api-key: ${FASHN_API_KEY:}
+    amqp:
+      listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:true}
+      catalog-exchange: ${CATALOG_EVENTS_EXCHANGE:styleradar.catalog.events}
+      catalog-garment-queue: ${CATALOG_GARMENT_QUEUE:q.tryon.catalog.garment.updated}
+      catalog-garment-routing-key: ${CATALOG_GARMENT_ROUTING_KEY:catalog.garment.updated}
+      catalog-dlx: ${CATALOG_EVENTS_DLX:styleradar.catalog.dlx}
+      catalog-garment-dlq: ${CATALOG_GARMENT_DLQ:q.tryon.catalog.garment.updated.dlq}
+      catalog-garment-dlq-routing-key: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:catalog.garment.updated.dead}

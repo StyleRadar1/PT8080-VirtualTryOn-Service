@@ -1,0 +1,100 @@
+# ===================================================================
+# Perfil de Producción en Azure Cloud (prod)
+# Microservicio: PT8080-VirtualTryOn-Service · Base de datos: probador_db_prod
+# ===================================================================
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  # Persistencia PostgreSQL aislada en Azure para Producción (probador_db_prod)
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # Caching Redis en Producción
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+      timeout: 2000ms
+
+  # Broker de Mensajería RabbitMQ en Producción (Azure Broker con TLS)
+  rabbitmq:
+    host: ${RABBITMQ_HOST:styleradar-rabbitmq-prod.northcentralus.cloudapp.azure.com}
+    port: ${RABBITMQ_PORT:5671}
+    username: ${RABBITMQ_USER:ms_probador}
+    password: ${RABBITMQ_PASSWORD}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    ssl:
+      enabled: ${RABBITMQ_SSL_ENABLED:true}
+      trust-store: ${RABBITMQ_TRUSTSTORE:file:/app/rabbitmq-truststore.jks}
+      trust-store-password: ${RABBITMQ_TRUSTSTORE_PASSWORD:changeit}
+      trust-store-type: ${RABBITMQ_TRUSTSTORE_TYPE:JKS}
+      verify-hostname: ${RABBITMQ_VERIFY_HOSTNAME:true}
+
+# Configuración de monitoreo restringida en Producción (OWASP A05 Security Misconfiguration)
+management:
+  health:
+    redis:
+      enabled: ${REDIS_HEALTH_ENABLED:false}
+    rabbit:
+      enabled: ${RABBIT_HEALTH_ENABLED:false}
+  endpoint:
+    health:
+      show-details: when_authorized
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+# Parámetros del Negocio Virtual Try-On en Producción
+styleradar:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:https://styleradar.co,https://styleradar-prod.azurewebsites.net}
+  tryon:
+    security:
+      allow-localhost-urls: false
+    ai-provider: ${TRYON_AI_PROVIDER:fashn}
+    daily-quota-limit: ${MAX_DAILY_QUOTA:10}
+    fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
+    fashn-api-key: ${FASHN_API_KEY:}
+    blob-base-url: ${AZURE_STORAGE_BASE_URL:https://styleradarpt8080blob.blob.core.windows.net}
+    blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes-prod}
+    blob-account-key: ${AZURE_STORAGE_ACCOUNT_KEY}
+    amqp:
+      publisher-confirms: true
+      listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:true}
+      catalog-exchange: ${CATALOG_EXCHANGE:styleradar.exchange.prod}
+      catalog-garment-queue: ${CATALOG_GARMENT_QUEUE:styleradar.probador.prenda-publicada.prod.q}
+      catalog-garment-routing-key: ${CATALOG_GARMENT_ROUTING_KEY:styleradar.catalogo.prenda.publicada}
+      user-exchange: ${USER_EXCHANGE:styleradar.exchange.prod}
+      user-account-deleted-queue: ${USER_ACCOUNT_DELETED_QUEUE:styleradar.probador.cuenta-eliminada.prod.q}
+      user-account-deleted-routing-key: ${USER_ACCOUNT_DELETED_ROUTING_KEY:styleradar.usuarios.cuenta.eliminada}
+      catalog-dlx: ${CATALOG_DLX:styleradar.dlx.prod}
+      catalog-garment-dlq: ${CATALOG_GARMENT_DLQ:styleradar.probador.prod.dlq}
+      catalog-garment-dlq-routing-key: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:styleradar.probador.dlq}
+      exchange: ${TRYON_EXCHANGE:styleradar.tryon.events.prod}
+      process-queue: ${TRYON_PROCESS_QUEUE:q.tryon.job.process.prod}
+      dlx: ${TRYON_DLX:styleradar.tryon.dlx.prod}
+      process-dlq: ${TRYON_PROCESS_DLQ:q.tryon.job.process.prod.dlq}
