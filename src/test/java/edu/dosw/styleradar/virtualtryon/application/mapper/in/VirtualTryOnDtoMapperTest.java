@@ -246,7 +246,7 @@ class VirtualTryOnDtoMapperTest {
     }
 
     @Test
-    @DisplayName("toJobResponse omite URLs sin firmar cuando generateReadOnlySignedUrl retorna null o URL sin firma SAS válida")
+    @DisplayName("toJobResponse omite URLs sin firmar cuando generateReadOnlySignedUrl retorna null o URL sin parámetro sig no vacío")
     void shouldOmitUnsignedUrlsWhenSasGenerationReturnsNullOrUnsigned() {
         VirtualTryOnDtoMapper mapper = new VirtualTryOnDtoMapper(blobStoragePort);
 
@@ -268,20 +268,36 @@ class VirtualTryOnDtoMapperTest {
         assertThat(response.photoUrl()).isNull();
         assertThat(response.resultImageUrl()).isNull();
 
-        // Acepta parámetros SAS válidos (?sp=r&sr=b y ?sas=...) y rechaza ?foo=bar
+        // Rechaza URLs que incluyen sp/sr, sas o sig en blanco pero no tienen una firma sig válida
         when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png"))
                 .thenReturn(SasSignedUrl.of("https://storage/photo.png?sp=r&sr=b"));
         when(blobStoragePort.generateReadOnlySignedUrl("https://storage/result.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/result.png?sas=tok123"));
+
+        TryOnJobResponse unsignedParamsResponse = mapper.toJobResponse(completedJob);
+        assertThat(unsignedParamsResponse.photoUrl()).isNull();
+        assertThat(unsignedParamsResponse.resultImageUrl()).isNull();
+
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/photo.png?sig=   "));
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/result.png"))
                 .thenReturn(SasSignedUrl.of("https://storage/result.png?foo=bar"));
 
-        TryOnJobResponse partialResponse = mapper.toJobResponse(completedJob);
-        assertThat(partialResponse.photoUrl()).isEqualTo("https://storage/photo.png?sp=r&sr=b");
-        assertThat(partialResponse.resultImageUrl()).isNull();
+        TryOnJobResponse blankSigResponse = mapper.toJobResponse(completedJob);
+        assertThat(blankSigResponse.photoUrl()).isNull();
+        assertThat(blankSigResponse.resultImageUrl()).isNull();
 
+        // Acepta URLs con parámetro sig no vacío (incluyendo con fragmento o parámetros Azure completos)
+        String signedPhotoUrl = "https://storage/photo.png?se=2026-11-15T20:00:00Z&sp=r&spr=https&sv=2024-11-04&sr=b&sig=photoSig#v1";
+        String signedResultUrl = "https://storage/result.png?se=2026-11-15T20:00:00Z&sp=r&spr=https&sv=2024-11-04&sr=b&sig=resultSig";
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png"))
+                .thenReturn(SasSignedUrl.of(signedPhotoUrl));
         when(blobStoragePort.generateReadOnlySignedUrl("https://storage/result.png"))
-                .thenReturn(SasSignedUrl.of("https://storage/result.png?sas=tok123"));
-        assertThat(mapper.toJobResponse(completedJob).resultImageUrl())
-                .isEqualTo("https://storage/result.png?sas=tok123");
+                .thenReturn(SasSignedUrl.of(signedResultUrl));
+
+        TryOnJobResponse signedResponse = mapper.toJobResponse(completedJob);
+        assertThat(signedResponse.photoUrl()).isEqualTo(signedPhotoUrl);
+        assertThat(signedResponse.resultImageUrl()).isEqualTo(signedResultUrl);
     }
 
     @Test

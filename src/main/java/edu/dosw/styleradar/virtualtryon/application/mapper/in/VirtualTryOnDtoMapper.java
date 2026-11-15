@@ -202,16 +202,17 @@ public class VirtualTryOnDtoMapper {
         if (queryIndex < 0 || queryIndex == url.length() - 1) {
             return false;
         }
-        String query = url.substring(queryIndex + 1);
-        return hasNonEmptyParam(query, "sig")
-                || (hasNonEmptyParam(query, "sp") && hasNonEmptyParam(query, "sr"))
-                || hasNonEmptyParam(query, "sas");
+        int fragmentIndex = url.indexOf('#', queryIndex + 1);
+        String query = fragmentIndex >= 0
+                ? url.substring(queryIndex + 1, fragmentIndex)
+                : url.substring(queryIndex + 1);
+        return hasNonEmptyParam(query, "sig");
     }
 
     private boolean hasNonEmptyParam(String query, String paramName) {
         for (String pair : query.split("&")) {
             int eq = pair.indexOf('=');
-            if (eq > 0 && paramName.equals(pair.substring(0, eq)) && eq < pair.length() - 1) {
+            if (eq > 0 && paramName.equals(pair.substring(0, eq)) && !pair.substring(eq + 1).isBlank()) {
                 return true;
             }
         }
