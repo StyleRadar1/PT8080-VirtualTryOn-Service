@@ -207,7 +207,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png?sp=r";
 
@@ -256,7 +256,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         when(valueOperations.get(any())).thenReturn("3");
 
@@ -327,15 +327,20 @@ class CreateTryOnJobServiceImplTest {
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(InvalidGarmentException.class);
 
-        // 6. Prenda no compatible
+        // 6. Prendas no compatibles (FOOTWEAR y OUTERWEAR según RN-01)
         mockCatalogGarment(garmentId, GarmentCategory.FOOTWEAR, true);
         when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(InvalidGarmentException.class);
 
+        mockCatalogGarment(garmentId, GarmentCategory.OUTERWEAR, true);
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
+                userId, garmentId, validUserPhotoUrl, true
+        )).isInstanceOf(InvalidGarmentException.class);
+
         // 7. Cuota mensual agotada
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
         when(valueOperations.get(any())).thenReturn("10");
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, validUserPhotoUrl, true
@@ -356,7 +361,7 @@ class CreateTryOnJobServiceImplTest {
                 .withUserId(userId)
                 .withGarmentId(garmentId)
                 .withPhotoUrl("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/photo.png")
-                .withCategory(GarmentCategory.ONE_PIECES)
+                .withCategory(GarmentCategory.ONE_PIECE)
                 .withGarmentImageUrl("https://styleradar.dosw.edu/catalog/garments/dress.png")
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
@@ -404,7 +409,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         BillingPeriod currentPeriod = BillingPeriod.current();
         UserQuota existingQuota = UserQuota.createDefault(userId, currentPeriod);
@@ -439,7 +444,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String maliciousUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/../other-user/photo.png";
 
@@ -454,7 +459,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String validUrlWithTrailingSlash = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png/";
 
@@ -490,7 +495,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
         TryOnJob job = serviceWithOutbox.createTryOnJob(userId, garmentId, photoUrl, true);
@@ -530,7 +535,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
@@ -566,7 +571,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
@@ -606,7 +611,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
@@ -646,7 +651,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
@@ -687,7 +692,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         // Path traversal
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(userId, garmentId, "https://storage/../etc/passwd", true))
@@ -716,7 +721,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         Mockito.doThrow(new RuntimeException("AMQP connection refused"))
                 .when(outboxPublisherPort).publishPendingEvents();

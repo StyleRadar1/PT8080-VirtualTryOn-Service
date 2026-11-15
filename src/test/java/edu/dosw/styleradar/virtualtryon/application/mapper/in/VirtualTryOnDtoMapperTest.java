@@ -53,12 +53,15 @@ class VirtualTryOnDtoMapperTest {
                 .withUserId(userId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
         completedJob.startAiProcessing();
         completedJob.complete(SasSignedUrl.of(canonicalResult), 1200L);
 
+        String freshPhotoSas = "https://storage/photo.png?sig=freshPhotoSig";
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png"))
+                .thenReturn(SasSignedUrl.of(freshPhotoSas));
         when(blobStoragePort.generateReadOnlySignedUrl(canonicalResult))
                 .thenReturn(SasSignedUrl.of(freshSas));
 
@@ -67,8 +70,12 @@ class VirtualTryOnDtoMapperTest {
         assertThat(response).isNotNull();
         assertThat(response.jobId()).isEqualTo(jobId);
         assertThat(response.status()).isEqualTo(JobStatus.COMPLETED.name());
+        assertThat(response.photoUrl()).isEqualTo(freshPhotoSas);
         assertThat(response.resultImageUrl()).isEqualTo(freshSas);
         assertThat(response.resultImageUrl()).contains("sig=freshSignature");
+        assertThat(response.executionDurationMs()).isEqualTo(1200L);
+        assertThat(response.completedAt()).isNotNull();
+        verify(blobStoragePort).generateReadOnlySignedUrl("https://storage/photo.png");
         verify(blobStoragePort).generateReadOnlySignedUrl(canonicalResult);
     }
 
@@ -84,7 +91,7 @@ class VirtualTryOnDtoMapperTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
         completedJob.complete(SasSignedUrl.of(canonicalResult), 800L);
@@ -97,7 +104,7 @@ class VirtualTryOnDtoMapperTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
 
@@ -178,54 +185,61 @@ class VirtualTryOnDtoMapperTest {
         CatalogGarment garment = new CatalogGarment(
                 GarmentId.of(garmentId),
                 "Camisa Lino",
-                GarmentCategory.TOPS,
+                GarmentCategory.TOP,
                 "https://cat.local/shirt.png",
                 true,
                 now
         );
         GarmentValidationResponse garmentResponse = mapper.toGarmentValidationResponse(garment);
         assertThat(garmentResponse.garmentId()).isEqualTo(garmentId);
-        assertThat(garmentResponse.category()).isEqualTo("TOPS");
+        assertThat(garmentResponse.category()).isEqualTo("TOP");
+        assertThat(garmentResponse.compatible()).isTrue();
+        assertThat(garmentResponse.visible()).isTrue();
+        assertThat(garmentResponse.zone()).isEqualTo("UPPER_BODY");
         assertThat(garmentResponse.eligibleForTryOn()).isTrue();
+        assertThat(garmentResponse.replacedGarmentIds()).isEmpty();
     }
 
     @Test
-    @DisplayName("toJobResponse calcula estimatedCompletionAt en QUEUED y PROCESSING, y retorna null en COMPLETED y FAILED")
+    @DisplayName("toJobResponse calcula estimatedDurationSeconds en QUEUED y PROCESSING, y retorna null en COMPLETED y FAILED")
     void shouldCalculateEstimatedCompletionAtForActiveJobs() {
-        VirtualTryOnDtoMapper mapper = new VirtualTryOnDtoMapper(null, java.time.Duration.ofSeconds(30));
+        VirtualTryOnDtoMapper mapper = new VirtualTryOnDtoMapper(null, java.time.Duration.ofSeconds(25));
 
         TryOnJob queuedJob = new TryOnJobBuilder()
                 .withId(UUID.randomUUID())
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
 
         TryOnJobResponse queuedResponse = mapper.toJobResponse(queuedJob);
-        assertThat(queuedResponse.estimatedCompletionAt()).isNotNull();
-        assertThat(queuedResponse.estimatedCompletionAt()).isEqualTo(queuedJob.getCreatedAt().plusSeconds(30));
+        assertThat(queuedResponse.estimatedDurationSeconds()).isEqualTo(25);
+        assertThat(queuedResponse.photoUrl()).isEqualTo("https://storage/photo.png");
+        assertThat(queuedResponse.completedAt()).isNull();
 
         queuedJob.startAiProcessing();
         TryOnJobResponse processingResponse = mapper.toJobResponse(queuedJob);
-        assertThat(processingResponse.estimatedCompletionAt()).isNotNull();
+        assertThat(processingResponse.estimatedDurationSeconds()).isEqualTo(25);
 
         queuedJob.complete(SasSignedUrl.of("https://storage/result.png"), 1000L);
         TryOnJobResponse completedResponse = mapper.toJobResponse(queuedJob);
-        assertThat(completedResponse.estimatedCompletionAt()).isNull();
+        assertThat(completedResponse.estimatedDurationSeconds()).isNull();
+        assertThat(completedResponse.executionDurationMs()).isEqualTo(1000L);
+        assertThat(completedResponse.completedAt()).isNotNull();
 
         TryOnJob failedJob = new TryOnJobBuilder()
                 .withId(UUID.randomUUID())
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
         failedJob.markFailed("Error de inferencia");
         TryOnJobResponse failedResponse = mapper.toJobResponse(failedJob);
-        assertThat(failedResponse.estimatedCompletionAt()).isNull();
+        assertThat(failedResponse.estimatedDurationSeconds()).isNull();
     }
 }
 

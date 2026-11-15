@@ -8,7 +8,7 @@ import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMap
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
-import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
@@ -138,14 +138,21 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<GarmentValidationResponse> validateGarmentForTryOn(
             @PathVariable("garmentId") UUID garmentId,
-            @RequestParam("userId") UUID userId
+            @RequestParam(value = "userId", required = false) UUID userId,
+            @RequestParam(value = "selectedGarmentIds", required = false) List<UUID> selectedGarmentIds
     ) {
         UUID targetUserId = resolveAndVerifyCallerUserId(userId);
-        CatalogGarment garment = queryTryOnJobsService.validateGarmentEligibility(
-                UserId.of(targetUserId),
-                GarmentId.of(garmentId)
-        );
-        return ResponseEntity.ok(dtoMapper.toGarmentValidationResponse(garment));
+        GarmentValidationResult result = (selectedGarmentIds == null || selectedGarmentIds.isEmpty())
+                ? queryTryOnJobsService.validateGarmentEligibility(
+                        UserId.of(targetUserId),
+                        GarmentId.of(garmentId)
+                )
+                : queryTryOnJobsService.validateGarmentEligibility(
+                        UserId.of(targetUserId),
+                        GarmentId.of(garmentId),
+                        selectedGarmentIds.stream().map(GarmentId::of).toList()
+                );
+        return ResponseEntity.ok(dtoMapper.toGarmentValidationResponse(result));
     }
 
     @Override

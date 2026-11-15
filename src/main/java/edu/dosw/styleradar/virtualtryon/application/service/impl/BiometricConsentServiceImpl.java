@@ -2,7 +2,7 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.BiometricConsentService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
-import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
@@ -226,7 +226,7 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
     @Transactional(readOnly = true)
     public BiometricPhoto getPhotoByUserId(UserId userId) {
         BiometricPhoto persistedPhoto = biometricDataRepositoryPort.findPhotoByUserId(userId)
-                .orElseThrow(() -> new JobNotFoundException(userId.value()));
+                .orElseThrow(() -> new BiometricPhotoNotFoundException(userId.value()));
         SasSignedUrl freshSignedUrl = blobStoragePort.generateReadOnlySignedUrl(persistedPhoto.getBlobPath());
         return persistedPhoto.withFreshSignedUrl(freshSignedUrl);
     }

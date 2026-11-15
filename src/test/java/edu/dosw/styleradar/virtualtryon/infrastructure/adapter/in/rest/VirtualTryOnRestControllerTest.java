@@ -10,8 +10,10 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
+import edu.dosw.styleradar.virtualtryon.domain.model.BodyZone;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
@@ -106,7 +108,7 @@ class VirtualTryOnRestControllerTest {
         TryOnJob createdJob = new TryOnJobBuilder()
                 .withUserId(UserId.of(userId))
                 .withGarmentId(GarmentId.of(garmentId))
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withPhotoUrl(photoUrl)
                 .build();
         when(createTryOnJobService.createTryOnJob(
@@ -230,7 +232,7 @@ class VirtualTryOnRestControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title", is("Error de Validación de Entrada")))
                 .andExpect(jsonPath("$.status", is(400)))
-                .andExpect(jsonPath("$.invalidFields", notNullValue()));
+                .andExpect(jsonPath("$.errors", notNullValue()));
     }
 
     @Test
@@ -242,7 +244,7 @@ class VirtualTryOnRestControllerTest {
                 .withId(jobId)
                 .withUserId(UserId.of(userId))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
                 .build();
         completedJob.complete(
@@ -313,20 +315,30 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-24: Dada una prenda compatible y cuota disponible, Cuando se envía GET /api/v1/try-on/garments/{garmentId}/validate, Entonces responde 200 OK con GarmentValidationResponse")
+    @DisplayName("HU SR-RF-24: Dada una prenda compatible (con o sin selectedGarmentIds) o incompatible existente, Cuando se envía GET /api/v1/try-on/garments/{garmentId}/validate, Entonces responde 200 OK con GarmentValidationResponse")
     void testValidateGarmentForTryOnSuccess() throws Exception {
         UUID userId = UUID.randomUUID();
         UUID garmentId = UUID.randomUUID();
+        UUID previousTopId = UUID.randomUUID();
         CatalogGarment garment = new CatalogGarment(
                 GarmentId.of(garmentId),
-                "Chaqueta Denim Clásica",
-                GarmentCategory.TOPS,
+                "Camisa Denim Clásica",
+                GarmentCategory.TOP,
                 "https://styleradar.blob.core.windows.net/catalog/denim.png",
                 true,
                 Instant.now()
         );
+        GarmentValidationResult validResult = new GarmentValidationResult(
+                garment,
+                true,
+                true,
+                BodyZone.UPPER_BODY,
+                true,
+                "Prenda compatible y disponible para prueba virtual en zona UPPER_BODY.",
+                List.of()
+        );
         when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(garmentId)))
-                .thenReturn(garment);
+                .thenReturn(validResult);
 
         mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
@@ -334,24 +346,74 @@ class VirtualTryOnRestControllerTest {
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.garmentId", is(garmentId.toString())))
-                .andExpect(jsonPath("$.category", is("TOPS")))
+                .andExpect(jsonPath("$.category", is("TOP")))
                 .andExpect(jsonPath("$.fashnCategoryCode", is("tops")))
+                .andExpect(jsonPath("$.compatible", is(true)))
+                .andExpect(jsonPath("$.visible", is(true)))
+                .andExpect(jsonPath("$.zone", is("UPPER_BODY")))
                 .andExpect(jsonPath("$.eligibleForTryOn", is(true)));
+
+        // Con selectedGarmentIds y reemplazo de zona (RN-02 / FA-04)
+        GarmentValidationResult conflictResult = new GarmentValidationResult(
+                garment,
+                true,
+                true,
+                BodyZone.UPPER_BODY,
+                true,
+                "Prenda compatible en zona UPPER_BODY; reemplazará 1 prenda(s) previa(s).",
+                List.of(GarmentId.of(previousTopId))
+        );
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                UserId.of(userId), GarmentId.of(garmentId), List.of(GarmentId.of(previousTopId))))
+                .thenReturn(conflictResult);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedGarmentIds", previousTopId.toString())
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.replacedGarmentIds[0]", is(previousTopId.toString())));
+
+        // Prenda incompatible existente (OUTERWEAR) -> 200 OK con compatible=false, eligibleForTryOn=false
+        UUID jacketId = UUID.randomUUID();
+        CatalogGarment jacket = new CatalogGarment(
+                GarmentId.of(jacketId),
+                "Chaqueta Invierno",
+                GarmentCategory.OUTERWEAR,
+                "https://styleradar.blob.core.windows.net/catalog/jacket.png",
+                true,
+                Instant.now()
+        );
+        GarmentValidationResult outerwearResult = new GarmentValidationResult(
+                jacket, false, true, null, false,
+                "La prenda no es compatible con el probador virtual: OUTERWEAR", List.of()
+        );
+        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(jacketId)))
+                .thenReturn(outerwearResult);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", jacketId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.compatible", is(false)))
+                .andExpect(jsonPath("$.visible", is(true)))
+                .andExpect(jsonPath("$.eligibleForTryOn", is(false)));
     }
 
     @Test
-    @DisplayName("HU SR-RF-24: Dada prenda incompatible o cuota agotada, Cuando se envía GET /api/v1/try-on/garments/{garmentId}/validate, Entonces responde 400 Bad Request o 429 Too Many Requests con ProblemDetail")
+    @DisplayName("HU SR-RF-24: Dada prenda inexistente o cuota agotada, Cuando se envía GET /api/v1/try-on/garments/{garmentId}/validate, Entonces responde 400 Bad Request o 429 Too Many Requests con ProblemDetail")
     void testValidateGarmentForTryOnFailures() throws Exception {
         UUID userId = UUID.randomUUID();
-        UUID incompatibleGarmentId = UUID.randomUUID();
+        UUID missingGarmentId = UUID.randomUUID();
         UUID quotaExhaustedGarmentId = UUID.randomUUID();
 
-        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(incompatibleGarmentId)))
-                .thenThrow(new InvalidGarmentException(incompatibleGarmentId, "El probador virtual no admite prendas de tipo FOOTWEAR"));
+        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(missingGarmentId)))
+                .thenThrow(new InvalidGarmentException(missingGarmentId, "La prenda no existe en el catálogo"));
         when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(quotaExhaustedGarmentId)))
                 .thenThrow(new QuotaExceededException(userId, 10, 10));
 
-        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", incompatibleGarmentId)
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", missingGarmentId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
                         .param("userId", userId.toString()))
                 .andExpect(status().isBadRequest())
@@ -539,7 +601,7 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-26: Dado un jobId en estado PROCESSING, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 200 OK con estado PROCESSING y estimatedCompletionAt")
+    @DisplayName("HU SR-RF-26: Dado un jobId en estado PROCESSING, Cuando se envía GET /api/v1/try-on/jobs/{id}, Entonces responde 200 OK con estado PROCESSING y estimatedDurationSeconds")
     void testGetTryOnJobProcessingWithEstimatedCompletion() throws Exception {
         UUID userId = UUID.randomUUID();
         UUID jobId = UUID.randomUUID();
@@ -547,7 +609,7 @@ class VirtualTryOnRestControllerTest {
                 .withId(jobId)
                 .withUserId(UserId.of(userId))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
                 .build();
         processingJob.startAiProcessing();
@@ -561,7 +623,7 @@ class VirtualTryOnRestControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.jobId", is(jobId.toString())))
                 .andExpect(jsonPath("$.status", is("PROCESSING")))
-                .andExpect(jsonPath("$.estimatedCompletionAt", notNullValue()))
+                .andExpect(jsonPath("$.estimatedDurationSeconds", is(25)))
                 .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
     }
 
@@ -574,7 +636,7 @@ class VirtualTryOnRestControllerTest {
                 .withId(jobId)
                 .withUserId(UserId.of(userId))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
                 .build();
         failedJob.markFailed("Pose corporal incompatible con la prenda seleccionada");

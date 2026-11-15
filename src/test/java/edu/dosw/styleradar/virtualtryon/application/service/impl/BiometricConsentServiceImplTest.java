@@ -3,7 +3,7 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
-import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
@@ -732,7 +732,7 @@ class BiometricConsentServiceImplTest {
     @DisplayName("HU SR-RF-23 (Negativo - Foto No Encontrada, Sin Consentimiento, Horizontal y Propósitos Vacíos): Valida casos negativos del servicio y mapeador")
     void shouldFailWhenPhotoNotFoundOrInvalidAndMapEmptyPurposes() throws Exception {
         assertThatThrownBy(() -> consentService.getPhotoByUserId(USER_ID))
-                .isInstanceOf(JobNotFoundException.class);
+                .isInstanceOf(BiometricPhotoNotFoundException.class);
 
         byte[] photoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
         assertThatThrownBy(() -> consentService.uploadPhoto(USER_ID, false, "image/png", photoBytes))

@@ -6,6 +6,7 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedExceptio
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
@@ -17,7 +18,7 @@ import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.validation.BiometricConsentValidator;
-import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentCategoryValidator;
+import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSelectionPolicy;
 import edu.dosw.styleradar.virtualtryon.domain.validation.MonthlyUserQuotaValidator;
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidationContext;
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidatorHandler;
@@ -69,8 +70,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
-        TryOnValidatorHandler garmentValidator = new GarmentCategoryValidator();
-        consentValidator.setNext(quotaValidator).setNext(garmentValidator);
+        consentValidator.setNext(quotaValidator);
         this.eligibilityValidationChain = consentValidator;
     }
 
@@ -118,7 +118,11 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
 
     @Override
     @Transactional(readOnly = true)
-    public CatalogGarment validateGarmentEligibility(UserId userId, GarmentId garmentId) {
+    public GarmentValidationResult validateGarmentEligibility(
+            UserId userId,
+            GarmentId garmentId,
+            List<GarmentId> selectedGarmentIds
+    ) {
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
                 .orElseThrow(() -> new InvalidGarmentException(
                         "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"
@@ -155,7 +159,11 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                 quota
         );
         eligibilityValidationChain.validate(context);
-        return garment;
+
+        List<CatalogGarment> selectedGarments = (selectedGarmentIds == null || selectedGarmentIds.isEmpty())
+                ? List.of()
+                : quotaRepositoryPort.findCatalogGarmentsByIds(selectedGarmentIds);
+        return GarmentSelectionPolicy.evaluate(garment, selectedGarments);
     }
 
     @Override
