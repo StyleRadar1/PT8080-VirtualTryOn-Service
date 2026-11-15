@@ -5,6 +5,7 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredExceptio
 import edu.dosw.styleradar.virtualtryon.domain.exception.DomainException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import org.junit.jupiter.api.DisplayName;
@@ -167,5 +168,30 @@ class GlobalExceptionHandlerTest {
         );
         assertThat(forbiddenPd.getStatus()).isEqualTo(HttpStatus.FORBIDDEN.value());
         assertThat(forbiddenPd.getProperties().get("errorCode")).isEqualTo("FORBIDDEN");
+
+        UUID missingUserId = UUID.randomUUID();
+        ProblemDetail photoNotFoundPd = handler.handleBiometricPhotoNotFoundException(
+                new BiometricPhotoNotFoundException(missingUserId)
+        );
+        assertThat(photoNotFoundPd.getStatus()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(photoNotFoundPd.getTitle()).isEqualTo("Fotografía Biométrica No Encontrada");
+        assertThat(photoNotFoundPd.getProperties().get("errorCode")).isEqualTo("BIOMETRIC_PHOTO_NOT_FOUND");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-23/24: Errores de validación @Valid retornan 400 ProblemDetail con propiedad estándar 'errors'")
+    void shouldHandleValidationExceptionUsingErrorsProperty() throws Exception {
+        org.springframework.validation.BeanPropertyBindingResult bindingResult =
+                new org.springframework.validation.BeanPropertyBindingResult(new Object(), "startTryOnRequest");
+        bindingResult.addError(new org.springframework.validation.FieldError(
+                "startTryOnRequest", "garmentId", "es obligatorio"
+        ));
+        org.springframework.web.bind.MethodArgumentNotValidException validationEx =
+                new org.springframework.web.bind.MethodArgumentNotValidException(null, bindingResult);
+
+        ProblemDetail pd = handler.handleValidationException(validationEx);
+        assertThat(pd.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(pd.getProperties().get("errorCode")).isEqualTo("VALIDATION_FAILED");
+        assertThat(pd.getProperties()).containsKey("errors").doesNotContainKey("invalidFields");
     }
 }

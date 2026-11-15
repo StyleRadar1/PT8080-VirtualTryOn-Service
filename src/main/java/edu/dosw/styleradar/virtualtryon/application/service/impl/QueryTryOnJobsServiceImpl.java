@@ -6,6 +6,7 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedExceptio
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
@@ -17,7 +18,7 @@ import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.validation.BiometricConsentValidator;
-import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentCategoryValidator;
+import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSelectionPolicy;
 import edu.dosw.styleradar.virtualtryon.domain.validation.MonthlyUserQuotaValidator;
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidationContext;
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidatorHandler;
@@ -69,8 +70,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
-        TryOnValidatorHandler garmentValidator = new GarmentCategoryValidator();
-        consentValidator.setNext(quotaValidator).setNext(garmentValidator);
+        consentValidator.setNext(quotaValidator);
         this.eligibilityValidationChain = consentValidator;
     }
 
@@ -97,28 +97,20 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
                 .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
 
-        OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
-        if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
-            UserQuota synchronizedQuota = new UserQuota(
-                    quota.getId(),
-                    quota.getUserId(),
-                    quota.getMonthlyLimit(),
-                    cachedUsed.getAsInt(),
-                    quota.getBillingPeriod(),
-                    quota.isRadarPlus(),
-                    quota.getLastResetAt()
-            );
-            quota = quotaRepositoryPort.saveQuota(synchronizedQuota);
-        } else if (cachedUsed.isEmpty()) {
-            quotaCachePort.cacheUsedCount(userId, currentPeriod, quota.getUsedCount());
-        }
+        // PostgreSQL es la fuente de verdad autoritativa (consumos y reembolsos con bloqueo pesimista);
+        // nunca se sobrescribe la BD con contadores potencialmente desactualizados de Redis.
+        resyncCacheFromAuthoritativeQuota(userId, currentPeriod, quota.getUsedCount());
 
         return quota;
     }
 
     @Override
     @Transactional(readOnly = true)
-    public CatalogGarment validateGarmentEligibility(UserId userId, GarmentId garmentId) {
+    public GarmentValidationResult validateGarmentEligibility(
+            UserId userId,
+            GarmentId garmentId,
+            List<GarmentId> selectedGarmentIds
+    ) {
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
                 .orElseThrow(() -> new InvalidGarmentException(
                         "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"
@@ -132,18 +124,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
                 .orElseGet(() -> UserQuota.createDefault(userId, currentPeriod));
 
-        OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
-        if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
-            quota = new UserQuota(
-                    quota.getId(),
-                    quota.getUserId(),
-                    quota.getMonthlyLimit(),
-                    cachedUsed.getAsInt(),
-                    quota.getBillingPeriod(),
-                    quota.isRadarPlus(),
-                    quota.getLastResetAt()
-            );
-        }
+        resyncCacheFromAuthoritativeQuota(userId, currentPeriod, quota.getUsedCount());
 
         TryOnValidationContext context = new TryOnValidationContext(
                 userId,
@@ -155,7 +136,26 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                 quota
         );
         eligibilityValidationChain.validate(context);
-        return garment;
+
+        List<CatalogGarment> selectedGarments = (selectedGarmentIds == null || selectedGarmentIds.isEmpty())
+                ? List.of()
+                : quotaRepositoryPort.findCatalogGarmentsByIds(selectedGarmentIds);
+        return GarmentSelectionPolicy.evaluate(garment, selectedGarments);
+    }
+
+    private void resyncCacheFromAuthoritativeQuota(UserId userId, BillingPeriod period, int authoritativeUsedCount) {
+        if (quotaCachePort == null) {
+            return;
+        }
+        try {
+            OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, period);
+            if (cachedUsed.isEmpty() || cachedUsed.getAsInt() != authoritativeUsedCount) {
+                quotaCachePort.cacheUsedCount(userId, period, authoritativeUsedCount);
+            }
+        } catch (RuntimeException ex) {
+            log.warn("No fue posible resincronizar en Redis la cuota autoritativa para usuario {} período {}: {}",
+                    userId.value(), period.getValue(), ex.getMessage());
+        }
     }
 
     @Override

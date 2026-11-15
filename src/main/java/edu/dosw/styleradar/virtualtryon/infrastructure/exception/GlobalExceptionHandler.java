@@ -5,6 +5,7 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredExceptio
 import edu.dosw.styleradar.virtualtryon.domain.exception.DomainException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import org.slf4j.Logger;
@@ -36,6 +37,18 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
     private static final String BASE_TYPE_URL = "https://styleradar.dosw.edu/errors/";
+
+    /**
+     * Captura BiometricPhotoNotFoundException -> HTTP 404 Not Found
+     */
+    @ExceptionHandler(BiometricPhotoNotFoundException.class)
+    public ProblemDetail handleBiometricPhotoNotFoundException(BiometricPhotoNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+        problem.setTitle("Fotografía Biométrica No Encontrada");
+        problem.setProperty("errorCode", ex.getErrorCode());
+        problem.setProperty("timestamp", Instant.now().toString());
+        return problem;
+    }
 
     /**
      * Captura JobNotFoundException -> HTTP 404 Not Found
@@ -153,7 +166,7 @@ public class GlobalExceptionHandler {
         problem.setTitle("Error de Validación de Entrada");
         problem.setType(URI.create(BASE_TYPE_URL + "validation-error"));
         problem.setProperty("errorCode", "VALIDATION_FAILED");
-        problem.setProperty("invalidFields", fieldErrors);
+        problem.setProperty("errors", fieldErrors);
         problem.setProperty("timestamp", Instant.now());
         return problem;
     }

@@ -1,9 +1,12 @@
 package edu.dosw.styleradar.virtualtryon.domain.port.in;
 
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
+
+import java.util.List;
 
 /**
  * Puerto de entrada (Use Case) para la consulta de cuotas mensuales de prueba virtual,
@@ -13,7 +16,15 @@ public interface GetUserQuotaUseCase {
 
     UserQuota getUserQuota(UserId userId);
 
-    CatalogGarment validateGarmentEligibility(UserId userId, GarmentId garmentId);
+    GarmentValidationResult validateGarmentEligibility(
+            UserId userId,
+            GarmentId garmentId,
+            List<GarmentId> selectedGarmentIds
+    );
+
+    default GarmentValidationResult validateGarmentEligibility(UserId userId, GarmentId garmentId) {
+        return validateGarmentEligibility(userId, garmentId, List.of());
+    }
 
     CatalogGarment syncCatalogGarment(CatalogGarment garment);
 }

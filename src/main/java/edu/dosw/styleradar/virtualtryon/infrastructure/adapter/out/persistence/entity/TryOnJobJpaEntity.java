@@ -52,6 +52,9 @@ public class TryOnJobJpaEntity {
     @Column(name = "photo_purged", nullable = false)
     private boolean photoPurged;
 
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -75,7 +78,8 @@ public class TryOnJobJpaEntity {
             String errorMessage,
             boolean photoPurged,
             Instant createdAt,
-            Instant updatedAt
+            Instant updatedAt,
+            Instant completedAt
     ) {
         this.id = id;
         this.userId = userId;
@@ -91,6 +95,26 @@ public class TryOnJobJpaEntity {
         this.photoPurged = photoPurged;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.completedAt = completedAt;
+    }
+
+    public TryOnJobJpaEntity(
+            UUID id,
+            UUID userId,
+            UUID garmentId,
+            String photoUrl,
+            String garmentCategory,
+            String garmentImageUrl,
+            String status,
+            String resultImageUrl,
+            String aiProvider,
+            Long executionTimeMs,
+            String errorMessage,
+            boolean photoPurged,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+        this(id, userId, garmentId, photoUrl, garmentCategory, garmentImageUrl, status, resultImageUrl, aiProvider, executionTimeMs, errorMessage, photoPurged, createdAt, updatedAt, null);
     }
 
     public TryOnJobJpaEntity(
@@ -108,7 +132,7 @@ public class TryOnJobJpaEntity {
             Instant createdAt,
             Instant updatedAt
     ) {
-        this(id, userId, garmentId, photoUrl, garmentCategory, null, status, resultImageUrl, aiProvider, executionTimeMs, errorMessage, photoPurged, createdAt, updatedAt);
+        this(id, userId, garmentId, photoUrl, garmentCategory, null, status, resultImageUrl, aiProvider, executionTimeMs, errorMessage, photoPurged, createdAt, updatedAt, null);
     }
 
     public UUID getId() {
@@ -221,6 +245,14 @@ public class TryOnJobJpaEntity {
 
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public Instant getCompletedAt() {
+        return completedAt;
+    }
+
+    public void setCompletedAt(Instant completedAt) {
+        this.completedAt = completedAt;
     }
 }
 

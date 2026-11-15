@@ -23,11 +23,14 @@ public record TryOnJobResponse(
         @Schema(description = "Estado actual del procesamiento", example = "COMPLETED", allowableValues = {"QUEUED", "PROCESSING", "COMPLETED", "FAILED"})
         String status,
 
+        @Schema(description = "URL firmada temporal de la fotografía base del usuario (null si fue purgada)", example = "https://styleradar.blob.core.windows.net/biometric-silhouettes/pose.png?sp=r")
+        String photoUrl,
+
         @Schema(description = "URL de la imagen generada con la prenda ajustada (disponible al completar)", example = "https://styleradar.blob.core.windows.net/renders/result-3fa85f64.png")
         String resultImageUrl,
 
-        @Schema(description = "Tiempo de inferencia en milisegundos", example = "2450")
-        Long executionTimeMs,
+        @Schema(description = "Duración de inferencia en milisegundos", example = "2450")
+        Long executionDurationMs,
 
         @Schema(description = "Detalle del error en caso de fallo", example = "null")
         String errorMessage,
@@ -38,8 +41,11 @@ public record TryOnJobResponse(
         @Schema(description = "Fecha y hora de última actualización", example = "2026-11-02T10:30:03Z")
         Instant updatedAt,
 
-        @Schema(description = "Fecha y hora estimada de finalización (disponible durante QUEUED o PROCESSING)", example = "2026-11-02T10:30:30Z")
-        Instant estimatedCompletionAt
+        @Schema(description = "Fecha y hora de finalización exitosa en UTC", example = "2026-11-02T10:30:03Z")
+        Instant completedAt,
+
+        @Schema(description = "Duración estimada de procesamiento en segundos mientras está en QUEUED o PROCESSING", example = "25")
+        Integer estimatedDurationSeconds
 ) {
 
     public TryOnJobResponse(
@@ -48,11 +54,11 @@ public record TryOnJobResponse(
             UUID garmentId,
             String status,
             String resultImageUrl,
-            Long executionTimeMs,
+            Long executionDurationMs,
             String errorMessage,
             Instant createdAt,
             Instant updatedAt
     ) {
-        this(jobId, userId, garmentId, status, resultImageUrl, executionTimeMs, errorMessage, createdAt, updatedAt, null);
+        this(jobId, userId, garmentId, status, null, resultImageUrl, executionDurationMs, errorMessage, createdAt, updatedAt, null, null);
     }
 }

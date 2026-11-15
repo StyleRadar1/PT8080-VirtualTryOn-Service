@@ -99,7 +99,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
                 .withUserId(userId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("photos/user1/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl("https://catalog/shirt.png")
                 .withProvider(AiProvider.FASHN_AI);
 
@@ -211,7 +211,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://account.blob.core.windows.net/biometrics/photos/user1/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl("https://catalog/shirt.png")
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -343,15 +343,15 @@ class ProcessTryOnJobBiometricAndRetryTest {
         UUID idRecentlyUpdated = UUID.randomUUID();
         UUID idRecoverable = UUID.randomUUID();
 
-        TryOnJob candidateNotFound = new TryOnJobBuilder().withId(idNotFound).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOPS).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
-        TryOnJob candidateNotProcessing = new TryOnJobBuilder().withId(idNotProcessing).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOPS).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
+        TryOnJob candidateNotFound = new TryOnJobBuilder().withId(idNotFound).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOP).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
+        TryOnJob candidateNotProcessing = new TryOnJobBuilder().withId(idNotProcessing).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOP).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
         candidateNotProcessing.startAiProcessing();
         candidateNotProcessing.complete(SasSignedUrl.of("https://storage.blob.core.windows.net/res"), 100L);
 
-        TryOnJob candidateRecentlyUpdated = new TryOnJobBuilder().withId(idRecentlyUpdated).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOPS).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
+        TryOnJob candidateRecentlyUpdated = new TryOnJobBuilder().withId(idRecentlyUpdated).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOP).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
         candidateRecentlyUpdated.startAiProcessing();
 
-        TryOnJob candidateRecoverable = new TryOnJobBuilder().withId(idRecoverable).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOPS).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
+        TryOnJob candidateRecoverable = new TryOnJobBuilder().withId(idRecoverable).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOP).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
         candidateRecoverable.startAiProcessing();
         // Simular que fue actualizado hace 1 hora (anterior al threshold)
         java.lang.reflect.Field updatedAtField;

@@ -96,13 +96,14 @@ public interface VirtualTryOnOpenApiDoc {
 
     @Operation(
             summary = "Validar elegibilidad de prenda del catálogo y cuota mensual del usuario (SR-RF-24)",
-            description = "Verifica que la prenda exista en el catálogo, sea visible, pertenezca a una categoría compatible " +
-                    "(TOPS, BOTTOMS, ONE_PIECES, OUTERWEAR), que el usuario tenga consentimiento biométrico activo y cuota mensual disponible."
+            description = "Verifica que el usuario tenga consentimiento biométrico activo y cuota mensual disponible, " +
+                    "consulta la prenda en el catálogo y evalúa compatibilidad (TOP, BOTTOM, ONE_PIECE), visibilidad " +
+                    "y posibles reemplazos por zona corporal respecto a selectedGarmentIds."
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Prenda elegible y cuota mensual disponible",
+            @ApiResponse(responseCode = "200", description = "Evaluación completada (incluye incompatible/oculta con eligibleForTryOn=false)",
                     content = @Content(schema = @Schema(implementation = GarmentValidationResponse.class))),
-            @ApiResponse(responseCode = "400", description = "Prenda incompatible, inexistente o falta consentimiento biométrico",
+            @ApiResponse(responseCode = "400", description = "Prenda inexistente en catálogo o falta consentimiento biométrico",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
             @ApiResponse(responseCode = "401", description = "Usuario no autenticado (token JWT requerido)",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
@@ -115,7 +116,9 @@ public interface VirtualTryOnOpenApiDoc {
             @Parameter(description = "Identificador único de la prenda del catálogo (UUID)", example = "f8e7d6c5-b4a3-2109-8765-43210fedcba9")
             UUID garmentId,
             @Parameter(description = "Identificador único del usuario comprador (UUID)", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
-            UUID userId
+            UUID userId,
+            @Parameter(description = "Lista opcional de UUIDs de prendas ya seleccionadas para detectar reemplazos por zona")
+            List<UUID> selectedGarmentIds
     );
 
     @Operation(

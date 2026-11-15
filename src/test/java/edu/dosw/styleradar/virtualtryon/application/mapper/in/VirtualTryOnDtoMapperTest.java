@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -53,12 +54,15 @@ class VirtualTryOnDtoMapperTest {
                 .withUserId(userId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
         completedJob.startAiProcessing();
         completedJob.complete(SasSignedUrl.of(canonicalResult), 1200L);
 
+        String freshPhotoSas = "https://storage/photo.png?sig=freshPhotoSig";
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png"))
+                .thenReturn(SasSignedUrl.of(freshPhotoSas));
         when(blobStoragePort.generateReadOnlySignedUrl(canonicalResult))
                 .thenReturn(SasSignedUrl.of(freshSas));
 
@@ -67,14 +71,18 @@ class VirtualTryOnDtoMapperTest {
         assertThat(response).isNotNull();
         assertThat(response.jobId()).isEqualTo(jobId);
         assertThat(response.status()).isEqualTo(JobStatus.COMPLETED.name());
+        assertThat(response.photoUrl()).isEqualTo(freshPhotoSas);
         assertThat(response.resultImageUrl()).isEqualTo(freshSas);
         assertThat(response.resultImageUrl()).contains("sig=freshSignature");
+        assertThat(response.executionDurationMs()).isEqualTo(1200L);
+        assertThat(response.completedAt()).isNotNull();
+        verify(blobStoragePort).generateReadOnlySignedUrl("https://storage/photo.png");
         verify(blobStoragePort).generateReadOnlySignedUrl(canonicalResult);
     }
 
     @Test
-    @DisplayName("toJobResponse retorna URL canónica si blobStoragePort es nulo y null si el trabajo aún no tiene resultado")
-    void shouldReturnCanonicalUrlWhenBlobStoragePortIsNullAndNullWhenNoResult() {
+    @DisplayName("toJobResponse omite URLs sin firmar si blobStoragePort es nulo y retorna null si aún no hay resultado")
+    void shouldOmitUnsignedUrlsWhenBlobStoragePortIsNullAndReturnNullWhenNoResult() {
         VirtualTryOnDtoMapper mapper = new VirtualTryOnDtoMapper(null);
         UUID jobId = UUID.randomUUID();
         String canonicalResult = "https://storage/result.png";
@@ -84,24 +92,26 @@ class VirtualTryOnDtoMapperTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
         completedJob.complete(SasSignedUrl.of(canonicalResult), 800L);
 
         TryOnJobResponse completedResponse = mapper.toJobResponse(completedJob);
-        assertThat(completedResponse.resultImageUrl()).isEqualTo(canonicalResult);
+        assertThat(completedResponse.photoUrl()).isNull();
+        assertThat(completedResponse.resultImageUrl()).isNull();
 
         TryOnJob queuedJob = new TryOnJobBuilder()
                 .withId(UUID.randomUUID())
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
 
         TryOnJobResponse queuedResponse = mapper.toJobResponse(queuedJob);
+        assertThat(queuedResponse.photoUrl()).isNull();
         assertThat(queuedResponse.resultImageUrl()).isNull();
     }
 
@@ -178,54 +188,179 @@ class VirtualTryOnDtoMapperTest {
         CatalogGarment garment = new CatalogGarment(
                 GarmentId.of(garmentId),
                 "Camisa Lino",
-                GarmentCategory.TOPS,
+                GarmentCategory.TOP,
                 "https://cat.local/shirt.png",
                 true,
                 now
         );
         GarmentValidationResponse garmentResponse = mapper.toGarmentValidationResponse(garment);
         assertThat(garmentResponse.garmentId()).isEqualTo(garmentId);
-        assertThat(garmentResponse.category()).isEqualTo("TOPS");
+        assertThat(garmentResponse.category()).isEqualTo("TOP");
+        assertThat(garmentResponse.compatible()).isTrue();
+        assertThat(garmentResponse.visible()).isTrue();
+        assertThat(garmentResponse.zone()).isEqualTo("UPPER_BODY");
         assertThat(garmentResponse.eligibleForTryOn()).isTrue();
+        assertThat(garmentResponse.replacedGarmentIds()).isEmpty();
     }
 
     @Test
-    @DisplayName("toJobResponse calcula estimatedCompletionAt en QUEUED y PROCESSING, y retorna null en COMPLETED y FAILED")
+    @DisplayName("toJobResponse calcula estimatedDurationSeconds en QUEUED y PROCESSING, y retorna null en COMPLETED y FAILED")
     void shouldCalculateEstimatedCompletionAtForActiveJobs() {
-        VirtualTryOnDtoMapper mapper = new VirtualTryOnDtoMapper(null, java.time.Duration.ofSeconds(30));
+        VirtualTryOnDtoMapper mapper = new VirtualTryOnDtoMapper(null, java.time.Duration.ofSeconds(25));
 
         TryOnJob queuedJob = new TryOnJobBuilder()
                 .withId(UUID.randomUUID())
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
 
         TryOnJobResponse queuedResponse = mapper.toJobResponse(queuedJob);
-        assertThat(queuedResponse.estimatedCompletionAt()).isNotNull();
-        assertThat(queuedResponse.estimatedCompletionAt()).isEqualTo(queuedJob.getCreatedAt().plusSeconds(30));
+        assertThat(queuedResponse.estimatedDurationSeconds()).isEqualTo(25);
+        assertThat(queuedResponse.photoUrl()).isNull();
+        assertThat(queuedResponse.completedAt()).isNull();
 
         queuedJob.startAiProcessing();
         TryOnJobResponse processingResponse = mapper.toJobResponse(queuedJob);
-        assertThat(processingResponse.estimatedCompletionAt()).isNotNull();
+        assertThat(processingResponse.estimatedDurationSeconds()).isEqualTo(25);
 
         queuedJob.complete(SasSignedUrl.of("https://storage/result.png"), 1000L);
         TryOnJobResponse completedResponse = mapper.toJobResponse(queuedJob);
-        assertThat(completedResponse.estimatedCompletionAt()).isNull();
+        assertThat(completedResponse.estimatedDurationSeconds()).isNull();
+        assertThat(completedResponse.executionDurationMs()).isEqualTo(1000L);
+        assertThat(completedResponse.completedAt()).isNotNull();
 
         TryOnJob failedJob = new TryOnJobBuilder()
                 .withId(UUID.randomUUID())
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
         failedJob.markFailed("Error de inferencia");
         TryOnJobResponse failedResponse = mapper.toJobResponse(failedJob);
-        assertThat(failedResponse.estimatedCompletionAt()).isNull();
+        assertThat(failedResponse.estimatedDurationSeconds()).isNull();
+    }
+
+    @Test
+    @DisplayName("toJobResponse omite URLs sin firmar cuando generateReadOnlySignedUrl retorna null o URL sin parámetro sig no vacío")
+    void shouldOmitUnsignedUrlsWhenSasGenerationReturnsNullOrUnsigned() {
+        VirtualTryOnDtoMapper mapper = new VirtualTryOnDtoMapper(blobStoragePort);
+
+        TryOnJob completedJob = new TryOnJobBuilder()
+                .withId(UUID.randomUUID())
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://storage/photo.png")
+                .withCategory(GarmentCategory.TOP)
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+        completedJob.complete(SasSignedUrl.of("https://storage/result.png"), 900L);
+
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png")).thenReturn(null);
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/result.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/result.png?sig="));
+
+        TryOnJobResponse response = mapper.toJobResponse(completedJob);
+        assertThat(response.photoUrl()).isNull();
+        assertThat(response.resultImageUrl()).isNull();
+
+        // Rechaza URLs que incluyen sp/sr, sas o sig en blanco pero no tienen una firma sig válida
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/photo.png?sp=r&sr=b"));
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/result.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/result.png?sas=tok123"));
+
+        TryOnJobResponse unsignedParamsResponse = mapper.toJobResponse(completedJob);
+        assertThat(unsignedParamsResponse.photoUrl()).isNull();
+        assertThat(unsignedParamsResponse.resultImageUrl()).isNull();
+
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/photo.png?sig=   "));
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/result.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/result.png?foo=bar"));
+
+        TryOnJobResponse blankSigResponse = mapper.toJobResponse(completedJob);
+        assertThat(blankSigResponse.photoUrl()).isNull();
+        assertThat(blankSigResponse.resultImageUrl()).isNull();
+
+        // Acepta URLs con parámetro sig no vacío (incluyendo con fragmento o parámetros Azure completos)
+        String signedPhotoUrl = "https://storage/photo.png?se=2026-11-15T20:00:00Z&sp=r&spr=https&sv=2024-11-04&sr=b&sig=photoSig#v1";
+        String signedResultUrl = "https://storage/result.png?se=2026-11-15T20:00:00Z&sp=r&spr=https&sv=2024-11-04&sr=b&sig=resultSig";
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png"))
+                .thenReturn(SasSignedUrl.of(signedPhotoUrl));
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/result.png"))
+                .thenReturn(SasSignedUrl.of(signedResultUrl));
+
+        TryOnJobResponse signedResponse = mapper.toJobResponse(completedJob);
+        assertThat(signedResponse.photoUrl()).isEqualTo(signedPhotoUrl);
+        assertThat(signedResponse.resultImageUrl()).isEqualTo(signedResultUrl);
+    }
+
+    @Test
+    @DisplayName("toJobResponse maneja de forma controlada excepciones al generar firma SAS sin exponer referencias de almacenamiento")
+    void shouldHandleExceptionDuringSasGenerationWithoutLeakingStorageReferences() {
+        VirtualTryOnDtoMapper mapper = new VirtualTryOnDtoMapper(blobStoragePort);
+
+        TryOnJob completedJob = new TryOnJobBuilder()
+                .withId(UUID.randomUUID())
+                .withUserId(UserId.of(UUID.randomUUID()))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://storage/photo.png")
+                .withCategory(GarmentCategory.TOP)
+                .withProvider(AiProvider.FASHN_AI)
+                .build();
+        completedJob.complete(SasSignedUrl.of("https://storage/result.png"), 900L);
+
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/photo.png"))
+                .thenThrow(new IllegalStateException("Azure SAS key unavailable"));
+        when(blobStoragePort.generateReadOnlySignedUrl("https://storage/result.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/result.png?sig=signedOk"));
+
+        TryOnJobResponse response = mapper.toJobResponse(completedJob);
+        assertThat(response.photoUrl()).isNull();
+        assertThat(response.resultImageUrl()).isEqualTo("https://storage/result.png?sig=signedOk");
+
+        completedJob.purgeBiometricPhoto();
+        TryOnJobResponse purgedResponse = mapper.toJobResponse(completedJob);
+        assertThat(purgedResponse.photoUrl()).isNull();
+    }
+
+    @Test
+    @DisplayName("toPhotoResponse firma referencias biométricas sin SAS y omite la URL si falla la firma")
+    void shouldSignOrOmitUnsignedBiometricPhotoUrlSafely() {
+        UUID photoId = UUID.randomUUID();
+        UserId userId = UserId.of(UUID.randomUUID());
+        Instant now = Instant.now();
+
+        BiometricPhoto unsignedPhoto = new BiometricPhoto(
+                photoId,
+                userId,
+                "image/png",
+                1080,
+                1920,
+                204800L,
+                "user/silhouette.png",
+                SasSignedUrl.of("https://blob.storage.local/biometric-silhouettes/user/silhouette.png"),
+                now
+        );
+
+        VirtualTryOnDtoMapper mapperWithoutPort = new VirtualTryOnDtoMapper(null);
+        assertThat(mapperWithoutPort.toPhotoResponse(unsignedPhoto).photoUrl()).isNull();
+
+        VirtualTryOnDtoMapper mapperWithPort = new VirtualTryOnDtoMapper(blobStoragePort);
+        when(blobStoragePort.generateReadOnlySignedUrl("user/silhouette.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/user/silhouette.png?sig=bioSas"));
+        assertThat(mapperWithPort.toPhotoResponse(unsignedPhoto).photoUrl())
+                .isEqualTo("https://storage/user/silhouette.png?sig=bioSas");
+
+        when(blobStoragePort.generateReadOnlySignedUrl("user/silhouette.png"))
+                .thenReturn(SasSignedUrl.of("https://storage/user/silhouette.png"));
+        assertThat(mapperWithPort.toPhotoResponse(unsignedPhoto).photoUrl()).isNull();
+        verify(blobStoragePort, never()).generateReadOnlySignedUrl("https://blob.storage.local/biometric-silhouettes/user/silhouette.png");
     }
 }
 

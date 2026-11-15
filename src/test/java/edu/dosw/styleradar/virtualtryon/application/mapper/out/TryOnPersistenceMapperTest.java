@@ -93,10 +93,12 @@ class TryOnPersistenceMapperTest {
 
         BiometricPhotoJpaEntity entity = mapper.toPhotoJpaEntity(domain);
         assertThat(entity.getPhotoUrl()).isEqualTo(userId.value() + "/photo.png");
+        assertThat(entity.isActive()).isTrue();
 
         BiometricPhoto fromEntity = mapper.toPhotoDomain(entity);
         assertThat(fromEntity.getBlobPath()).isEqualTo(userId.value() + "/photo.png");
         assertThat(fromEntity.getPhotoUrl().value()).contains(userId.value().toString());
+        assertThat(fromEntity.isActive()).isTrue();
     }
 
     @Test
@@ -133,18 +135,18 @@ class TryOnPersistenceMapperTest {
 
         CatalogGarment domain = new CatalogGarment(
                 GarmentId.of(garmentId),
-                "Chaqueta Denim",
-                GarmentCategory.TOPS,
+                "Camisa Denim",
+                GarmentCategory.TOP,
                 "https://cat.local/jacket.png",
                 true,
                 now
         );
 
         CatalogGarmentJpaEntity entity = mapper.toCatalogGarmentJpaEntity(domain);
-        assertThat(entity.getCategory()).isEqualTo("TOPS");
+        assertThat(entity.getCategory()).isEqualTo("TOP");
 
         CatalogGarment fromEntity = mapper.toCatalogGarmentDomain(entity);
-        assertThat(fromEntity.getCategory()).isEqualTo(GarmentCategory.TOPS);
+        assertThat(fromEntity.getCategory()).isEqualTo(GarmentCategory.TOP);
     }
 
     @Test
@@ -161,7 +163,7 @@ class TryOnPersistenceMapperTest {
                 userId,
                 garmentId,
                 "https://blob/photo.png",
-                GarmentCategory.BOTTOMS,
+                GarmentCategory.BOTTOM,
                 "https://blob/pants.png",
                 JobStatus.COMPLETED,
                 SasSignedUrl.of("https://blob/result.png"),
@@ -170,18 +172,21 @@ class TryOnPersistenceMapperTest {
                 null,
                 false,
                 now,
+                now,
                 now
         );
 
         TryOnJobJpaEntity entityWithResult = mapper.toJobJpaEntity(domainWithResult);
         assertThat(entityWithResult.getResultImageUrl()).isEqualTo("https://blob/result.png");
         assertThat(entityWithResult.getAiProvider()).isEqualTo("MOCK_LOCAL");
+        assertThat(entityWithResult.getCompletedAt()).isEqualTo(now);
 
         TryOnJob fromEntity = mapper.toJobDomain(entityWithResult);
         assertThat(fromEntity.getResultImageUrl()).isNotNull();
         assertThat(fromEntity.getResultImageUrl().value()).isEqualTo("https://blob/result.png");
-        assertThat(fromEntity.getGarmentCategory()).isEqualTo(GarmentCategory.BOTTOMS);
+        assertThat(fromEntity.getGarmentCategory()).isEqualTo(GarmentCategory.BOTTOM);
         assertThat(fromEntity.getAiProvider()).isEqualTo(AiProvider.MOCK_LOCAL);
+        assertThat(fromEntity.getCompletedAt()).isEqualTo(now);
 
         // Con campos nulos o vacíos para cubrir ramas de fallback
         TryOnJob domainNullResult = new TryOnJobBuilder()
@@ -189,7 +194,7 @@ class TryOnPersistenceMapperTest {
                 .withUserId(userId)
                 .withGarmentId(garmentId)
                 .withPhotoUrl("https://blob/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
 
@@ -201,7 +206,7 @@ class TryOnPersistenceMapperTest {
                 userId.value(),
                 garmentId.value(),
                 "https://blob/photo.png",
-                null, // category null -> defaults to TOPS
+                null, // category null -> defaults to TOP
                 null,
                 "QUEUED",
                 "   ", // blank result url -> null
@@ -214,7 +219,7 @@ class TryOnPersistenceMapperTest {
         );
         TryOnJob fromFallback = mapper.toJobDomain(fallbackEntity);
         assertThat(fromFallback.getResultImageUrl()).isNull();
-        assertThat(fromFallback.getGarmentCategory()).isEqualTo(GarmentCategory.TOPS);
+        assertThat(fromFallback.getGarmentCategory()).isEqualTo(GarmentCategory.TOP);
         assertThat(fromFallback.getAiProvider()).isEqualTo(AiProvider.FASHN_AI);
     }
 
@@ -286,7 +291,7 @@ class TryOnPersistenceMapperTest {
                 userId,
                 GarmentId.of(UUID.randomUUID()),
                 photoUrlWithSas,
-                GarmentCategory.TOPS,
+                GarmentCategory.TOP,
                 "https://cat.local/shirt.png",
                 JobStatus.COMPLETED,
                 SasSignedUrl.of(resultUrlWithSas),

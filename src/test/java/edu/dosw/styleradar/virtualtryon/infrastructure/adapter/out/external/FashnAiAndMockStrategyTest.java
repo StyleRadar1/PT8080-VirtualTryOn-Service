@@ -94,7 +94,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(MODEL_IMAGE_URL)
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -112,11 +112,11 @@ class FashnAiAndMockStrategyTest {
     @DisplayName("HU SR-RF-25: Cuando FASHN AI falla o no devuelve imagen válida, FashnAiStrategy lanza AiProviderTimeoutException sin recurrir a fallback silencioso")
     void shouldThrowExceptionWhenFashnAiFailsWithoutSilentFallback() {
         FashnAiRestClientAdapter withoutKey = new FashnAiRestClientAdapter(builder, " ", Duration.ZERO, 2);
-        assertThat(withoutKey.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
+        assertThat(withoutKey.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
         assertThat(withoutKey.queryExternalJobStatus("abc")).isEqualTo(JobStatus.FAILED);
 
         FashnAiRestClientAdapter springConstructed = new FashnAiRestClientAdapter(FASHN_URL, "");
-        assertThat(springConstructed.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
+        assertThat(springConstructed.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
 
         // Caso 1: Error 500 en /run -> FashnAiStrategy lanza excepción y no entrega resultado falso
         server.expect(requestTo(FASHN_URL + "/run")).andRespond(withServerError());
@@ -124,7 +124,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(MODEL_IMAGE_URL)
-                .withCategory(GarmentCategory.BOTTOMS)
+                .withCategory(GarmentCategory.BOTTOM)
                 .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -138,7 +138,7 @@ class FashnAiAndMockStrategyTest {
                 .andRespond(withSuccess("{\"id\":\"abc\"}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(FASHN_URL + "/status/abc"))
                 .andRespond(withSuccess("{\"status\":\"failed\",\"error\":\"imagen invalida\"}", MediaType.APPLICATION_JSON));
-        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.ONE_PIECES))
+        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.ONE_PIECE))
                 .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
         server.verify();
         server.reset();
@@ -146,7 +146,7 @@ class FashnAiAndMockStrategyTest {
         // Caso 2b: FASHN AI devuelve 401 Unauthorized -> lanza AiInferencePermanentException
         server.expect(requestTo(FASHN_URL + "/run"))
                 .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withUnauthorizedRequest());
-        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS))
+        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP))
                 .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
         server.verify();
         server.reset();
@@ -158,14 +158,14 @@ class FashnAiAndMockStrategyTest {
                 .andRespond(withSuccess("{\"status\":\"processing\"}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(FASHN_URL + "/status/abc"))
                 .andRespond(withSuccess("{\"status\":\"in_queue\"}", MediaType.APPLICATION_JSON));
-        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
+        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
         server.verify();
         server.reset();
 
         // Caso 4: FASHN AI no devuelve id en /run
         server.expect(requestTo(FASHN_URL + "/run"))
                 .andRespond(withSuccess("{\"error\":\"sin creditos\"}", MediaType.APPLICATION_JSON));
-        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
+        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
         server.verify();
     }
 
@@ -197,9 +197,9 @@ class FashnAiAndMockStrategyTest {
         assertThat(fashnAiStrategy.checkStatus("job-4")).isEqualTo(JobStatus.FAILED);
         server.verify();
 
-        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.TOPS)).isEqualTo("tops");
-        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.BOTTOMS)).isEqualTo("bottoms");
-        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.ONE_PIECES)).isEqualTo("one-pieces");
+        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.TOP)).isEqualTo("tops");
+        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.BOTTOM)).isEqualTo("bottoms");
+        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.ONE_PIECE)).isEqualTo("one-pieces");
         assertThat(FashnAiRestClientAdapter.resolveCategoryCode(null)).isEqualTo("auto");
     }
 
@@ -212,7 +212,7 @@ class FashnAiAndMockStrategyTest {
         BufferedImage hugeUserPhoto = new BufferedImage(1800, 2400, BufferedImage.TYPE_INT_RGB);
         BufferedImage garmentImage = new BufferedImage(400, 500, BufferedImage.TYPE_INT_ARGB);
 
-        byte[] renderedBytes = mockAiStrategy.composeOverlay(hugeUserPhoto, garmentImage, GarmentCategory.ONE_PIECES);
+        byte[] renderedBytes = mockAiStrategy.composeOverlay(hugeUserPhoto, garmentImage, GarmentCategory.ONE_PIECE);
         BufferedImage decoded = mockAiStrategy.decodeImage(renderedBytes);
 
         assertThat(decoded).isNotNull();
@@ -242,7 +242,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(photoUrl)
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl(garmentUrl)
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
@@ -263,7 +263,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://empty/bottoms-user.png")
-                .withCategory(GarmentCategory.BOTTOMS)
+                .withCategory(GarmentCategory.BOTTOM)
                 .withGarmentImageUrl(null)
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
@@ -278,7 +278,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://empty/user.png")
-                .withCategory(GarmentCategory.ONE_PIECES)
+                .withCategory(GarmentCategory.ONE_PIECE)
                 .withGarmentImageUrl("https://empty/garment.png")
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
@@ -356,7 +356,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://direct/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();

@@ -10,7 +10,7 @@ import java.util.UUID;
 /**
  * Entidad de dominio que representa la fotografía frontal de silueta del usuario para el probador virtual (SR-RF-23).
  * Almacena los metadatos técnicos validados, la ruta persistente del blob en Azure (sin tokens temporales)
- * y la URL firmada SAS generada en tiempo de lectura para acceso temporal de 60 minutos.
+ * y la URL firmada SAS generada en tiempo de lectura para acceso temporal de 15 minutos.
  */
 public class BiometricPhoto {
 
@@ -23,6 +23,7 @@ public class BiometricPhoto {
     private final String blobPath;
     private final SasSignedUrl photoUrl;
     private final Instant uploadedAt;
+    private final boolean active;
 
     public BiometricPhoto(
             UUID photoId,
@@ -34,6 +35,21 @@ public class BiometricPhoto {
             String blobPath,
             SasSignedUrl photoUrl,
             Instant uploadedAt
+    ) {
+        this(photoId, userId, contentType, width, height, sizeBytes, blobPath, photoUrl, uploadedAt, true);
+    }
+
+    public BiometricPhoto(
+            UUID photoId,
+            UserId userId,
+            String contentType,
+            int width,
+            int height,
+            long sizeBytes,
+            String blobPath,
+            SasSignedUrl photoUrl,
+            Instant uploadedAt,
+            boolean active
     ) {
         this.photoId = Objects.requireNonNull(photoId, "El identificador de la fotografía no puede ser nulo");
         this.userId = Objects.requireNonNull(userId, "El identificador del usuario no puede ser nulo");
@@ -53,6 +69,7 @@ public class BiometricPhoto {
         this.blobPath = Objects.requireNonNull(blobPath, "La ruta persistida del blob es obligatoria");
         this.photoUrl = Objects.requireNonNull(photoUrl, "La URL firmada de la fotografía es obligatoria");
         this.uploadedAt = Objects.requireNonNull(uploadedAt, "La fecha de carga es obligatoria");
+        this.active = active;
     }
 
     public BiometricPhoto(
@@ -78,8 +95,11 @@ public class BiometricPhoto {
         );
     }
 
+    /**
+     * Reconstruye la foto biométrica preservando sus metadatos y asociando una URL SAS refrescada.
+     */
     public BiometricPhoto withFreshSignedUrl(SasSignedUrl freshUrl) {
-        return new BiometricPhoto(photoId, userId, contentType, width, height, sizeBytes, blobPath, freshUrl, uploadedAt);
+        return new BiometricPhoto(photoId, userId, contentType, width, height, sizeBytes, blobPath, freshUrl, uploadedAt, active);
     }
 
     public UUID getPhotoId() {
@@ -108,6 +128,10 @@ public class BiometricPhoto {
 
     public String getBlobPath() {
         return blobPath;
+    }
+
+    public boolean isActive() {
+        return active;
     }
 
     public SasSignedUrl getPhotoUrl() {

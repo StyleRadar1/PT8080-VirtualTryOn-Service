@@ -43,7 +43,6 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
-import java.util.OptionalInt;
 import java.util.function.Supplier;
 
 /**
@@ -148,19 +147,6 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)
                     .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
 
-            OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
-            if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
-                quota = new UserQuota(
-                        quota.getId(),
-                        quota.getUserId(),
-                        quota.getMonthlyLimit(),
-                        cachedUsed.getAsInt(),
-                        quota.getBillingPeriod(),
-                        quota.isRadarPlus(),
-                        quota.getLastResetAt()
-                );
-            }
-
             TryOnValidationContext validationContext = new TryOnValidationContext(
                     userId,
                     garment.getGarmentId(),
@@ -234,6 +220,12 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         } catch (Exception ex) {
             log.warn("Fallo no bloqueante al actualizar cuota en Redis post-commit para usuario {}: {}",
                     userId.value(), ex.getMessage());
+            try {
+                quotaCachePort.evictQuota(userId, period);
+            } catch (Exception evictEx) {
+                log.warn("Tampoco fue posible invalidar la caché de cuota en Redis para usuario {}: {}",
+                        userId.value(), evictEx.getMessage());
+            }
         }
     }
 

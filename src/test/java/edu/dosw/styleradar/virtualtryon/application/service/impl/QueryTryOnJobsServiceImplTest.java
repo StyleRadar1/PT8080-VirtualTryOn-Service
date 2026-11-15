@@ -7,8 +7,10 @@ import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
+import edu.dosw.styleradar.virtualtryon.domain.model.BodyZone;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
@@ -159,8 +161,8 @@ class QueryTryOnJobsServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-24: Dado contador en Redis mayor al almacenado en BD, Cuando consulta getUserQuota, Entonces sincroniza y actualiza el conteo en JPA")
-    void shouldSynchronizeDatabaseQuotaWhenRedisCounterIsHigher() {
+    @DisplayName("HU SR-RF-24: Dado contador desactualizado en Redis mayor al almacenado en BD tras un reembolso, Cuando consulta getUserQuota, Entonces PostgreSQL prevalece y resincroniza Redis")
+    void shouldPreserveDatabaseQuotaAndResyncRedisWhenRedisCounterIsStale() {
         UserId userId = UserId.of(UUID.randomUUID());
         BillingPeriod currentPeriod = BillingPeriod.current();
         UserQuotaJpaEntity existingEntity = new UserQuotaJpaEntity(
@@ -174,15 +176,42 @@ class QueryTryOnJobsServiceImplTest {
         );
         when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
                 .thenReturn(Optional.of(existingEntity));
-        when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
         when(valueOperations.get(any())).thenReturn("4");
 
         UserQuota quota = queryTryOnJobsService.getUserQuota(userId);
 
-        assertEquals(4, quota.getUsedCount());
-        assertEquals(6, quota.getRemainingCount());
-        verify(quotaJpaRepository).save(any(UserQuotaJpaEntity.class));
+        assertEquals(2, quota.getUsedCount());
+        assertEquals(8, quota.getRemainingCount());
+        verify(quotaJpaRepository, never()).save(any(UserQuotaJpaEntity.class));
+        verify(valueOperations).set(any(), eq("2"), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Si falla la actualización de Redis al consultar cuota desactualizada tras reembolso, getUserQuota no revierte el reembolso ni falla")
+    void shouldTolerateRedisFailureWhileResyncingStaleCounterInGetUserQuota() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        UserQuotaJpaEntity existingEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(),
+                userId.value(),
+                10,
+                2,
+                currentPeriod.getValue(),
+                false,
+                Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(existingEntity));
+        when(valueOperations.get(any())).thenReturn("3");
+        doThrow(new RuntimeException("Redis write timeout"))
+                .when(valueOperations).set(any(), any(), any(Duration.class));
+
+        UserQuota quota = queryTryOnJobsService.getUserQuota(userId);
+
+        assertEquals(2, quota.getUsedCount());
+        assertEquals(8, quota.getRemainingCount());
+        verify(quotaJpaRepository, never()).save(any(UserQuotaJpaEntity.class));
+        verify(redisTemplate).delete(any(String.class));
     }
 
     @Test
@@ -193,7 +222,7 @@ class QueryTryOnJobsServiceImplTest {
         CatalogGarmentJpaEntity garmentEntity = new CatalogGarmentJpaEntity(
                 garmentId.value(),
                 "Camisa Oxford Azul",
-                "TOPS",
+                "TOP",
                 "https://styleradar.blob.core.windows.net/catalog/oxford.png",
                 true,
                 Instant.now()
@@ -214,11 +243,73 @@ class QueryTryOnJobsServiceImplTest {
         when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
         when(valueOperations.get(any())).thenReturn("3");
 
-        CatalogGarment validated = queryTryOnJobsService.validateGarmentEligibility(userId, garmentId);
+        GarmentValidationResult result = queryTryOnJobsService.validateGarmentEligibility(userId, garmentId);
 
-        assertTrue(validated.isEligibleForTryOn());
-        assertEquals(GarmentCategory.TOPS, validated.getCategory());
-        assertEquals("Camisa Oxford Azul", validated.getName());
+        assertTrue(result.eligibleForTryOn());
+        assertTrue(result.compatible());
+        assertTrue(result.visible());
+        assertEquals(BodyZone.UPPER_BODY, result.zone());
+        assertEquals(GarmentCategory.TOP, result.garment().getCategory());
+        assertEquals("Camisa Oxford Azul", result.garment().getName());
+        assertTrue(result.replacedGarmentIds().isEmpty());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 (Opción A / RN-01 / RN-02 / FA-01 / FA-02): Prenda incompatible (OUTERWEAR) u oculta retorna compatible=false/visible=false y selectedGarmentIds calcula reemplazos por zona")
+    void shouldReturnNonThrowingValidationResultForIncompatibleOrHiddenGarmentAndComputeZoneReplacements() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId jacketId = GarmentId.of(UUID.randomUUID());
+        GarmentId hiddenTopId = GarmentId.of(UUID.randomUUID());
+        GarmentId dressId = GarmentId.of(UUID.randomUUID());
+        GarmentId existingTopId = GarmentId.of(UUID.randomUUID());
+
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
+                new BiometricConsent(
+                        UUID.randomUUID(), userId, "v1.0-LEY1581", true,
+                        List.of("VIRTUAL_TRY_ON"), Instant.now(), null, "127.0.0.1"
+                )
+        ));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+        when(valueOperations.get(any())).thenReturn("1");
+
+        // 1. OUTERWEAR -> 200 equivalente en servicio (compatible=false, eligibleForTryOn=false)
+        CatalogGarmentJpaEntity outerwearEntity = new CatalogGarmentJpaEntity(
+                jacketId.value(), "Chaqueta Cuero", "OUTERWEAR", "https://cat/jacket.png", true, Instant.now()
+        );
+        when(catalogGarmentJpaRepository.findById(jacketId.value())).thenReturn(Optional.of(outerwearEntity));
+        GarmentValidationResult outerwearResult = queryTryOnJobsService.validateGarmentEligibility(userId, jacketId);
+        assertThat(outerwearResult.compatible()).isFalse();
+        assertThat(outerwearResult.visible()).isTrue();
+        assertThat(outerwearResult.eligibleForTryOn()).isFalse();
+        assertThat(outerwearResult.validationMessage()).contains("OUTERWEAR");
+
+        // 2. Prenda no visible -> visible=false, eligibleForTryOn=false
+        CatalogGarmentJpaEntity hiddenEntity = new CatalogGarmentJpaEntity(
+                hiddenTopId.value(), "Camiseta Oculta", "TOP", "https://cat/hidden.png", false, Instant.now()
+        );
+        when(catalogGarmentJpaRepository.findById(hiddenTopId.value())).thenReturn(Optional.of(hiddenEntity));
+        GarmentValidationResult hiddenResult = queryTryOnJobsService.validateGarmentEligibility(userId, hiddenTopId);
+        assertThat(hiddenResult.compatible()).isTrue();
+        assertThat(hiddenResult.visible()).isFalse();
+        assertThat(hiddenResult.eligibleForTryOn()).isFalse();
+
+        // 3. ONE_PIECE contra selectedGarmentIds -> reemplaza TOP previamente seleccionado
+        CatalogGarmentJpaEntity dressEntity = new CatalogGarmentJpaEntity(
+                dressId.value(), "Vestido Gala", "ONE_PIECE", "https://cat/dress.png", true, Instant.now()
+        );
+        CatalogGarmentJpaEntity existingTopEntity = new CatalogGarmentJpaEntity(
+                existingTopId.value(), "Blusa Seda", "TOP", "https://cat/top.png", true, Instant.now()
+        );
+        when(catalogGarmentJpaRepository.findById(dressId.value())).thenReturn(Optional.of(dressEntity));
+        when(catalogGarmentJpaRepository.findAllById(List.of(existingTopId.value())))
+                .thenReturn(List.of(existingTopEntity));
+
+        GarmentValidationResult dressResult = queryTryOnJobsService.validateGarmentEligibility(
+                userId, dressId, List.of(existingTopId)
+        );
+        assertThat(dressResult.eligibleForTryOn()).isTrue();
+        assertThat(dressResult.zone()).isEqualTo(BodyZone.FULL_BODY);
+        assertThat(dressResult.replacedGarmentIds()).containsExactly(existingTopId);
     }
 
     @Test
@@ -234,7 +325,7 @@ class QueryTryOnJobsServiceImplTest {
         CatalogGarmentJpaEntity garmentEntity = new CatalogGarmentJpaEntity(
                 garmentId.value(),
                 "Pantalón Cargo",
-                "BOTTOMS",
+                "BOTTOM",
                 "https://styleradar.blob.core.windows.net/catalog/cargo.png",
                 true,
                 Instant.now()
@@ -256,7 +347,25 @@ class QueryTryOnJobsServiceImplTest {
                         "127.0.0.1"
                 )
         ));
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        // Si Redis conservaba un "10" obsoleto tras un reembolso en BD (used=9), PostgreSQL prevalece y permite validar
+        UserQuotaJpaEntity refundedEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(), userId.value(), 10, 9, currentPeriod.getValue(), false, Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(refundedEntity));
         when(valueOperations.get(any())).thenReturn("10");
+
+        GarmentValidationResult refundedResult = queryTryOnJobsService.validateGarmentEligibility(userId, garmentId);
+        assertTrue(refundedResult.eligibleForTryOn());
+        verify(valueOperations).set(any(), eq("9"), any(Duration.class));
+
+        // Cuando la cuota realmente está agotada en PostgreSQL (used=10), lanza QuotaExceededException
+        UserQuotaJpaEntity exhaustedEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(), userId.value(), 10, 10, currentPeriod.getValue(), false, Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(exhaustedEntity));
         assertThrows(QuotaExceededException.class,
                 () -> queryTryOnJobsService.validateGarmentEligibility(userId, garmentId));
     }
@@ -325,6 +434,7 @@ class QueryTryOnJobsServiceImplTest {
         org.mockito.Mockito.doThrow(new RuntimeException("Redis write error"))
                 .when(valueOperations).set(any(), any(), any(Duration.class));
         redisQuotaCacheAdapter.cacheUsedCount(userId, period, 2);
+        verify(redisTemplate, org.mockito.Mockito.times(2)).delete(any(String.class));
 
         when(valueOperations.increment(any())).thenThrow(new RuntimeException("Redis increment error"));
         assertEquals(0, redisQuotaCacheAdapter.incrementUsedCount(userId, period));
@@ -445,7 +555,7 @@ class QueryTryOnJobsServiceImplTest {
                 .withUserId(ownerId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .build();
 
         edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort jobRepo = org.mockito.Mockito.mock(
@@ -517,7 +627,7 @@ class QueryTryOnJobsServiceImplTest {
                 ownerId,
                 edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
                 photoUrl,
-                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOP,
                 "https://garment.png",
                 edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
                 resultUrl,
@@ -602,7 +712,7 @@ class QueryTryOnJobsServiceImplTest {
                 ownerId,
                 edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
                 photoUrl,
-                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOP,
                 "https://garment.png",
                 edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
                 resultUrl,
@@ -653,7 +763,7 @@ class QueryTryOnJobsServiceImplTest {
                 ownerId,
                 edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
                 photoUrl,
-                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOP,
                 "https://garment.png",
                 edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
                 resultUrl,
@@ -705,7 +815,7 @@ class QueryTryOnJobsServiceImplTest {
                 ownerId,
                 edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
                 "PURGED_BY_USER_REQUEST",
-                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOP,
                 "https://garment.png",
                 edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
                 resultUrl,
@@ -750,7 +860,7 @@ class QueryTryOnJobsServiceImplTest {
                 ownerId,
                 edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId.of(UUID.randomUUID()),
                 "https://blob/photo.jpg",
-                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOPS,
+                edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory.TOP,
                 "https://garment.png",
                 edu.dosw.styleradar.virtualtryon.domain.model.JobStatus.COMPLETED,
                 edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl.of("https://blob/render.png"),

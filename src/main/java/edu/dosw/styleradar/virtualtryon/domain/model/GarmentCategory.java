@@ -7,23 +7,29 @@ import java.util.Locale;
  */
 public enum GarmentCategory {
 
-    TOPS("tops", true),
-    BOTTOMS("bottoms", true),
-    ONE_PIECES("one-pieces", true),
-    OUTERWEAR("tops", true),
-    FOOTWEAR("auto", false),
-    ACCESSORIES("auto", false);
+    TOP("tops", BodyZone.UPPER_BODY, true),
+    BOTTOM("bottoms", BodyZone.LOWER_BODY, true),
+    ONE_PIECE("one-pieces", BodyZone.FULL_BODY, true),
+    OUTERWEAR("auto", null, false),
+    FOOTWEAR("auto", null, false),
+    ACCESSORIES("auto", null, false);
 
     private final String fashnCategoryCode;
+    private final BodyZone bodyZone;
     private final boolean compatibleWithTryOn;
 
-    GarmentCategory(String fashnCategoryCode, boolean compatibleWithTryOn) {
+    GarmentCategory(String fashnCategoryCode, BodyZone bodyZone, boolean compatibleWithTryOn) {
         this.fashnCategoryCode = fashnCategoryCode;
+        this.bodyZone = bodyZone;
         this.compatibleWithTryOn = compatibleWithTryOn;
     }
 
     public String getFashnCategoryCode() {
         return fashnCategoryCode;
+    }
+
+    public BodyZone getBodyZone() {
+        return bodyZone;
     }
 
     public boolean isCompatibleWithTryOn() {
@@ -40,12 +46,12 @@ public enum GarmentCategory {
         }
         String normalized = rawCategory.trim().toUpperCase(Locale.ROOT).replace('-', '_');
         return switch (normalized) {
-            case "TOPS", "SUPERIOR", "CAMISA", "CAMISETA", "BLUSA" -> TOPS;
-            case "BOTTOMS", "INFERIOR", "PANTALON", "FALDA" -> BOTTOMS;
-            case "ONE_PIECES", "ONEPIECES", "VESTIDO", "ENTERIZO" -> ONE_PIECES;
+            case "TOP", "TOPS", "SUPERIOR", "CAMISA", "CAMISETA", "BLUSA" -> TOP;
+            case "BOTTOM", "BOTTOMS", "INFERIOR", "PANTALON", "FALDA" -> BOTTOM;
+            case "ONE_PIECE", "ONEPIECE", "ONE-PIECE", "ONE_PIECES", "ONEPIECES", "ONE-PIECES", "VESTIDO", "ENTERIZO" -> ONE_PIECE;
             case "OUTERWEAR", "ABRIGO", "CHAQUETA" -> OUTERWEAR;
             case "FOOTWEAR", "CALZADO", "ZAPATOS" -> FOOTWEAR;
-            case "ACCESSORIES", "ACCESORIO", "ACCESORIOS" -> ACCESSORIES;
+            case "ACCESSORIES", "ACCESSORY", "ACCESORIO", "ACCESORIOS" -> ACCESSORIES;
             default -> throw new IllegalArgumentException("Categoría de prenda desconocida: " + rawCategory);
         };
     }

@@ -6,6 +6,7 @@ import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMap
 import edu.dosw.styleradar.virtualtryon.application.service.BiometricConsentService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
@@ -274,7 +275,7 @@ class BiometricConsentControllerTest {
     void shouldGetBiometricPhotoOrReturnNotFound() throws Exception {
         when(biometricConsentService.getPhotoByUserId(eq(UserId.of(USER_UUID))))
                 .thenReturn(samplePhoto())
-                .thenThrow(new JobNotFoundException(USER_UUID));
+                .thenThrow(new BiometricPhotoNotFoundException(USER_UUID));
 
         mockMvc.perform(get("/api/v1/try-on/photos/{userId}", USER_UUID)
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
@@ -284,7 +285,7 @@ class BiometricConsentControllerTest {
         mockMvc.perform(get("/api/v1/try-on/photos/{userId}", USER_UUID)
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.errorCode").value("JOB_NOT_FOUND"));
+                .andExpect(jsonPath("$.errorCode").value("BIOMETRIC_PHOTO_NOT_FOUND"));
     }
 
     @Test

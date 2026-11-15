@@ -90,7 +90,7 @@ public class MockAiStrategy implements AiInferenceStrategy {
                 (int) Math.round((double) garmentImage.getHeight() * garmentWidth / garmentImage.getWidth())
         );
         int x = (boundedBase.getWidth() - garmentWidth) / 2;
-        double verticalRatio = (category == GarmentCategory.BOTTOMS) ? LEGS_VERTICAL_OFFSET : TORSO_VERTICAL_OFFSET;
+        double verticalRatio = (category == GarmentCategory.BOTTOM) ? LEGS_VERTICAL_OFFSET : TORSO_VERTICAL_OFFSET;
         int y = (int) Math.round(boundedBase.getHeight() * verticalRatio);
 
         BufferedImage output = new BufferedImage(
@@ -150,9 +150,9 @@ public class MockAiStrategy implements AiInferenceStrategy {
         BufferedImage overlay = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = overlay.createGraphics();
         try {
-            Color garmentColor = switch (category != null ? category : GarmentCategory.TOPS) {
-                case BOTTOMS -> new Color(35, 75, 140, 230);
-                case ONE_PIECES -> new Color(155, 45, 90, 230);
+            Color garmentColor = switch (category != null ? category : GarmentCategory.TOP) {
+                case BOTTOM -> new Color(35, 75, 140, 230);
+                case ONE_PIECE -> new Color(155, 45, 90, 230);
                 default -> new Color(40, 110, 165, 230);
             };
             g.setColor(garmentColor);

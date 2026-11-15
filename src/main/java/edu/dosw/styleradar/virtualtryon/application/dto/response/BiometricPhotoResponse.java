@@ -33,7 +33,23 @@ public record BiometricPhotoResponse(
         String photoUrl,
 
         @Schema(description = "Fecha y hora de carga en UTC", example = "2026-11-07T22:05:00Z")
-        Instant uploadedAt
+        Instant uploadedAt,
+
+        @Schema(description = "Indica si la fotografía biométrica se encuentra activa para inferencia", example = "true")
+        boolean active
 ) {
+
+    public BiometricPhotoResponse(
+            UUID photoId,
+            UUID userId,
+            String contentType,
+            int width,
+            int height,
+            long sizeBytes,
+            String photoUrl,
+            Instant uploadedAt
+    ) {
+        this(photoId, userId, contentType, width, height, sizeBytes, photoUrl, uploadedAt, true);
+    }
 }
 

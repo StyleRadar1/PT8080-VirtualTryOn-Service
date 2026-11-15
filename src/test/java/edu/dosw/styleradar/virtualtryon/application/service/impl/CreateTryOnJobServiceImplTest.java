@@ -207,7 +207,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png?sp=r";
 
@@ -232,8 +232,8 @@ class CreateTryOnJobServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Creación con TransactionTemplate, sincronización de cuota desde Redis y validación de photoUrl con blobPath")
-    void shouldCreateQueuedJobWithTransactionTemplateAndCachedRedisCount() {
+    @DisplayName("HU SR-RF-25: Creación con TransactionTemplate, actualización post-commit en Redis desde BD y validación de photoUrl con blobPath")
+    void shouldCreateQueuedJobWithTransactionTemplateAndSyncQuotaPostCommit() {
         org.springframework.transaction.support.TransactionTemplate mockTemplate = org.mockito.Mockito.mock(
                 org.springframework.transaction.support.TransactionTemplate.class
         );
@@ -256,15 +256,14 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
-
-        when(valueOperations.get(any())).thenReturn("3");
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
         TryOnJob job = serviceWithTx.createTryOnJob(userId, garmentId, photoUrl, true);
         assertThat(job).isNotNull();
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+        verify(valueOperations).set(any(), eq("1"), any(java.time.Duration.class));
     }
 
     @Test
@@ -327,16 +326,26 @@ class CreateTryOnJobServiceImplTest {
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(InvalidGarmentException.class);
 
-        // 6. Prenda no compatible
+        // 6. Prendas no compatibles (FOOTWEAR y OUTERWEAR según RN-01)
         mockCatalogGarment(garmentId, GarmentCategory.FOOTWEAR, true);
         when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(InvalidGarmentException.class);
 
-        // 7. Cuota mensual agotada
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
-        when(valueOperations.get(any())).thenReturn("10");
+        mockCatalogGarment(garmentId, GarmentCategory.OUTERWEAR, true);
+        assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
+                userId, garmentId, validUserPhotoUrl, true
+        )).isInstanceOf(InvalidGarmentException.class);
+
+        // 7. Cuota mensual agotada en PostgreSQL (caché desactualizada o vacía no altera la verdad en BD)
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        UserQuotaJpaEntity exhaustedQuota = new UserQuotaJpaEntity(
+                UUID.randomUUID(), userId.value(), 10, 10, currentPeriod.getValue(), false, Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(exhaustedQuota));
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(QuotaExceededException.class);
@@ -356,7 +365,7 @@ class CreateTryOnJobServiceImplTest {
                 .withUserId(userId)
                 .withGarmentId(garmentId)
                 .withPhotoUrl("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/photo.png")
-                .withCategory(GarmentCategory.ONE_PIECES)
+                .withCategory(GarmentCategory.ONE_PIECE)
                 .withGarmentImageUrl("https://styleradar.dosw.edu/catalog/garments/dress.png")
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
@@ -404,7 +413,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         BillingPeriod currentPeriod = BillingPeriod.current();
         UserQuota existingQuota = UserQuota.createDefault(userId, currentPeriod);
@@ -439,7 +448,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String maliciousUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/../other-user/photo.png";
 
@@ -454,7 +463,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String validUrlWithTrailingSlash = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png/";
 
@@ -490,7 +499,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
         TryOnJob job = serviceWithOutbox.createTryOnJob(userId, garmentId, photoUrl, true);
@@ -530,7 +539,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
@@ -566,7 +575,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
@@ -606,7 +615,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
@@ -646,7 +655,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
@@ -687,7 +696,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         // Path traversal
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(userId, garmentId, "https://storage/../etc/passwd", true))
@@ -716,7 +725,7 @@ class CreateTryOnJobServiceImplTest {
         UserId userId = UserId.of(UUID.randomUUID());
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
         mockActiveConsentAndPhoto(userId);
-        mockCatalogGarment(garmentId, GarmentCategory.TOPS, true);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
         Mockito.doThrow(new RuntimeException("AMQP connection refused"))
                 .when(outboxPublisherPort).publishPendingEvents();
@@ -726,5 +735,50 @@ class CreateTryOnJobServiceImplTest {
 
         assertThat(job).isNotNull();
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Consume cuota desde PostgreSQL aunque Redis tenga contador desactualizado y ejecuta evictQuota si falla el refresco")
+    void shouldUseDatabaseQuotaAndEvictCacheWhenRedisUpdateFailsDuringCreate() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
+
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        UserQuotaJpaEntity postRefundQuota = new UserQuotaJpaEntity(
+                UUID.randomUUID(), userId.value(), 10, 2, currentPeriod.getValue(), false, Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(postRefundQuota));
+
+        edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort failingCachePort =
+                Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort.class);
+        Mockito.doThrow(new RuntimeException("Redis write failed"))
+                .when(failingCachePort).cacheUsedCount(userId, currentPeriod, 3);
+        Mockito.doThrow(new RuntimeException("Redis evict failed"))
+                .when(failingCachePort).evictQuota(userId, currentPeriod);
+
+        CreateTryOnJobServiceImpl serviceWithFailingCache = new CreateTryOnJobServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                failingCachePort,
+                repositoryAdapter,
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "mock",
+                transactionTemplate,
+                outboxPublisherPort
+        );
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
+        TryOnJob job = serviceWithFailingCache.createTryOnJob(userId, garmentId, photoUrl, true);
+
+        assertThat(job).isNotNull();
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+        ArgumentCaptor<UserQuotaJpaEntity> quotaCaptor = ArgumentCaptor.forClass(UserQuotaJpaEntity.class);
+        verify(quotaJpaRepository).save(quotaCaptor.capture());
+        assertThat(quotaCaptor.getValue().getUsedCount()).isEqualTo(3);
+        verify(failingCachePort, Mockito.never()).getCachedUsedCount(any(), any());
+        verify(failingCachePort).evictQuota(userId, currentPeriod);
     }
 }

@@ -73,7 +73,8 @@ public class TryOnPersistenceMapper {
                 domain.getHeight(),
                 domain.getSizeBytes(),
                 domain.getBlobPath(),
-                domain.getUploadedAt()
+                domain.getUploadedAt(),
+                domain.isActive()
         );
     }
 
@@ -90,7 +91,8 @@ public class TryOnPersistenceMapper {
                 entity.getSizeBytes(),
                 cleanBlobPath,
                 SasSignedUrl.of(safeUrl),
-                entity.getUploadedAt()
+                entity.getUploadedAt(),
+                entity.isActive()
         );
     }
 
@@ -159,7 +161,8 @@ public class TryOnPersistenceMapper {
                 domain.getErrorMessage(),
                 domain.isPhotoPurged(),
                 domain.getCreatedAt(),
-                domain.getUpdatedAt()
+                domain.getUpdatedAt(),
+                domain.getCompletedAt()
         );
     }
 
@@ -168,7 +171,7 @@ public class TryOnPersistenceMapper {
                 ? null
                 : SasSignedUrl.of(entity.getResultImageUrl());
         GarmentCategory category = entity.getGarmentCategory() == null
-                ? GarmentCategory.TOPS
+                ? GarmentCategory.TOP
                 : GarmentCategory.fromRawValue(entity.getGarmentCategory());
         AiProvider provider = entity.getAiProvider() == null
                 ? AiProvider.FASHN_AI
@@ -187,7 +190,8 @@ public class TryOnPersistenceMapper {
                 entity.getErrorMessage(),
                 entity.isPhotoPurged(),
                 entity.getCreatedAt(),
-                entity.getUpdatedAt()
+                entity.getUpdatedAt(),
+                entity.getCompletedAt()
         );
     }
 
