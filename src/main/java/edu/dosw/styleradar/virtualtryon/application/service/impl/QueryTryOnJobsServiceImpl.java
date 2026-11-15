@@ -97,21 +97,9 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
                 .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
 
-        OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
-        if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
-            UserQuota synchronizedQuota = new UserQuota(
-                    quota.getId(),
-                    quota.getUserId(),
-                    quota.getMonthlyLimit(),
-                    cachedUsed.getAsInt(),
-                    quota.getBillingPeriod(),
-                    quota.isRadarPlus(),
-                    quota.getLastResetAt()
-            );
-            quota = quotaRepositoryPort.saveQuota(synchronizedQuota);
-        } else if (cachedUsed.isEmpty()) {
-            quotaCachePort.cacheUsedCount(userId, currentPeriod, quota.getUsedCount());
-        }
+        // PostgreSQL es la fuente de verdad autoritativa (consumos y reembolsos con bloqueo pesimista);
+        // nunca se sobrescribe la BD con contadores potencialmente desactualizados de Redis.
+        resyncCacheFromAuthoritativeQuota(userId, currentPeriod, quota.getUsedCount());
 
         return quota;
     }
@@ -136,18 +124,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
                 .orElseGet(() -> UserQuota.createDefault(userId, currentPeriod));
 
-        OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
-        if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
-            quota = new UserQuota(
-                    quota.getId(),
-                    quota.getUserId(),
-                    quota.getMonthlyLimit(),
-                    cachedUsed.getAsInt(),
-                    quota.getBillingPeriod(),
-                    quota.isRadarPlus(),
-                    quota.getLastResetAt()
-            );
-        }
+        resyncCacheFromAuthoritativeQuota(userId, currentPeriod, quota.getUsedCount());
 
         TryOnValidationContext context = new TryOnValidationContext(
                 userId,
@@ -164,6 +141,21 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                 ? List.of()
                 : quotaRepositoryPort.findCatalogGarmentsByIds(selectedGarmentIds);
         return GarmentSelectionPolicy.evaluate(garment, selectedGarments);
+    }
+
+    private void resyncCacheFromAuthoritativeQuota(UserId userId, BillingPeriod period, int authoritativeUsedCount) {
+        if (quotaCachePort == null) {
+            return;
+        }
+        try {
+            OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, period);
+            if (cachedUsed.isEmpty() || cachedUsed.getAsInt() != authoritativeUsedCount) {
+                quotaCachePort.cacheUsedCount(userId, period, authoritativeUsedCount);
+            }
+        } catch (RuntimeException ex) {
+            log.warn("No fue posible resincronizar en Redis la cuota autoritativa para usuario {} período {}: {}",
+                    userId.value(), period.getValue(), ex.getMessage());
+        }
     }
 
     @Override

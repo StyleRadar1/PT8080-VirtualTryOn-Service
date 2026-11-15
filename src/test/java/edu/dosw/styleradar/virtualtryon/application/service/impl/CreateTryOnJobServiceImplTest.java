@@ -232,8 +232,8 @@ class CreateTryOnJobServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25: Creación con TransactionTemplate, sincronización de cuota desde Redis y validación de photoUrl con blobPath")
-    void shouldCreateQueuedJobWithTransactionTemplateAndCachedRedisCount() {
+    @DisplayName("HU SR-RF-25: Creación con TransactionTemplate, actualización post-commit en Redis desde BD y validación de photoUrl con blobPath")
+    void shouldCreateQueuedJobWithTransactionTemplateAndSyncQuotaPostCommit() {
         org.springframework.transaction.support.TransactionTemplate mockTemplate = org.mockito.Mockito.mock(
                 org.springframework.transaction.support.TransactionTemplate.class
         );
@@ -258,13 +258,12 @@ class CreateTryOnJobServiceImplTest {
         mockActiveConsentAndPhoto(userId);
         mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
 
-        when(valueOperations.get(any())).thenReturn("3");
-
         String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
         TryOnJob job = serviceWithTx.createTryOnJob(userId, garmentId, photoUrl, true);
         assertThat(job).isNotNull();
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+        verify(valueOperations).set(any(), eq("1"), any(java.time.Duration.class));
     }
 
     @Test
@@ -339,9 +338,14 @@ class CreateTryOnJobServiceImplTest {
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(InvalidGarmentException.class);
 
-        // 7. Cuota mensual agotada
+        // 7. Cuota mensual agotada en PostgreSQL (caché desactualizada o vacía no altera la verdad en BD)
         mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
-        when(valueOperations.get(any())).thenReturn("10");
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        UserQuotaJpaEntity exhaustedQuota = new UserQuotaJpaEntity(
+                UUID.randomUUID(), userId.value(), 10, 10, currentPeriod.getValue(), false, Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(exhaustedQuota));
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(QuotaExceededException.class);
@@ -731,5 +735,50 @@ class CreateTryOnJobServiceImplTest {
 
         assertThat(job).isNotNull();
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Consume cuota desde PostgreSQL aunque Redis tenga contador desactualizado y ejecuta evictQuota si falla el refresco")
+    void shouldUseDatabaseQuotaAndEvictCacheWhenRedisUpdateFailsDuringCreate() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+        mockCatalogGarment(garmentId, GarmentCategory.TOP, true);
+
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        UserQuotaJpaEntity postRefundQuota = new UserQuotaJpaEntity(
+                UUID.randomUUID(), userId.value(), 10, 2, currentPeriod.getValue(), false, Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(postRefundQuota));
+
+        edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort failingCachePort =
+                Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort.class);
+        Mockito.doThrow(new RuntimeException("Redis write failed"))
+                .when(failingCachePort).cacheUsedCount(userId, currentPeriod, 3);
+        Mockito.doThrow(new RuntimeException("Redis evict failed"))
+                .when(failingCachePort).evictQuota(userId, currentPeriod);
+
+        CreateTryOnJobServiceImpl serviceWithFailingCache = new CreateTryOnJobServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                failingCachePort,
+                repositoryAdapter,
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "mock",
+                transactionTemplate,
+                outboxPublisherPort
+        );
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
+        TryOnJob job = serviceWithFailingCache.createTryOnJob(userId, garmentId, photoUrl, true);
+
+        assertThat(job).isNotNull();
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+        ArgumentCaptor<UserQuotaJpaEntity> quotaCaptor = ArgumentCaptor.forClass(UserQuotaJpaEntity.class);
+        verify(quotaJpaRepository).save(quotaCaptor.capture());
+        assertThat(quotaCaptor.getValue().getUsedCount()).isEqualTo(3);
+        verify(failingCachePort, Mockito.never()).getCachedUsedCount(any(), any());
+        verify(failingCachePort).evictQuota(userId, currentPeriod);
     }
 }

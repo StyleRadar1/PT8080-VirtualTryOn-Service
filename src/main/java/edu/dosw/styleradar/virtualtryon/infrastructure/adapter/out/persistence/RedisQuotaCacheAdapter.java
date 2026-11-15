@@ -56,7 +56,12 @@ public class RedisQuotaCacheAdapter implements UserQuotaCachePort {
         try {
             redisTemplate.opsForValue().set(key, Integer.toString(Math.max(0, usedCount)), QUOTA_TTL);
         } catch (RuntimeException ex) {
-            log.warn("No fue posible escribir cuota en Redis para la clave {}: {}", key, ex.getMessage());
+            log.warn("No fue posible escribir cuota en Redis para la clave {}: {}; intentando invalidar clave", key, ex.getMessage());
+            try {
+                redisTemplate.delete(key);
+            } catch (RuntimeException deleteEx) {
+                log.warn("No fue posible invalidar clave de cuota en Redis {} tras fallo de escritura: {}", key, deleteEx.getMessage());
+            }
         }
     }
 

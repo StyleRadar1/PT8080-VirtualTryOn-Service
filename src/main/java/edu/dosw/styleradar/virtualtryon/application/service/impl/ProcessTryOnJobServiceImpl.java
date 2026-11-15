@@ -367,8 +367,14 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
         try {
             userQuotaCachePort.cacheUsedCount(userId, period, usedCount);
         } catch (Exception ex) {
-            log.warn("No se pudo sincronizar en Redis el reembolso de cuota para usuario {} período {}: {}",
+            log.warn("No se pudo sincronizar en Redis el reembolso de cuota para usuario {} período {} ({}); intentando invalidar entrada",
                     userId.value(), period.getValue(), ex.getMessage());
+            try {
+                userQuotaCachePort.evictQuota(userId, period);
+            } catch (Exception evictEx) {
+                log.warn("No fue posible invalidar la caché de cuota en Redis para usuario {} período {}: {}",
+                        userId.value(), period.getValue(), evictEx.getMessage());
+            }
         }
     }
 

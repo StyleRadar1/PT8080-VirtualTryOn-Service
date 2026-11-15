@@ -40,6 +40,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -367,7 +369,7 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(quota.getUsedCount()).isEqualTo(2);
         verify(quotaRepo, org.mockito.Mockito.times(1)).saveQuota(any(UserQuota.class));
 
-        // 3. sweepStaleProcessingJobs reembolsa cuota del trabajo recuperado y tolera error transitorio en Redis
+        // 3. sweepStaleProcessingJobs reembolsa cuota del trabajo recuperado, intenta evictQuota si Redis falla y tolera doble fallo
         UUID staleJobId = UUID.randomUUID();
         TryOnJob staleJob = new TryOnJob(
                 staleJobId, userId, GarmentId.of(UUID.randomUUID()),
@@ -377,13 +379,16 @@ class ProcessTryOnJobServiceImplTest {
         );
         when(jobRepositoryPort.findStaleProcessingJobs(any())).thenReturn(List.of(staleJob));
         when(jobRepositoryPort.findJobByIdForUpdate(staleJobId)).thenReturn(Optional.of(staleJob));
-        org.mockito.Mockito.doThrow(new RuntimeException("Redis timeout"))
+        doThrow(new RuntimeException("Redis timeout"))
                 .when(quotaCache).cacheUsedCount(userId, period, 1);
+        doThrow(new RuntimeException("Redis eviction timeout"))
+                .when(quotaCache).evictQuota(userId, period);
 
         int recovered = serviceWithQuota.sweepStaleProcessingJobs(Duration.ofMinutes(10));
         assertThat(recovered).isEqualTo(1);
         assertThat(staleJob.getStatus()).isEqualTo(JobStatus.FAILED);
         assertThat(quota.getUsedCount()).isEqualTo(1);
+        verify(quotaCache).evictQuota(userId, period);
 
         // 4. Cuota ya en 0 no decrementa a negativo
         UserId zeroUser = UserId.of(UUID.randomUUID());
@@ -401,5 +406,67 @@ class ProcessTryOnJobServiceImplTest {
         serviceWithQuota.markFailedAfterRetries(zeroJobId, "");
         assertThat(zeroQuota.getUsedCount()).isZero();
         verify(quotaRepo, org.mockito.Mockito.never()).saveQuota(zeroQuota);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25 / SR-RF-24: Si falla Redis durante un reembolso y conserva un contador desactualizado, QueryTryOnJobsServiceImpl preserva el reembolso de PostgreSQL")
+    void shouldPreserveRefundedQuotaWhenRedisUpdateFailsAndRetainsStaleCounter() {
+        UserQuotaRepositoryPort quotaRepo = org.mockito.Mockito.mock(UserQuotaRepositoryPort.class);
+        UserQuotaCachePort quotaCache = org.mockito.Mockito.mock(UserQuotaCachePort.class);
+        BiometricDataRepositoryPort bioRepo = org.mockito.Mockito.mock(BiometricDataRepositoryPort.class);
+        BlobStoragePort blobPort = org.mockito.Mockito.mock(BlobStoragePort.class);
+
+        ProcessTryOnJobServiceImpl processService = new ProcessTryOnJobServiceImpl(
+                jobRepositoryPort,
+                outboxPublisherPort,
+                List.of(fashnStrategy),
+                transactionTemplate,
+                bioRepo,
+                blobPort,
+                quotaRepo,
+                quotaCache
+        );
+        QueryTryOnJobsServiceImpl queryService = new QueryTryOnJobsServiceImpl(
+                quotaRepo,
+                quotaCache,
+                bioRepo,
+                jobRepositoryPort,
+                blobPort
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId userId = UserId.of(UUID.randomUUID());
+        Instant now = Instant.now();
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        TryOnJob failedJob = new TryOnJob(
+                jobId, userId, GarmentId.of(UUID.randomUUID()),
+                "https://storage/photo.png", GarmentCategory.TOP, "https://cat/shirt.png",
+                JobStatus.PROCESSING, null, AiProvider.FASHN_AI, null, null, false,
+                now, now
+        );
+        UserQuota quota = new UserQuota(UUID.randomUUID(), userId, 10, 3, currentPeriod, false, now);
+
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId)).thenReturn(Optional.of(failedJob));
+        when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(quotaRepo.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)).thenReturn(Optional.of(quota));
+        when(quotaRepo.findQuotaByUserIdAndPeriod(userId, currentPeriod)).thenReturn(Optional.of(quota));
+        when(quotaRepo.saveQuota(any(UserQuota.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        // Redis falla tanto al actualizar como al invalidar, conservando el valor obsoleto (3)
+        doThrow(new RuntimeException("Redis connection reset"))
+                .when(quotaCache).cacheUsedCount(userId, currentPeriod, 2);
+        doThrow(new RuntimeException("Redis eviction failed"))
+                .when(quotaCache).evictQuota(userId, currentPeriod);
+        when(quotaCache.getCachedUsedCount(userId, currentPeriod)).thenReturn(java.util.OptionalInt.of(3));
+
+        processService.markFailedAfterRetries(jobId, "Timeout definitivo");
+        assertThat(quota.getUsedCount()).isEqualTo(2);
+
+        // La consulta posterior NO debe sobrescribir PostgreSQL con el 3 obsoleto de Redis
+        UserQuota queriedQuota = queryService.getUserQuota(userId);
+        assertThat(queriedQuota.getUsedCount()).isEqualTo(2);
+        assertThat(queriedQuota.getRemainingCount()).isEqualTo(8);
+        verify(quotaRepo, org.mockito.Mockito.times(1)).saveQuota(any(UserQuota.class));
+        verify(quotaCache, atLeastOnce()).cacheUsedCount(userId, currentPeriod, 2);
     }
 }

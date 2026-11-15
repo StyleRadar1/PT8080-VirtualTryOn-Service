@@ -161,8 +161,8 @@ class QueryTryOnJobsServiceImplTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-24: Dado contador en Redis mayor al almacenado en BD, Cuando consulta getUserQuota, Entonces sincroniza y actualiza el conteo en JPA")
-    void shouldSynchronizeDatabaseQuotaWhenRedisCounterIsHigher() {
+    @DisplayName("HU SR-RF-24: Dado contador desactualizado en Redis mayor al almacenado en BD tras un reembolso, Cuando consulta getUserQuota, Entonces PostgreSQL prevalece y resincroniza Redis")
+    void shouldPreserveDatabaseQuotaAndResyncRedisWhenRedisCounterIsStale() {
         UserId userId = UserId.of(UUID.randomUUID());
         BillingPeriod currentPeriod = BillingPeriod.current();
         UserQuotaJpaEntity existingEntity = new UserQuotaJpaEntity(
@@ -176,15 +176,42 @@ class QueryTryOnJobsServiceImplTest {
         );
         when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
                 .thenReturn(Optional.of(existingEntity));
-        when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
         when(valueOperations.get(any())).thenReturn("4");
 
         UserQuota quota = queryTryOnJobsService.getUserQuota(userId);
 
-        assertEquals(4, quota.getUsedCount());
-        assertEquals(6, quota.getRemainingCount());
-        verify(quotaJpaRepository).save(any(UserQuotaJpaEntity.class));
+        assertEquals(2, quota.getUsedCount());
+        assertEquals(8, quota.getRemainingCount());
+        verify(quotaJpaRepository, never()).save(any(UserQuotaJpaEntity.class));
+        verify(valueOperations).set(any(), eq("2"), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Si falla la actualización de Redis al consultar cuota desactualizada tras reembolso, getUserQuota no revierte el reembolso ni falla")
+    void shouldTolerateRedisFailureWhileResyncingStaleCounterInGetUserQuota() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        UserQuotaJpaEntity existingEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(),
+                userId.value(),
+                10,
+                2,
+                currentPeriod.getValue(),
+                false,
+                Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(existingEntity));
+        when(valueOperations.get(any())).thenReturn("3");
+        doThrow(new RuntimeException("Redis write timeout"))
+                .when(valueOperations).set(any(), any(), any(Duration.class));
+
+        UserQuota quota = queryTryOnJobsService.getUserQuota(userId);
+
+        assertEquals(2, quota.getUsedCount());
+        assertEquals(8, quota.getRemainingCount());
+        verify(quotaJpaRepository, never()).save(any(UserQuotaJpaEntity.class));
+        verify(redisTemplate).delete(any(String.class));
     }
 
     @Test
@@ -320,7 +347,25 @@ class QueryTryOnJobsServiceImplTest {
                         "127.0.0.1"
                 )
         ));
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        // Si Redis conservaba un "10" obsoleto tras un reembolso en BD (used=9), PostgreSQL prevalece y permite validar
+        UserQuotaJpaEntity refundedEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(), userId.value(), 10, 9, currentPeriod.getValue(), false, Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(refundedEntity));
         when(valueOperations.get(any())).thenReturn("10");
+
+        GarmentValidationResult refundedResult = queryTryOnJobsService.validateGarmentEligibility(userId, garmentId);
+        assertTrue(refundedResult.eligibleForTryOn());
+        verify(valueOperations).set(any(), eq("9"), any(Duration.class));
+
+        // Cuando la cuota realmente está agotada en PostgreSQL (used=10), lanza QuotaExceededException
+        UserQuotaJpaEntity exhaustedEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(), userId.value(), 10, 10, currentPeriod.getValue(), false, Instant.now()
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(exhaustedEntity));
         assertThrows(QuotaExceededException.class,
                 () -> queryTryOnJobsService.validateGarmentEligibility(userId, garmentId));
     }
@@ -389,6 +434,7 @@ class QueryTryOnJobsServiceImplTest {
         org.mockito.Mockito.doThrow(new RuntimeException("Redis write error"))
                 .when(valueOperations).set(any(), any(), any(Duration.class));
         redisQuotaCacheAdapter.cacheUsedCount(userId, period, 2);
+        verify(redisTemplate, org.mockito.Mockito.times(2)).delete(any(String.class));
 
         when(valueOperations.increment(any())).thenThrow(new RuntimeException("Redis increment error"));
         assertEquals(0, redisQuotaCacheAdapter.incrementUsedCount(userId, period));
