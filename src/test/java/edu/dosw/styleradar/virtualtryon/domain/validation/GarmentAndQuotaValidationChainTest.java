@@ -3,8 +3,10 @@ package edu.dosw.styleradar.virtualtryon.domain.validation;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
+import edu.dosw.styleradar.virtualtryon.domain.model.BodyZone;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
@@ -14,6 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -52,7 +55,7 @@ class GarmentAndQuotaValidationChainTest {
         TryOnValidationContext context = new TryOnValidationContext(
                 userId,
                 garmentId,
-                GarmentCategory.TOPS,
+                GarmentCategory.TOP,
                 "https://styleradar.blob.core.windows.net/catalog/shirt-01.png",
                 true,
                 true,
@@ -71,7 +74,7 @@ class GarmentAndQuotaValidationChainTest {
         TryOnValidationContext context = new TryOnValidationContext(
                 userId,
                 garmentId,
-                GarmentCategory.BOTTOMS,
+                GarmentCategory.BOTTOM,
                 "https://styleradar.blob.core.windows.net/catalog/pants-01.png",
                 true,
                 false,
@@ -96,7 +99,7 @@ class GarmentAndQuotaValidationChainTest {
         TryOnValidationContext context = new TryOnValidationContext(
                 userId,
                 garmentId,
-                GarmentCategory.ONE_PIECES,
+                GarmentCategory.ONE_PIECE,
                 "https://styleradar.blob.core.windows.net/catalog/dress-01.png",
                 true,
                 true,
@@ -112,7 +115,7 @@ class GarmentAndQuotaValidationChainTest {
         TryOnValidationContext context = new TryOnValidationContext(
                 userId,
                 garmentId,
-                GarmentCategory.TOPS,
+                GarmentCategory.TOP,
                 "https://styleradar.blob.core.windows.net/catalog/top-01.png",
                 true,
                 true,
@@ -145,8 +148,19 @@ class GarmentAndQuotaValidationChainTest {
                 quota
         );
 
+        TryOnValidationContext outerwearContext = new TryOnValidationContext(
+                userId,
+                garmentId,
+                GarmentCategory.OUTERWEAR,
+                "https://styleradar.blob.core.windows.net/catalog/jacket-01.png",
+                true,
+                true,
+                quota
+        );
+
         assertThrows(InvalidGarmentException.class, () -> validationChain.validate(footwearContext));
         assertThrows(InvalidGarmentException.class, () -> validationChain.validate(accessoriesContext));
+        assertThrows(InvalidGarmentException.class, () -> validationChain.validate(outerwearContext));
     }
 
     @Test
@@ -155,16 +169,16 @@ class GarmentAndQuotaValidationChainTest {
         UserQuota quota = UserQuota.createDefault(userId, BillingPeriod.of("2026-11"));
 
         TryOnValidationContext missingIdContext = new TryOnValidationContext(
-                userId, null, GarmentCategory.TOPS, "https://styleradar.blob.core.windows.net/catalog/top.png", true, true, quota
+                userId, null, GarmentCategory.TOP, "https://styleradar.blob.core.windows.net/catalog/top.png", true, true, quota
         );
         TryOnValidationContext hiddenContext = new TryOnValidationContext(
-                userId, garmentId, GarmentCategory.TOPS, "https://styleradar.blob.core.windows.net/catalog/top.png", false, true, quota
+                userId, garmentId, GarmentCategory.TOP, "https://styleradar.blob.core.windows.net/catalog/top.png", false, true, quota
         );
         TryOnValidationContext missingCategoryContext = new TryOnValidationContext(
                 userId, garmentId, null, "https://styleradar.blob.core.windows.net/catalog/top.png", true, true, quota
         );
         TryOnValidationContext missingImageContext = new TryOnValidationContext(
-                userId, garmentId, GarmentCategory.TOPS, "   ", true, true, quota
+                userId, garmentId, GarmentCategory.TOP, "   ", true, true, quota
         );
 
         assertThrows(InvalidGarmentException.class, () -> validationChain.validate(missingIdContext));
@@ -176,17 +190,22 @@ class GarmentAndQuotaValidationChainTest {
     @Test
     @DisplayName("HU SR-RF-24: Dado GarmentCategory.fromRawValue con alias en español e inglés, Cuando se convierte, Entonces mapea correctamente y asigna código FASHN AI")
     void shouldMapGarmentCategoryAliasesAndFashnCodes() {
-        assertEquals(GarmentCategory.TOPS, GarmentCategory.fromRawValue("SUPERIOR"));
-        assertEquals("tops", GarmentCategory.TOPS.getFashnCategoryCode());
-        assertTrue(GarmentCategory.TOPS.isCompatibleWithTryOn());
+        assertEquals(GarmentCategory.TOP, GarmentCategory.fromRawValue("SUPERIOR"));
+        assertEquals("tops", GarmentCategory.TOP.getFashnCategoryCode());
+        assertEquals(BodyZone.UPPER_BODY, GarmentCategory.TOP.getBodyZone());
+        assertTrue(GarmentCategory.TOP.isCompatibleWithTryOn());
 
-        assertEquals(GarmentCategory.BOTTOMS, GarmentCategory.fromRawValue("INFERIOR"));
-        assertEquals("bottoms", GarmentCategory.BOTTOMS.getFashnCategoryCode());
+        assertEquals(GarmentCategory.BOTTOM, GarmentCategory.fromRawValue("INFERIOR"));
+        assertEquals("bottoms", GarmentCategory.BOTTOM.getFashnCategoryCode());
+        assertEquals(BodyZone.LOWER_BODY, GarmentCategory.BOTTOM.getBodyZone());
 
-        assertEquals(GarmentCategory.ONE_PIECES, GarmentCategory.fromRawValue("VESTIDO"));
-        assertEquals("one-pieces", GarmentCategory.ONE_PIECES.getFashnCategoryCode());
+        assertEquals(GarmentCategory.ONE_PIECE, GarmentCategory.fromRawValue("VESTIDO"));
+        assertEquals(GarmentCategory.ONE_PIECE, GarmentCategory.fromRawValue("ONE-PIECE"));
+        assertEquals("one-pieces", GarmentCategory.ONE_PIECE.getFashnCategoryCode());
+        assertEquals(BodyZone.FULL_BODY, GarmentCategory.ONE_PIECE.getBodyZone());
 
         assertEquals(GarmentCategory.OUTERWEAR, GarmentCategory.fromRawValue("CHAQUETA"));
+        assertFalse(GarmentCategory.OUTERWEAR.isCompatibleWithTryOn());
         assertEquals(GarmentCategory.FOOTWEAR, GarmentCategory.fromRawValue("CALZADO"));
         assertFalse(GarmentCategory.FOOTWEAR.isCompatibleWithTryOn());
         assertEquals(GarmentCategory.ACCESSORIES, GarmentCategory.fromRawValue("ACCESORIOS"));
@@ -202,6 +221,7 @@ class GarmentAndQuotaValidationChainTest {
         BillingPeriod period = BillingPeriod.of("2026-11");
         assertEquals("2026-11", period.getValue());
         assertNotNull(BillingPeriod.current().getValue());
+        assertEquals("2026-10", BillingPeriod.fromInstant(Instant.parse("2026-10-15T12:00:00Z")).getValue());
         assertThrows(IllegalArgumentException.class, () -> BillingPeriod.of("2026-13"));
 
         GarmentId parsedId = GarmentId.fromString(garmentId.getValue().toString());
@@ -227,13 +247,65 @@ class GarmentAndQuotaValidationChainTest {
         CatalogGarment garment = new CatalogGarment(
                 garmentId,
                 " Vestido Largo Verano ",
-                GarmentCategory.ONE_PIECES,
+                GarmentCategory.ONE_PIECE,
                 "https://styleradar.blob.core.windows.net/catalog/dress.png",
                 true,
                 Instant.now()
         );
         assertTrue(garment.isEligibleForTryOn());
         assertEquals("Vestido Largo Verano", garment.getName());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 (RN-01 / RN-02 / FA-01 / FA-02 / FA-04): GarmentSelectionPolicy evalúa compatibilidad, visibilidad y reemplazos por zona corporal")
+    void shouldEvaluateGarmentSelectionPolicyAndZoneReplacements() {
+        CatalogGarment shirt = new CatalogGarment(
+                GarmentId.of(UUID.randomUUID()), "Camisa", GarmentCategory.TOP, "https://cat/top.png", true, Instant.now());
+        CatalogGarment blazer = new CatalogGarment(
+                GarmentId.of(UUID.randomUUID()), "Blazer", GarmentCategory.TOP, "https://cat/top2.png", true, Instant.now());
+        CatalogGarment jeans = new CatalogGarment(
+                GarmentId.of(UUID.randomUUID()), "Jeans", GarmentCategory.BOTTOM, "https://cat/bottom.png", true, Instant.now());
+        CatalogGarment dress = new CatalogGarment(
+                GarmentId.of(UUID.randomUUID()), "Vestido", GarmentCategory.ONE_PIECE, "https://cat/dress.png", true, Instant.now());
+        CatalogGarment jacket = new CatalogGarment(
+                GarmentId.of(UUID.randomUUID()), "Chaqueta", GarmentCategory.OUTERWEAR, "https://cat/jacket.png", true, Instant.now());
+        CatalogGarment hiddenTop = new CatalogGarment(
+                GarmentId.of(UUID.randomUUID()), "Oculta", GarmentCategory.TOP, "https://cat/hidden.png", false, Instant.now());
+
+        GarmentValidationResult topConflict = GarmentSelectionPolicy.evaluate(
+                blazer, List.of(shirt, jeans, blazer, jacket)
+        );
+        assertTrue(topConflict.compatible());
+        assertTrue(topConflict.visible());
+        assertTrue(topConflict.eligibleForTryOn());
+        assertEquals(BodyZone.UPPER_BODY, topConflict.zone());
+        assertEquals(List.of(shirt.getGarmentId()), topConflict.replacedGarmentIds());
+
+        GarmentValidationResult dressReplacesBoth = GarmentSelectionPolicy.evaluate(dress, List.of(shirt, jeans));
+        assertTrue(dressReplacesBoth.eligibleForTryOn());
+        assertEquals(BodyZone.FULL_BODY, dressReplacesBoth.zone());
+        assertEquals(List.of(shirt.getGarmentId(), jeans.getGarmentId()), dressReplacesBoth.replacedGarmentIds());
+
+        GarmentValidationResult shirtReplacesDress = GarmentSelectionPolicy.evaluate(shirt, List.of(dress));
+        assertEquals(List.of(dress.getGarmentId()), shirtReplacesDress.replacedGarmentIds());
+
+        GarmentValidationResult jeansWithShirt = GarmentSelectionPolicy.evaluate(jeans, List.of(shirt));
+        assertTrue(jeansWithShirt.replacedGarmentIds().isEmpty());
+
+        GarmentValidationResult outerwearResult = GarmentSelectionPolicy.evaluate(jacket, List.of(shirt));
+        assertFalse(outerwearResult.compatible());
+        assertTrue(outerwearResult.visible());
+        assertFalse(outerwearResult.eligibleForTryOn());
+        assertTrue(outerwearResult.replacedGarmentIds().isEmpty());
+        assertThrows(InvalidGarmentException.class, () -> GarmentSelectionPolicy.assertEligible(jacket));
+
+        GarmentValidationResult hiddenResult = GarmentSelectionPolicy.evaluate(hiddenTop, List.of(shirt));
+        assertTrue(hiddenResult.compatible());
+        assertFalse(hiddenResult.visible());
+        assertFalse(hiddenResult.eligibleForTryOn());
+        assertTrue(hiddenResult.replacedGarmentIds().isEmpty());
+        assertThrows(InvalidGarmentException.class, () -> GarmentSelectionPolicy.assertEligible(hiddenTop));
+        assertDoesNotThrow(() -> GarmentSelectionPolicy.assertEligible(shirt));
     }
 }
 

@@ -6,6 +6,8 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -23,5 +25,18 @@ public interface UserQuotaRepositoryPort {
     CatalogGarment saveCatalogGarment(CatalogGarment garment);
 
     Optional<CatalogGarment> findCatalogGarmentById(GarmentId garmentId);
+
+    /**
+     * Recupera múltiples prendas del catálogo local a partir de sus identificadores.
+     */
+    default List<CatalogGarment> findCatalogGarmentsByIds(Collection<GarmentId> garmentIds) {
+        if (garmentIds == null || garmentIds.isEmpty()) {
+            return List.of();
+        }
+        return garmentIds.stream()
+                .map(this::findCatalogGarmentById)
+                .flatMap(Optional::stream)
+                .toList();
+    }
 }
 
