@@ -17,7 +17,7 @@ public class TryOnJobBuilder {
     private UserId userId;
     private GarmentId garmentId;
     private String photoUrl;
-    private GarmentCategory garmentCategory = GarmentCategory.TOPS;
+    private GarmentCategory garmentCategory = GarmentCategory.TOP;
     private String garmentImageUrl;
     private AiProvider aiProvider = AiProvider.FASHN_AI;
 
@@ -63,7 +63,7 @@ public class TryOnJobBuilder {
             throw new IllegalArgumentException("No se puede construir un TryOnJob sin photoUrl");
         }
         UUID resolvedId = id != null ? id : UUID.randomUUID();
-        GarmentCategory resolvedCategory = garmentCategory != null ? garmentCategory : GarmentCategory.TOPS;
+        GarmentCategory resolvedCategory = garmentCategory != null ? garmentCategory : GarmentCategory.TOP;
         AiProvider resolvedProvider = aiProvider != null ? aiProvider : AiProvider.FASHN_AI;
         Instant now = Instant.now();
         return new TryOnJob(

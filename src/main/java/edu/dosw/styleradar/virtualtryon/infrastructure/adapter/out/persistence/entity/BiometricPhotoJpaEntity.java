@@ -40,6 +40,9 @@ public class BiometricPhotoJpaEntity {
     @Column(name = "uploaded_at", nullable = false)
     private Instant uploadedAt;
 
+    @Column(name = "active", nullable = false)
+    private boolean active = true;
+
     public BiometricPhotoJpaEntity() {
     }
 
@@ -53,6 +56,20 @@ public class BiometricPhotoJpaEntity {
             String photoUrl,
             Instant uploadedAt
     ) {
+        this(id, userId, contentType, width, height, sizeBytes, photoUrl, uploadedAt, true);
+    }
+
+    public BiometricPhotoJpaEntity(
+            UUID id,
+            UUID userId,
+            String contentType,
+            int width,
+            int height,
+            long sizeBytes,
+            String photoUrl,
+            Instant uploadedAt,
+            boolean active
+    ) {
         this.id = id;
         this.userId = userId;
         this.contentType = contentType;
@@ -61,6 +78,7 @@ public class BiometricPhotoJpaEntity {
         this.sizeBytes = sizeBytes;
         this.photoUrl = photoUrl;
         this.uploadedAt = uploadedAt;
+        this.active = active;
     }
 
     public UUID getId() {
@@ -125,6 +143,14 @@ public class BiometricPhotoJpaEntity {
 
     public void setUploadedAt(Instant uploadedAt) {
         this.uploadedAt = uploadedAt;
+    }
+
+    public boolean isActive() {
+        return active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
     }
 }
 

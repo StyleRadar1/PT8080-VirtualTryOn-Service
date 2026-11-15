@@ -31,6 +31,7 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.r
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -193,6 +194,17 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     public Optional<CatalogGarment> findCatalogGarmentById(GarmentId garmentId) {
         return catalogGarmentJpaRepository.findById(garmentId.value())
                 .map(persistenceMapper::toCatalogGarmentDomain);
+    }
+
+    @Override
+    public List<CatalogGarment> findCatalogGarmentsByIds(Collection<GarmentId> garmentIds) {
+        if (garmentIds == null || garmentIds.isEmpty()) {
+            return List.of();
+        }
+        List<UUID> ids = garmentIds.stream().map(GarmentId::value).toList();
+        return catalogGarmentJpaRepository.findAllById(ids).stream()
+                .map(persistenceMapper::toCatalogGarmentDomain)
+                .toList();
     }
 
     @Override
