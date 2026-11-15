@@ -16,6 +16,8 @@ import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSelectionPolicy;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -23,6 +25,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Mapper de entrada que transforma entidades del dominio puro hacia DTOs de respuesta REST (SR-RF-23 a SR-RF-26).
@@ -30,6 +33,7 @@ import java.util.List;
 @Component
 public class VirtualTryOnDtoMapper {
 
+    private static final Logger log = LoggerFactory.getLogger(VirtualTryOnDtoMapper.class);
     private static final Duration DEFAULT_ESTIMATED_DURATION = Duration.ofSeconds(25);
 
     private final BlobStoragePort blobStoragePort;
@@ -75,7 +79,7 @@ public class VirtualTryOnDtoMapper {
                 photo.getWidth(),
                 photo.getHeight(),
                 photo.getSizeBytes(),
-                photo.getPhotoUrl().value(),
+                resolveBiometricPhotoUrl(photo),
                 photo.getUploadedAt(),
                 photo.isActive()
         );
@@ -143,17 +147,74 @@ public class VirtualTryOnDtoMapper {
         if (job.isPhotoPurged() || job.getPhotoUrl() == null || job.getPhotoUrl().isBlank()) {
             return null;
         }
-        if (blobStoragePort == null) {
-            return job.getPhotoUrl();
-        }
-        SasSignedUrl signed = blobStoragePort.generateReadOnlySignedUrl(job.getPhotoUrl());
-        return signed != null ? signed.value() : job.getPhotoUrl();
+        return signReadOnlyUrl(job.getPhotoUrl(), job.getId(), "photoUrl");
     }
 
     private String temporaryResultUrl(TryOnJob job) {
-        if (job.getResultImageUrl() == null) return null;
-        if (blobStoragePort == null) return job.getResultImageUrl().value();
-        SasSignedUrl signed = blobStoragePort.generateReadOnlySignedUrl(job.getResultImageUrl().value());
-        return signed != null ? signed.value() : job.getResultImageUrl().value();
+        if (job.getResultImageUrl() == null || job.getResultImageUrl().value() == null
+                || job.getResultImageUrl().value().isBlank()) {
+            return null;
+        }
+        return signReadOnlyUrl(job.getResultImageUrl().value(), job.getId(), "resultImageUrl");
+    }
+
+    private String resolveBiometricPhotoUrl(BiometricPhoto photo) {
+        String currentUrl = photo.getPhotoUrl() != null ? photo.getPhotoUrl().value() : null;
+        if (hasSasSignature(currentUrl)) {
+            return currentUrl;
+        }
+        String storageReference = (photo.getBlobPath() != null && !photo.getBlobPath().isBlank())
+                ? photo.getBlobPath()
+                : currentUrl;
+        return signReadOnlyUrl(storageReference, photo.getPhotoId(), "biometricPhotoUrl");
+    }
+
+    private String signReadOnlyUrl(String rawStorageReference, UUID resourceId, String fieldName) {
+        if (rawStorageReference == null || rawStorageReference.isBlank()) {
+            return null;
+        }
+        if (blobStoragePort == null) {
+            log.warn("Omitiendo referencia sin firmar en {} para recurso {} porque BlobStoragePort no está disponible",
+                    fieldName, resourceId);
+            return null;
+        }
+        try {
+            SasSignedUrl signed = blobStoragePort.generateReadOnlySignedUrl(rawStorageReference);
+            String signedValue = signed != null ? signed.value() : null;
+            if (!hasSasSignature(signedValue)) {
+                log.warn("No se generó firma SAS válida en {} para recurso {}; se omite la URL sin firmar",
+                        fieldName, resourceId);
+                return null;
+            }
+            return signedValue;
+        } catch (RuntimeException ex) {
+            log.warn("Error al generar firma SAS en {} para recurso {}: {}; se omite la referencia de almacenamiento",
+                    fieldName, resourceId, ex.getMessage());
+            return null;
+        }
+    }
+
+    private boolean hasSasSignature(String url) {
+        if (url == null || url.isBlank()) {
+            return false;
+        }
+        int queryIndex = url.indexOf('?');
+        if (queryIndex < 0 || queryIndex == url.length() - 1) {
+            return false;
+        }
+        String query = url.substring(queryIndex + 1);
+        return hasNonEmptyParam(query, "sig")
+                || (hasNonEmptyParam(query, "sp") && hasNonEmptyParam(query, "sr"))
+                || hasNonEmptyParam(query, "sas");
+    }
+
+    private boolean hasNonEmptyParam(String query, String paramName) {
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0 && paramName.equals(pair.substring(0, eq)) && eq < pair.length() - 1) {
+                return true;
+            }
+        }
+        return false;
     }
 }

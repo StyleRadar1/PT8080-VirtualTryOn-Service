@@ -18,6 +18,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
@@ -27,6 +28,7 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtT
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.SecurityProblemHandler;
 import edu.dosw.styleradar.virtualtryon.infrastructure.config.SecurityConfig;
 import edu.dosw.styleradar.virtualtryon.infrastructure.exception.GlobalExceptionHandler;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,7 +47,9 @@ import java.util.UUID;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -87,6 +91,21 @@ class VirtualTryOnRestControllerTest {
 
     @MockBean
     private DeleteBiometricDataService deleteBiometricDataService;
+
+    @MockBean
+    private BlobStoragePort blobStoragePort;
+
+    @BeforeEach
+    void setUpBlobStorageMock() {
+        lenient().when(blobStoragePort.generateReadOnlySignedUrl(anyString())).thenAnswer(inv -> {
+            String raw = inv.getArgument(0);
+            if (raw == null || raw.isBlank()) {
+                return null;
+            }
+            String separator = raw.contains("?") ? "&" : "?";
+            return SasSignedUrl.of(raw + separator + "sig=test-sas-token");
+        });
+    }
 
     private String bearerTokenFor(UUID userId, String role) {
         return "Bearer " + jwtTokenProvider.generateToken(userId, role);
@@ -687,5 +706,38 @@ class VirtualTryOnRestControllerTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode", is("FORBIDDEN")))
                 .andExpect(jsonPath("$.title", is("Acceso Denegado")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-26: Cuando falla la generación de firma SAS o retorna URL sin firmar, GET /api/v1/try-on/jobs/{id} maneja el fallo sin exponer referencias de almacenamiento")
+    void testGetTryOnJobHandlesSasSigningFailureWithoutExposingUnsignedUrls() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        TryOnJob completedJob = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(UserId.of(userId))
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withCategory(GarmentCategory.TOP)
+                .withPhotoUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg")
+                .build();
+        completedJob.complete(
+                SasSignedUrl.of("https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png"),
+                1900L
+        );
+
+        when(queryTryOnJobsService.getTryOnJob(eq(jobId), eq(UserId.of(userId)), anyBoolean())).thenReturn(completedJob);
+        when(blobStoragePort.generateReadOnlySignedUrl("https://styleradar.blob.core.windows.net/photos/user-test.jpg"))
+                .thenThrow(new IllegalStateException("Error generando firma SAS"));
+        when(blobStoragePort.generateReadOnlySignedUrl("https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png"))
+                .thenReturn(SasSignedUrl.of("https://styleradar.blob.core.windows.net/renders/render-" + jobId + ".png"));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/{jobId}", jobId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId", is(jobId.toString())))
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.photoUrl").doesNotExist())
+                .andExpect(jsonPath("$.resultImageUrl").doesNotExist());
     }
 }
