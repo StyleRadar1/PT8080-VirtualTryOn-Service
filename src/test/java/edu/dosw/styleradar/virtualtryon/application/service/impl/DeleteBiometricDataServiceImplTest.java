@@ -44,6 +44,10 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -569,5 +573,121 @@ class DeleteBiometricDataServiceImplTest {
         org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto(url1, differentPhoto));
         org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto("PURGED_BY_USER_REQUEST", "PURGED_BY_USER_REQUEST"));
         org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto(null, url1));
+        org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto(url1, null));
+        org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto("", "test.png"));
+        org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto("   ", "test.png"));
+        org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto("test.png", ""));
+        org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto("PURGED", "other.png"));
+        org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto("other.png", "PURGED"));
+
+        // Cobertura de extractBlobNameOrPath
+        org.junit.jupiter.api.Assertions.assertEquals("", DeleteBiometricDataServiceImpl.extractBlobNameOrPath(null));
+        org.junit.jupiter.api.Assertions.assertEquals("", DeleteBiometricDataServiceImpl.extractBlobNameOrPath(""));
+        org.junit.jupiter.api.Assertions.assertEquals("", DeleteBiometricDataServiceImpl.extractBlobNameOrPath("   "));
+        org.junit.jupiter.api.Assertions.assertEquals("plain.png", DeleteBiometricDataServiceImpl.extractBlobNameOrPath("plain.png"));
+        org.junit.jupiter.api.Assertions.assertEquals("container/user/photo.png", DeleteBiometricDataServiceImpl.extractBlobNameOrPath("///container/user/photo.png"));
+        org.junit.jupiter.api.Assertions.assertEquals("folder/img.png", DeleteBiometricDataServiceImpl.extractBlobNameOrPath("http://example.com/container/folder/img.png?sas=token"));
+        org.junit.jupiter.api.Assertions.assertNotNull(DeleteBiometricDataServiceImpl.extractBlobNameOrPath("ht tp://not a uri::/invalid"));
+    }
+
+    @Test
+    @DisplayName("SR-RF-27: Borrado de trabajo con foto que coincide con perfil biométrico, omitiendo trabajos ya purgados")
+    void shouldHandleJobPhotoMatchingProfileAndSkipAlreadyPurgedJobs() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID targetJobId = UUID.randomUUID();
+        UUID alreadyPurgedJobId = UUID.randomUUID();
+        UUID sharedJobId = UUID.randomUUID();
+
+        String profileBlob = "biometrics/" + ownerId.value() + "/silhouette.png";
+        BiometricPhoto profilePhoto = new BiometricPhoto(
+                UUID.randomUUID(),
+                ownerId,
+                "image/png",
+                800, 600, 1024L,
+                profileBlob,
+                SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/" + profileBlob + "?sas=profile"),
+                Instant.now()
+        );
+        BiometricPhotoJpaEntity profileEntity = mapper.toPhotoJpaEntity(profilePhoto);
+        when(photoJpaRepository.findByUserId(ownerId.value())).thenReturn(Optional.of(profileEntity));
+
+        // Trabajo objetivo usa la foto de perfil
+        TryOnJob targetJob = new TryOnJobBuilder()
+                .withId(targetJobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(profileBlob)
+                .build();
+        targetJob.complete(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-target.png"), 1000L);
+
+        // Trabajo ya purgado sin render (debe ser ignorado con continue)
+        TryOnJob purgedJob = new TryOnJobBuilder()
+                .withId(alreadyPurgedJobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("PURGED_BY_USER_REQUEST")
+                .build();
+        // isPhotoPurged = true, resultImageUrl = null
+
+        // Trabajo compartido que usa la misma foto de perfil
+        TryOnJob sharedJob = new TryOnJobBuilder()
+                .withId(sharedJobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://styleradarblob.blob.core.windows.net/" + profileBlob + "?sas=job3")
+                .build();
+        sharedJob.complete(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-shared.png"), 1500L);
+
+        TryOnJobJpaEntity targetEntity = mapper.toJobJpaEntity(targetJob);
+        TryOnJobJpaEntity purgedEntity = mapper.toJobJpaEntity(purgedJob);
+        TryOnJobJpaEntity sharedEntity = mapper.toJobJpaEntity(sharedJob);
+
+        when(tryOnJobJpaRepository.findById(targetJobId)).thenReturn(Optional.of(targetEntity));
+        when(tryOnJobJpaRepository.findByUserIdOrderByCreatedAtDesc(ownerId.value()))
+                .thenReturn(List.of(targetEntity, purgedEntity, sharedEntity));
+
+        deleteService.deleteBiometricPhoto(targetJobId, ownerId, false);
+
+        verify(blobStoragePort, atLeastOnce()).deleteBlob(contains("silhouette.png"));
+        verify(blobStoragePort).deleteBlob(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-target.png"));
+        verify(blobStoragePort).deleteBlob(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-shared.png"));
+    }
+
+    @Test
+    @DisplayName("SR-RF-27: Purga de foto y purga total de usuario sin trabajos registrados genera evento de dominio")
+    void shouldPublishPurgeEventWhenUserHasNoJobs() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID photoId = UUID.randomUUID();
+        BiometricPhoto photo = new BiometricPhoto(
+                photoId,
+                ownerId,
+                "image/png",
+                800, 600, 1024L,
+                "photos/sil.png",
+                SasSignedUrl.of("https://blob/photos/sil.png"),
+                Instant.now()
+        );
+        BiometricPhotoJpaEntity photoEntity = mapper.toPhotoJpaEntity(photo);
+        when(photoJpaRepository.findById(photoId)).thenReturn(Optional.of(photoEntity));
+        when(photoJpaRepository.findByUserId(ownerId.value())).thenReturn(Optional.of(photoEntity));
+        when(tryOnJobJpaRepository.findByUserIdOrderByCreatedAtDesc(ownerId.value())).thenReturn(List.of());
+
+        // 1. Borrado directo de foto cuando usuario no tiene trabajos
+        deleteService.deleteBiometricPhoto(photoId, ownerId, false);
+        verify(blobStoragePort).deleteBlob(any(SasSignedUrl.class));
+        verify(photoJpaRepository).deleteByUserId(ownerId.value());
+        verify(outboxPublisherPort).saveOutboxEvent(
+                eq(photoId),
+                eq(PhotoPurgedDomainEvent.ROUTING_KEY),
+                any(PhotoPurgedDomainEvent.class)
+        );
+
+        // 2. Purga total de usuario sin trabajos
+        deleteService.purgeAllBiometricDataForUser(ownerId);
+        verify(outboxPublisherPort, atLeast(2)).saveOutboxEvent(
+                any(),
+                eq(PhotoPurgedDomainEvent.ROUTING_KEY),
+                any(PhotoPurgedDomainEvent.class)
+        );
     }
 }

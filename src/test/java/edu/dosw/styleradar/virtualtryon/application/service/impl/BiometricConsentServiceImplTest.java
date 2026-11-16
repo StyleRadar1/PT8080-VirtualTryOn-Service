@@ -152,6 +152,22 @@ class BiometricConsentServiceImplTest {
     }
 
     @Test
+    @DisplayName("SR-RF-27: Constructor de dos argumentos y revocación cuando deleteBiometricDataService es nulo")
+    void shouldRevokeConsentSafelyWhenDeleteBiometricDataServiceIsNull() {
+        BiometricConsentServiceImpl serviceWithoutDelete = new BiometricConsentServiceImpl(repositoryAdapter, blobStorageAdapter);
+        serviceWithoutDelete.grantConsent(
+                USER_ID,
+                "v1.0-LEY1581-2026",
+                true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"),
+                "190.24.10.1"
+        );
+        BiometricConsent revoked = serviceWithoutDelete.revokeConsent(USER_ID);
+        assertThat(revoked.isValidForInference()).isFalse();
+        assertThat(revoked.getRevokedAt()).isNotNull();
+    }
+
+    @Test
     @DisplayName("HU SR-RF-23 (Negativo): Dado un usuario que rechaza el consentimiento (accepted=false) o no existe, Cuando se invoca el servicio, Entonces lanza ConsentRequiredException")
     void shouldThrowWhenConsentRejectedOrMissing() {
         assertThatThrownBy(() -> consentService.grantConsent(USER_ID, "v1.0", false, List.of(), "127.0.0.1"))

@@ -556,6 +556,80 @@ class BiometricConsentControllerTest {
                 .signWith(signingKey, Jwts.SIG.HS256).compact();
         assertThat(jwtTokenProvider.validateAndExtractUser(numericSubjectJwt).userId()).isNotNull();
 
+        // Validaciones avanzadas de claims JWT: authorities como CSV, scope como colección/string, claims user_id/id
+        UUID altUuid = UUID.randomUUID();
+        String authoritiesCsvJwt = Jwts.builder().subject(USER_UUID.toString())
+                .claim("authorities", "ROLE_COMPRADOR,ROLE_ADMIN_STYLERADAR")
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        assertThat(jwtTokenProvider.validateAndExtractUser(authoritiesCsvJwt).roles())
+                .contains("COMPRADOR", "ADMIN_STYLERADAR");
+
+        String scopeCollectionJwt = Jwts.builder().subject("john_doe")
+                .claim("user_id", "not-a-uuid")
+                .claim("id", altUuid.toString())
+                .claim("scope", List.of("ROLE_COMPRADOR", "ROLE_USER"))
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        AuthenticatedUser scopeCollUser = jwtTokenProvider.validateAndExtractUser(scopeCollectionJwt);
+        assertThat(scopeCollUser.userId()).isEqualTo(altUuid);
+        assertThat(scopeCollUser.roles()).contains("COMPRADOR", "USER");
+
+        String scopeStringJwt = Jwts.builder().subject(USER_UUID.toString())
+                .claim("scope", "ROLE_COMPRADOR ROLE_VENTAS")
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        assertThat(jwtTokenProvider.validateAndExtractUser(scopeStringJwt).roles()).contains("COMPRADOR", "VENTAS");
+
+        // Cobertura completa de resolveAndVerifyCallerUserId con UserDetails y roles
+        when(biometricConsentService.getConsentByUserId(eq(UserId.of(USER_UUID)))).thenReturn(sampleConsent(null));
+        when(biometricConsentService.getConsentByUserId(eq(UserId.of(OTHER_USER_UUID)))).thenReturn(sampleConsent(null));
+
+        // 1. targetUserId == null -> infiere ID del usuario autenticado
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(
+                        new AuthenticatedUser(USER_UUID, "COMPRADOR"), null,
+                        List.of(new SimpleGrantedAuthority("ROLE_COMPRADOR"))
+                )
+        );
+        assertThat(directCtrl.getConsent(null).getStatusCode().value()).isEqualTo(200);
+
+        // 2. UserDetails como principal para usuario comprador consultando su propio consentimiento
+        org.springframework.security.core.userdetails.UserDetails buyerDetails =
+                User.withUsername(USER_UUID.toString()).password("pwd").roles("COMPRADOR").build();
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(buyerDetails, null, buyerDetails.getAuthorities())
+        );
+        assertThat(directCtrl.getConsent(USER_UUID).getStatusCode().value()).isEqualTo(200);
+
+        // 3. UserDetails como principal no-admin consultando consentimiento ajeno -> 403
+        assertThatThrownBy(() -> directCtrl.getConsent(OTHER_USER_UUID)).isInstanceOf(AccessDeniedException.class);
+
+        // 4. UserDetails como principal ADMIN consultando consentimiento ajeno -> 200
+        org.springframework.security.core.userdetails.UserDetails adminDetails =
+                User.withUsername(USER_UUID.toString()).password("pwd").roles("ADMIN_STYLERADAR").build();
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(adminDetails, null, adminDetails.getAuthorities())
+        );
+        assertThat(directCtrl.getConsent(OTHER_USER_UUID).getStatusCode().value()).isEqualTo(200);
+
+        // 5. UserDetails con nombre de usuario no UUID -> AccessDeniedException
+        org.springframework.security.core.userdetails.UserDetails invalidIdDetails =
+                User.withUsername("not-a-valid-uuid").password("pwd").roles("ADMIN_STYLERADAR").build();
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(invalidIdDetails, null, invalidIdDetails.getAuthorities())
+        );
+        assertThatThrownBy(() -> directCtrl.getConsent(USER_UUID)).isInstanceOf(AccessDeniedException.class);
+
+        // 6. Usuario sin rol permitido
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(
+                        new AuthenticatedUser(USER_UUID, "GUEST"), null,
+                        List.of(new SimpleGrantedAuthority("ROLE_GUEST"))
+                )
+        );
+        assertThatThrownBy(() -> directCtrl.getConsent(USER_UUID)).isInstanceOf(AccessDeniedException.class);
+
         String badSubjectJwt = Jwts.builder().subject("not-a-uuid-abc").claim("role", "COMPRADOR")
                 .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
                 .signWith(signingKey, Jwts.SIG.HS256).compact();

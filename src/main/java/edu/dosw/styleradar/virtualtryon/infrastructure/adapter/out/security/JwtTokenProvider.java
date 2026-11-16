@@ -111,25 +111,13 @@ public class JwtTokenProvider {
         if (subjectUuid != null) {
             return subjectUuid;
         }
-        Object rawUserIdClaim = claims.get("userId");
-        if (rawUserIdClaim != null) {
-            UUID claimUuid = parseUuidOrNull(rawUserIdClaim.toString());
-            if (claimUuid != null) {
-                return claimUuid;
-            }
-        }
-        Object rawSnakeUserId = claims.get("user_id");
-        if (rawSnakeUserId != null) {
-            UUID claimUuid = parseUuidOrNull(rawSnakeUserId.toString());
-            if (claimUuid != null) {
-                return claimUuid;
-            }
-        }
-        Object rawId = claims.get("id");
-        if (rawId != null) {
-            UUID claimUuid = parseUuidOrNull(rawId.toString());
-            if (claimUuid != null) {
-                return claimUuid;
+        for (String key : new String[]{"userId", "user_id", "id"}) {
+            Object raw = claims.get(key);
+            if (raw != null) {
+                UUID claimUuid = parseUuidOrNull(raw.toString());
+                if (claimUuid != null) {
+                    return claimUuid;
+                }
             }
         }
         if (subject == null || subject.isBlank()) {
@@ -151,41 +139,28 @@ public class JwtTokenProvider {
 
     private static java.util.List<String> extractRoles(Claims claims) {
         java.util.Set<String> collected = new java.util.LinkedHashSet<>();
-        Object rolesObj = claims.get("roles");
-        if (rolesObj instanceof java.util.Collection<?> roleCollection) {
-            for (Object item : roleCollection) {
-                addNormalizedRole(collected, item == null ? null : item.toString());
-            }
-        } else if (rolesObj instanceof String rawRolesCsv) {
-            for (String token : rawRolesCsv.split(",")) {
-                addNormalizedRole(collected, token);
-            }
-        }
-        addNormalizedRole(collected, claims.get("role", String.class));
-
-        Object authoritiesObj = claims.get("authorities");
-        if (authoritiesObj instanceof java.util.Collection<?> authCollection) {
-            for (Object item : authCollection) {
-                addNormalizedRole(collected, item == null ? null : item.toString());
-            }
-        } else if (authoritiesObj instanceof String authCsv) {
-            for (String token : authCsv.split(",")) {
-                addNormalizedRole(collected, token);
-            }
-        }
-
-        Object scopeObj = claims.get("scope");
-        if (scopeObj instanceof java.util.Collection<?> scopeCollection) {
-            for (Object item : scopeCollection) {
-                addNormalizedRole(collected, item == null ? null : item.toString());
-            }
-        } else if (scopeObj instanceof String scopeStr) {
-            for (String token : scopeStr.split("[ ,]")) {
-                addNormalizedRole(collected, token);
-            }
-        }
-
+        extractRolesFromClaim(collected, claims.get("roles"));
+        extractRolesFromClaim(collected, claims.get("role"));
+        extractRolesFromClaim(collected, claims.get("authorities"));
+        extractRolesFromClaim(collected, claims.get("scope"));
         return java.util.List.copyOf(collected);
+    }
+
+    private static void extractRolesFromClaim(java.util.Set<String> target, Object claimValue) {
+        if (claimValue == null) {
+            return;
+        }
+        if (claimValue instanceof java.util.Collection<?> collection) {
+            for (Object item : collection) {
+                if (item != null) {
+                    addNormalizedRole(target, item.toString());
+                }
+            }
+        } else if (claimValue instanceof String str) {
+            for (String token : str.split("[,\\s]+")) {
+                addNormalizedRole(target, token);
+            }
+        }
     }
 
     private static void addNormalizedRole(java.util.Set<String> target, String rawRole) {

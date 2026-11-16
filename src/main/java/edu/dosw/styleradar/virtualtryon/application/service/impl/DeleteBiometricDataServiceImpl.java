@@ -94,13 +94,11 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
 
             String targetPhotoUrl = job.getPhotoUrl();
             Optional<BiometricPhoto> profilePhotoOpt = biometricDataRepositoryPort.findPhotoByUserId(job.getUserId());
-            String profileBlobPath = profilePhotoOpt.map(BiometricPhoto::getBlobPath).orElse(null);
-            String profilePhotoUrl = profilePhotoOpt.map(BiometricPhoto::getPhotoUrl).map(SasSignedUrl::value).orElse(null);
+            String profileCanonical = profilePhotoOpt
+                    .map(p -> p.getBlobPath() != null ? p.getBlobPath() : p.getPhotoUrl().value())
+                    .orElse(null);
 
-            boolean isJobPhotoMatchingProfile = targetPhotoUrl != null && (
-                    sharesSamePhoto(targetPhotoUrl, profileBlobPath)
-                            || sharesSamePhoto(targetPhotoUrl, profilePhotoUrl)
-            );
+            boolean isJobPhotoMatchingProfile = sharesSamePhoto(targetPhotoUrl, profileCanonical);
 
             // 1. Purgar el trabajo solicitado directamente
             purgeSingleJobAndUserPhoto(job);
@@ -117,10 +115,7 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
                 }
 
                 boolean sharesPhoto = sharesSamePhoto(targetPhotoUrl, otherJob.getPhotoUrl())
-                        || (isJobPhotoMatchingProfile && (
-                        sharesSamePhoto(profileBlobPath, otherJob.getPhotoUrl())
-                                || sharesSamePhoto(profilePhotoUrl, otherJob.getPhotoUrl())
-                ));
+                        || (isJobPhotoMatchingProfile && sharesSamePhoto(profileCanonical, otherJob.getPhotoUrl()));
 
                 if (sharesPhoto) {
                     purgeSingleJobAndUserPhoto(otherJob);
@@ -239,46 +234,51 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
     }
 
     static boolean sharesSamePhoto(String photoUrl1, String photoUrl2) {
-        if (photoUrl1 == null || photoUrl2 == null || photoUrl1.isBlank() || photoUrl2.isBlank()) {
+        if (photoUrl1 == null || photoUrl2 == null) {
             return false;
         }
-        if (photoUrl1.startsWith("PURGED") || photoUrl2.startsWith("PURGED")) {
+        String p1 = photoUrl1.trim();
+        String p2 = photoUrl2.trim();
+        if (p1.isEmpty() || p2.isEmpty() || p1.startsWith("PURGED") || p2.startsWith("PURGED")) {
             return false;
         }
-        if (photoUrl1.trim().equalsIgnoreCase(photoUrl2.trim())) {
+        if (p1.equalsIgnoreCase(p2)) {
             return true;
         }
-        String blob1 = extractBlobNameOrPath(photoUrl1);
-        String blob2 = extractBlobNameOrPath(photoUrl2);
-        return !blob1.isBlank() && blob1.equalsIgnoreCase(blob2);
+        String blob1 = extractBlobNameOrPath(p1);
+        String blob2 = extractBlobNameOrPath(p2);
+        if (blob1.isEmpty() || blob2.isEmpty()) {
+            return false;
+        }
+        return blob1.equalsIgnoreCase(blob2) || blob1.endsWith("/" + blob2) || blob2.endsWith("/" + blob1);
     }
 
     static String extractBlobNameOrPath(String urlOrPath) {
-        if (urlOrPath == null || urlOrPath.isBlank()) {
+        if (urlOrPath == null) {
             return "";
         }
         String clean = urlOrPath.trim();
+        if (clean.isEmpty()) {
+            return "";
+        }
         int queryIdx = clean.indexOf('?');
         if (queryIdx >= 0) {
             clean = clean.substring(0, queryIdx);
         }
-        try {
-            if (clean.contains("://")) {
+        if (clean.contains("://")) {
+            try {
                 URI uri = URI.create(clean).normalize();
                 String path = uri.getPath();
-                if (path != null && !path.isBlank()) {
+                if (path != null) {
                     while (path.startsWith("/")) {
                         path = path.substring(1);
                     }
                     int firstSlash = path.indexOf('/');
-                    if (firstSlash >= 0) {
-                        return path.substring(firstSlash + 1);
-                    }
-                    return path;
+                    clean = (firstSlash >= 0) ? path.substring(firstSlash + 1) : path;
                 }
+            } catch (Exception ignored) {
+                // conservar valor limpio
             }
-        } catch (Exception ignored) {
-            // fallback al camino estándar
         }
         while (clean.startsWith("/")) {
             clean = clean.substring(1);
