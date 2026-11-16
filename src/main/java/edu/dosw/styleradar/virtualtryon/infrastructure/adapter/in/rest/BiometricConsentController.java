@@ -78,9 +78,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<BiometricConsentResponse> grantConsent(@Valid @RequestBody BiometricConsentRequest request) {
         verifyCallerIdentityAndPermissions(request.userId());
-        String effectiveIp = (request.ipAddress() == null || request.ipAddress().isBlank())
-                ? resolveClientIp()
-                : request.ipAddress();
+        String effectiveIp = resolveClientIp();
         BiometricConsent consent = biometricConsentService.grantConsent(
                 UserId.of(request.userId()),
                 request.termsVersion(),

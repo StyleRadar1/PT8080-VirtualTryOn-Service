@@ -497,9 +497,12 @@ class QueryTryOnJobsServiceImplTest {
         ));
 
         // 7. Error de BD en moderación / payload inválido sin garmentId -> DLQ
+        CatalogGarmentUpdatedEvent freshApprovedEvent = new CatalogGarmentUpdatedEvent(
+                existingId, "Blazer Azul", "TOP", "https://img/blazer.png", true, Instant.now().plusSeconds(10)
+        );
         doThrow(new RuntimeException("DB error")).when(catalogGarmentJpaRepository).save(any(CatalogGarmentJpaEntity.class));
         assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
-                eventListenerAdapter.onCatalogGarmentModerationChanged(approvedEvent)
+                eventListenerAdapter.onCatalogGarmentModerationChanged(freshApprovedEvent)
         );
         assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
                 eventListenerAdapter.onCatalogGarmentUpdated(new CatalogGarmentUpdatedEvent(
@@ -514,6 +517,52 @@ class QueryTryOnJobsServiceImplTest {
                         null, "Sin ID", "TOP", "https://img", true, Instant.now()
                 ))
         );
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Dado un evento de catálogo fuera de orden con updatedAt anterior al existente, Cuando se procesa sincronización o visibilidad, Entonces se descarta sin revertir el estado actual")
+    void shouldIgnoreOutOfOrderCatalogGarmentEventsAndPreserveCurrentState() {
+        UUID garmentId = UUID.randomUUID();
+        Instant t0 = Instant.parse("2026-11-15T10:00:00Z");
+        Instant t1 = Instant.parse("2026-11-15T12:00:00Z"); // Estado más reciente: RETIRADA / OCULTA
+        Instant t2 = Instant.parse("2026-11-15T14:00:00Z"); // Estado futuro: REACTIVADA
+
+        CatalogGarmentJpaEntity currentEntity = new CatalogGarmentJpaEntity(
+                garmentId, "Vestido Elegante", "ONE_PIECE", "https://img/vestido.png", false, t1
+        );
+        when(catalogGarmentJpaRepository.findById(garmentId)).thenReturn(Optional.of(currentEntity));
+
+        // 1. Evento viejo de publicación (T0 < T1) llega fuera de orden intentando poner visible=true -> Se descarta
+        CatalogGarment stalePublishGarment = new CatalogGarment(
+                GarmentId.of(garmentId), "Vestido Elegante", GarmentCategory.ONE_PIECE,
+                "https://img/vestido.png", true, t0
+        );
+        CatalogGarment syncedResult = queryTryOnJobsService.syncCatalogGarment(stalePublishGarment);
+        assertThat(syncedResult.isVisible()).isFalse();
+        assertThat(syncedResult.getUpdatedAt()).isEqualTo(t1);
+
+        // 2. Evento viejo de cambio de visibilidad (T0 < T1) llega fuera de orden -> Se descarta
+        Optional<CatalogGarment> staleVisibilityResult = queryTryOnJobsService.updateCatalogGarmentVisibility(
+                GarmentId.of(garmentId), true, t0
+        );
+        assertThat(staleVisibilityResult).isPresent();
+        assertThat(staleVisibilityResult.get().isVisible()).isFalse();
+        assertThat(staleVisibilityResult.get().getUpdatedAt()).isEqualTo(t1);
+
+        // Se verifica que para los eventos obsoletos nunca se invocó save
+        verify(catalogGarmentJpaRepository, never()).save(any(CatalogGarmentJpaEntity.class));
+
+        // 3. Evento más reciente (T2 > T1) -> Sí se guarda y actualiza el estado a visible=true
+        CatalogGarment newerGarment = new CatalogGarment(
+                GarmentId.of(garmentId), "Vestido Elegante", GarmentCategory.ONE_PIECE,
+                "https://img/vestido.png", true, t2
+        );
+        when(catalogGarmentJpaRepository.save(any(CatalogGarmentJpaEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        CatalogGarment newerResult = queryTryOnJobsService.syncCatalogGarment(newerGarment);
+        assertThat(newerResult.isVisible()).isTrue();
+        assertThat(newerResult.getUpdatedAt()).isEqualTo(t2);
+        verify(catalogGarmentJpaRepository).save(any(CatalogGarmentJpaEntity.class));
     }
 
     @Test

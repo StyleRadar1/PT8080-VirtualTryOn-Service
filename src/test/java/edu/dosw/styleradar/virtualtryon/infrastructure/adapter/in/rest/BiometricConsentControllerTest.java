@@ -439,17 +439,17 @@ class BiometricConsentControllerTest {
                         org.hamcrest.Matchers.is(403)
                 ))));
 
-        // Fase B extra: grantConsent con ipAddress en blanco resuelve X-Real-IP, uploadPhoto resuelve X-Real-IP y getRemoteAddr
+        // Fase B extra: grantConsent resuelve IP desde infraestructura del servidor (X-Real-IP) e ignora ipAddress falso enviado por el cliente
         when(biometricConsentService.grantConsent(any(), any(), anyBoolean(), any(), eq("198.51.100.77")))
                 .thenReturn(sampleConsent(null));
-        BiometricConsentRequest blankIpRequest = new BiometricConsentRequest(
-                USER_UUID, "v1.0-LEY1581-2026", true, List.of("VIRTUAL_TRY_ON_INFERENCE"), "   "
+        BiometricConsentRequest spoofedIpRequest = new BiometricConsentRequest(
+                USER_UUID, "v1.0-LEY1581-2026", true, List.of("VIRTUAL_TRY_ON_INFERENCE"), "203.0.113.199"
         );
         mockMvc.perform(post("/api/v1/try-on/consents")
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR"))
                         .header("X-Real-IP", "198.51.100.77")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(blankIpRequest)))
+                        .content(objectMapper.writeValueAsString(spoofedIpRequest)))
                 .andExpect(status().isCreated());
 
         when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(true), any(), any(), eq("198.51.100.88")))

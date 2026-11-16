@@ -123,9 +123,10 @@ jobs:
                 REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
                 REDIS_SSL_ENABLED="${{ secrets.REDIS_SSL_ENABLED_QA || 'false' }}" \
                 RABBITMQ_HOST="${{ secrets.RABBITMQ_HOST_QA || secrets.RABBITMQ_HOST }}" \
-                RABBITMQ_PORT="${{ secrets.RABBITMQ_PORT }}" \
-                RABBITMQ_USER="${{ secrets.RABBITMQ_USER }}" \
-                RABBITMQ_PASSWORD="${{ secrets.RABBITMQ_PASSWORD }}"
+                RABBITMQ_PORT="${{ secrets.RABBITMQ_PORT_QA || secrets.RABBITMQ_PORT }}" \
+                RABBITMQ_USER="${{ secrets.RABBITMQ_USER_QA || secrets.RABBITMQ_USER }}" \
+                RABBITMQ_PASSWORD="${{ secrets.RABBITMQ_PASSWORD_QA || secrets.RABBITMQ_PASSWORD }}" \
+                RABBITMQ_VHOST="${{ secrets.RABBITMQ_VHOST_QA || secrets.RABBITMQ_VHOST || '/' }}"
 
       - uses: azure/webapps-deploy@v3
         id: deploy

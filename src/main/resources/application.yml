@@ -5,6 +5,7 @@
 
 server:
   port: ${SERVER_PORT:8500}
+  forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:framework}
   servlet:
     context-path: /
 
