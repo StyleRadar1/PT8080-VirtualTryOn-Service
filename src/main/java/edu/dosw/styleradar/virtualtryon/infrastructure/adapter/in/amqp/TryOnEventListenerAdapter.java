@@ -133,8 +133,17 @@ public class TryOnEventListenerAdapter {
                 syncFullCatalogGarment(event, visible);
                 return;
             }
-            log.warn("Prenda {} no existe aún en proyección local al recibir {} (visible={}); evento omitido",
+            // La prenda no está proyectada y el evento no trae datos para crearla: descartarlo en silencio
+            // perdería la actualización (p. ej. retiro anterior a la publicación). Se envía a la DLQ para
+            // preservarlo y poder reprocesarlo cuando la prenda exista.
+            log.error("Prenda {} no existe en proyección local al recibir {} (visible={}) y el evento no permite crearla; enviado a DLQ para reproceso",
                     event.garmentId(), eventName, visible);
+            throw new AmqpRejectAndDontRequeueException(
+                    "Prenda " + event.garmentId() + " inexistente al procesar " + eventName
+                            + "; actualización conservada en Dead Letter Queue"
+            );
+        } catch (AmqpRejectAndDontRequeueException rejection) {
+            throw rejection;
         } catch (Exception ex) {
             log.error("Error procesando evento {} para prenda {}. Redirigiendo a DLQ: {}",
                     eventName, event.garmentId(), ex.getMessage());

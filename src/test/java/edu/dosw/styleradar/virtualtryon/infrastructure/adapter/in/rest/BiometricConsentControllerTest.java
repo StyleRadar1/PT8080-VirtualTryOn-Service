@@ -69,7 +69,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Pruebas de contrato REST, autenticación JWT y validación de titularidad/permisos
  * para BiometricConsentController (SR-RF-23).
  */
-@WebMvcTest(controllers = BiometricConsentController.class)
+@WebMvcTest(controllers = BiometricConsentController.class,
+        properties = "styleradar.tryon.trusted-proxies=127.0.0.1,::1,10.0.0.0/8")
 @Import({
         VirtualTryOnDtoMapper.class,
         GlobalExceptionHandler.class,
@@ -524,5 +525,92 @@ class BiometricConsentControllerTest {
                 .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
                 .signWith(signingKey, Jwts.SIG.HS256).compact();
         assertThatThrownBy(() -> jwtTokenProvider.validateAndExtractUser(badSubjectJwt)).isInstanceOf(JwtException.class);
+    }
+
+    private String uploadAndCaptureRegisteredIp(String remoteAddr, String forwardedFor, String realIp) throws Exception {
+        org.mockito.Mockito.reset(biometricConsentService);
+        when(biometricConsentService.uploadPhoto(any(), anyBoolean(), any(), any(), any())).thenReturn(samplePhoto());
+        MockMultipartFile file = new MockMultipartFile("photo", "p.png", MediaType.IMAGE_PNG_VALUE, new byte[]{1, 2});
+        var request = multipart("/api/v1/try-on/photos")
+                .file(file)
+                .param("userId", USER_UUID.toString())
+                .param("biometricConsent", "true")
+                .with(r -> {
+                    r.setRemoteAddr(remoteAddr);
+                    return r;
+                })
+                .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR"));
+        if (forwardedFor != null) {
+            request.header("X-Forwarded-For", forwardedFor);
+        }
+        if (realIp != null) {
+            request.header("X-Real-IP", realIp);
+        }
+        mockMvc.perform(request).andExpect(status().isCreated());
+        org.mockito.ArgumentCaptor<String> ipCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(biometricConsentService)
+                .uploadPhoto(any(), anyBoolean(), any(), any(), ipCaptor.capture());
+        return ipCaptor.getValue();
+    }
+
+    @Test
+    @DisplayName("Seguridad IP: cabeceras X-Forwarded-For / X-Real-IP solo se aceptan desde proxies confiables y se validan como IP literal")
+    void shouldOnlyTrustForwardedHeadersFromTrustedProxies() throws Exception {
+        // Cliente directo (no proxy) falsifica cabeceras -> se ignoran y se usa la IP de conexión
+        assertThat(uploadAndCaptureRegisteredIp("198.51.100.20", "1.2.3.4", "5.6.7.8")).isEqualTo("198.51.100.20");
+
+        // Proxy confiable (loopback): primer hop no confiable desde la derecha
+        assertThat(uploadAndCaptureRegisteredIp("127.0.0.1", "203.0.113.10", null)).isEqualTo("203.0.113.10");
+
+        // Cliente intenta anteponer una IP falsa; se toma el hop más a la derecha no confiable
+        assertThat(uploadAndCaptureRegisteredIp("127.0.0.1", "6.6.6.6, 203.0.113.10, 127.0.0.1", null))
+                .isEqualTo("203.0.113.10");
+
+        // Hop inválido (texto/hostname/inyección) -> se descarta X-Forwarded-For y se usa X-Real-IP válida
+        assertThat(uploadAndCaptureRegisteredIp("127.0.0.1", "evil.example.com", "198.51.100.77")).isEqualTo("198.51.100.77");
+        assertThat(uploadAndCaptureRegisteredIp("127.0.0.1", "999.1.1.1", "198.51.100.78")).isEqualTo("198.51.100.78");
+
+        // X-Real-IP inválida o ausente -> IP de conexión
+        assertThat(uploadAndCaptureRegisteredIp("127.0.0.1", null, "not-an-ip")).isEqualTo("127.0.0.1");
+        assertThat(uploadAndCaptureRegisteredIp("127.0.0.1", "   ", null)).isEqualTo("127.0.0.1");
+
+        // IPv6 válida desde proxy confiable
+        assertThat(uploadAndCaptureRegisteredIp("::1", "2001:db8::1", null)).isEqualTo("2001:db8::1");
+    }
+
+    @Test
+    @DisplayName("Seguridad IP: proxies confiables configurables por CIDR")
+    void shouldHonorConfiguredTrustedProxyCidrRanges() throws Exception {
+        BiometricConsentController controller = new BiometricConsentController(
+                biometricConsentService, new VirtualTryOnDtoMapper(), List.of("10.0.0.0/8", "invalido/xx", "fd00::/8", "  ")
+        );
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(
+                        new AuthenticatedUser(USER_UUID, "ADMIN_STYLERADAR"), null,
+                        List.of(new SimpleGrantedAuthority("ROLE_ADMIN_STYLERADAR")))
+        );
+        when(biometricConsentService.uploadPhoto(any(), anyBoolean(), any(), any(), any())).thenReturn(samplePhoto());
+        org.mockito.ArgumentCaptor<String> ipCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+
+        String[][] cases = {
+                {"10.20.30.40", "203.0.113.5", "203.0.113.5"},   // dentro del CIDR -> confía
+                {"11.0.0.1", "203.0.113.5", "11.0.0.1"},         // fuera del CIDR -> ignora cabecera
+                {"fd00::5", "2001:db8::9", "2001:db8::9"},       // IPv6 en CIDR
+                {"10.0.0.1", "10.9.9.9", "10.0.0.1"}             // todos los hops son proxies -> conexión directa
+        };
+        for (String[] c : cases) {
+            org.springframework.mock.web.MockHttpServletRequest req = new org.springframework.mock.web.MockHttpServletRequest();
+            req.setRemoteAddr(c[0]);
+            req.addHeader("X-Forwarded-For", c[1]);
+            org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+                    new org.springframework.web.context.request.ServletRequestAttributes(req));
+            controller.uploadPhoto(USER_UUID, true, new MockMultipartFile("photo", "p.png", "image/png", new byte[]{1}));
+        }
+        org.mockito.Mockito.verify(biometricConsentService, org.mockito.Mockito.times(cases.length))
+                .uploadPhoto(any(), anyBoolean(), any(), any(), ipCaptor.capture());
+        for (int i = 0; i < cases.length; i++) {
+            assertThat(ipCaptor.getAllValues().get(i)).as("caso %d", i).isEqualTo(cases[i][2]);
+        }
+        org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
     }
 }

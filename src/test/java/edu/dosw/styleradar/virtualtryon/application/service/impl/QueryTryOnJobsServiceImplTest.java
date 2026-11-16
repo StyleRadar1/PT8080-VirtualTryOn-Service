@@ -459,12 +459,27 @@ class QueryTryOnJobsServiceImplTest {
         eventListenerAdapter.onCatalogGarmentModerationChanged(rejectedEvent);
         assertFalse(storedGarment.get().isVisible());
 
-        // 4. Retiro de prenda inexistente sin name/category ni excepción
+        // 4. Retiro de prenda inexistente sin name/category -> DLQ (no se pierde la actualización)
         UUID unknownId = UUID.randomUUID();
         when(catalogGarmentJpaRepository.findById(unknownId)).thenReturn(Optional.empty());
-        eventListenerAdapter.onCatalogGarmentWithdrawn(new CatalogGarmentUpdatedEvent(
-                unknownId, null, null, null, false, Instant.now()
-        ));
+        org.springframework.amqp.AmqpRejectAndDontRequeueException withdrawnRejection = assertThrows(
+                org.springframework.amqp.AmqpRejectAndDontRequeueException.class,
+                () -> eventListenerAdapter.onCatalogGarmentWithdrawn(new CatalogGarmentUpdatedEvent(
+                        unknownId, null, null, null, false, Instant.now()
+                ))
+        );
+        assertThat(withdrawnRejection.getMessage()).contains(unknownId.toString()).contains("Dead Letter Queue");
+        verify(catalogGarmentJpaRepository, org.mockito.Mockito.never())
+                .save(argThat(entity -> unknownId.equals(entity.getGarmentId())));
+
+        // 4b. Moderación de prenda inexistente sin datos suficientes -> DLQ
+        org.springframework.amqp.AmqpRejectAndDontRequeueException moderationRejection = assertThrows(
+                org.springframework.amqp.AmqpRejectAndDontRequeueException.class,
+                () -> eventListenerAdapter.onCatalogGarmentModerationChanged(new CatalogGarmentUpdatedEvent(
+                        unknownId, null, null, null, true, Instant.now()
+                ))
+        );
+        assertThat(moderationRejection.getMessage()).contains(unknownId.toString());
 
         // 5. Moderación de prenda nueva aún no proyectada pero con name y category -> sincroniza completa
         UUID newModerationId = UUID.randomUUID();
@@ -489,12 +504,16 @@ class QueryTryOnJobsServiceImplTest {
 
         UUID missingIdWithNameOnly = UUID.randomUUID();
         when(catalogGarmentJpaRepository.findById(missingIdWithNameOnly)).thenReturn(Optional.empty());
-        eventListenerAdapter.onCatalogGarmentWithdrawn(new CatalogGarmentUpdatedEvent(
-                missingIdWithNameOnly, "Sin Categoria", null, null, false, null
-        ));
-        eventListenerAdapter.onCatalogGarmentModerationChanged(new CatalogGarmentUpdatedEvent(
-                missingIdWithNameOnly, "   ", "TOP", null, true, null
-        ));
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
+                eventListenerAdapter.onCatalogGarmentWithdrawn(new CatalogGarmentUpdatedEvent(
+                        missingIdWithNameOnly, "Sin Categoria", null, null, false, null
+                ))
+        );
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
+                eventListenerAdapter.onCatalogGarmentModerationChanged(new CatalogGarmentUpdatedEvent(
+                        missingIdWithNameOnly, "   ", "TOP", null, true, null
+                ))
+        );
 
         // 7. Error de BD en moderación / payload inválido sin garmentId -> DLQ
         CatalogGarmentUpdatedEvent freshApprovedEvent = new CatalogGarmentUpdatedEvent(

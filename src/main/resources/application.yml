@@ -9,6 +9,7 @@ server:
   servlet:
     context-path: /
 
+
 spring:
   application:
     name: PT8080-VirtualTryOn-Service
@@ -85,6 +86,8 @@ styleradar:
       secret-base64: ${JWT_SECRET_BASE64}
       duration: ${JWT_DURATION:PT60M}
   tryon:
+    # Proxies/ingress (IP o CIDR) cuyas cabeceras X-Forwarded-For / X-Real-IP se aceptan para registrar la IP.
+    trusted-proxies: ${TRYON_TRUSTED_PROXIES:127.0.0.1,::1}
     security:
       allow-localhost-urls: ${ALLOW_LOCALHOST_URLS:false}
     # El proveedor real se habilita exclusivamente en qa/prod. Los perfiles locales
