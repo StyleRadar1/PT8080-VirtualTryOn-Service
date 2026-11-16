@@ -1,5 +1,6 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -9,18 +10,38 @@ import java.util.UUID;
  *
  * @param userId Identificador único del usuario autenticado
  * @param role   Rol principal del usuario (ej. COMPRADOR, USER, ADMIN, ADMIN_STYLERADAR)
+ * @param roles  Lista inmutable de roles normalizados extraídos del JWT
  */
-public record AuthenticatedUser(UUID userId, String role) {
+public record AuthenticatedUser(UUID userId, String role, List<String> roles) {
+
+    public AuthenticatedUser(UUID userId, String role) {
+        this(userId, role, role == null ? List.of() : List.of(role));
+    }
 
     public AuthenticatedUser {
         Objects.requireNonNull(userId, "El userId del usuario autenticado no puede ser nulo");
-        if (role == null || role.isBlank()) {
+        List<String> sourceRoles = (roles == null || roles.isEmpty())
+                ? (role == null ? List.of() : List.of(role))
+                : roles;
+        List<String> normalizedRoles = sourceRoles.stream()
+                .map(AuthenticatedUser::normalizeRole)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (normalizedRoles.isEmpty()) {
             throw new IllegalArgumentException("El rol del usuario autenticado no puede ser vacío");
         }
-        role = role.trim().toUpperCase();
-        if (role.startsWith("ROLE_")) {
-            role = role.substring(5);
+        String primaryRole = normalizeRole(role);
+        role = primaryRole != null ? primaryRole : normalizedRoles.get(0);
+        roles = normalizedRoles;
+    }
+
+    private static String normalizeRole(String rawRole) {
+        if (rawRole == null || rawRole.isBlank()) {
+            return null;
         }
+        String cleaned = rawRole.trim().toUpperCase();
+        return cleaned.startsWith("ROLE_") ? cleaned.substring(5) : cleaned;
     }
 
     /**
@@ -31,7 +52,7 @@ public record AuthenticatedUser(UUID userId, String role) {
         if (targetUserId == null) {
             return false;
         }
-        if ("ADMIN".equals(role) || "ADMIN_STYLERADAR".equals(role)) {
+        if (roles.contains("ADMIN") || roles.contains("ADMIN_STYLERADAR")) {
             return true;
         }
         return userId.equals(targetUserId);
