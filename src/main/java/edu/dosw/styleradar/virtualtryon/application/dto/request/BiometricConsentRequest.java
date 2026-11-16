@@ -14,8 +14,7 @@ import java.util.UUID;
 @Schema(description = "Solicitud para otorgar el consentimiento informado de tratamiento de datos biométricos (Ley 1581 de 2012)")
 public record BiometricConsentRequest(
 
-        @Schema(description = "Identificador único del usuario", example = "550e8400-e29b-41d4-a716-446655440000")
-        @NotNull(message = "El identificador del usuario (userId) es obligatorio")
+        @Schema(description = "Identificador único del usuario (opcional si se infiere del claim sub del JWT autenticado)", example = "550e8400-e29b-41d4-a716-446655440000")
         UUID userId,
 
         @Schema(description = "Versión de los términos y condiciones aceptados", example = "v1.0-LEY1581-2026")

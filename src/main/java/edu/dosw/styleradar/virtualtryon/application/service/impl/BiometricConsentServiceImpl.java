@@ -24,6 +24,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -49,19 +50,12 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
     public BiometricConsentServiceImpl(
             BiometricDataRepositoryPort biometricDataRepositoryPort,
             BlobStoragePort blobStoragePort,
-            @org.springframework.beans.factory.annotation.Autowired(required = false) DeleteBiometricDataService deleteBiometricDataService
+            DeleteBiometricDataService deleteBiometricDataService
     ) {
-        this.biometricDataRepositoryPort = biometricDataRepositoryPort;
-        this.blobStoragePort = blobStoragePort;
-        this.deleteBiometricDataService = deleteBiometricDataService;
+        this.biometricDataRepositoryPort = Objects.requireNonNull(biometricDataRepositoryPort, "El repositorio de datos biométricos es obligatorio");
+        this.blobStoragePort = Objects.requireNonNull(blobStoragePort, "El puerto de almacenamiento blob es obligatorio");
+        this.deleteBiometricDataService = Objects.requireNonNull(deleteBiometricDataService, "El servicio de eliminación de datos biométricos es obligatorio para garantizar la purga integral (SR-RF-27 / Ley 1581)");
         this.photoValidationChain = buildPhotoValidationChain();
-    }
-
-    public BiometricConsentServiceImpl(
-            BiometricDataRepositoryPort biometricDataRepositoryPort,
-            BlobStoragePort blobStoragePort
-    ) {
-        this(biometricDataRepositoryPort, blobStoragePort, null);
     }
 
     private static TryOnValidatorHandler buildPhotoValidationChain() {
@@ -107,17 +101,23 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
     }
 
     @Override
+    @Transactional
     public BiometricConsent revokeConsent(UserId userId) {
+        if (deleteBiometricDataService == null) {
+            throw new IllegalStateException(
+                    "El servicio de eliminación biométrica no está disponible para garantizar la purga integral obligatoria por Ley 1581 (SR-RF-27)"
+            );
+        }
         BiometricConsent existing = getConsentByUserId(userId);
-        existing.revoke(Instant.now());
-        BiometricConsent updated = biometricDataRepositoryPort.saveConsent(existing);
-        log.info("Consentimiento biométrico revocado para el usuario {}", userId.value());
 
         // SR-RF-27 / Ley 1581 de 2012: La revocación de consentimiento exige la purga integral
         // física e irrevocable de todas las fotografías de silueta y renders generados del titular.
-        if (deleteBiometricDataService != null) {
-            deleteBiometricDataService.purgeAllBiometricDataForUser(userId);
-        }
+        // Se ejecuta ANTES de persistir el estado revocado para asegurar que fallos en la purga impidan confirmar la revocación.
+        deleteBiometricDataService.purgeAllBiometricDataForUser(userId);
+
+        existing.revoke(Instant.now());
+        BiometricConsent updated = biometricDataRepositoryPort.saveConsent(existing);
+        log.info("Consentimiento biométrico revocado y purga integral confirmada para el usuario {}", userId.value());
         return updated;
     }
 

@@ -57,12 +57,22 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
             "ROLE_COMPRADOR",
             "ROLE_USER",
             "ROLE_ADMIN",
-            "ROLE_ADMIN_STYLERADAR"
+            "ROLE_ADMIN_STYLERADAR",
+            "ROLE_ADMIN_TIENDA",
+            "COMPRADOR",
+            "USER",
+            "ADMIN",
+            "ADMIN_STYLERADAR",
+            "ADMIN_TIENDA"
     );
 
     private static final Set<String> ADMIN_ROLES = Set.of(
             "ROLE_ADMIN",
-            "ROLE_ADMIN_STYLERADAR"
+            "ROLE_ADMIN_STYLERADAR",
+            "ROLE_ADMIN_TIENDA",
+            "ADMIN",
+            "ADMIN_STYLERADAR",
+            "ADMIN_TIENDA"
     );
 
     private final BiometricConsentService biometricConsentService;
@@ -89,7 +99,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
 
     @Override
     @PostMapping("/consents")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
     public ResponseEntity<BiometricConsentResponse> grantConsent(@Valid @RequestBody BiometricConsentRequest request) {
         UUID effectiveUserId = resolveAndVerifyCallerUserId(request.userId());
         String effectiveIp = resolveClientIp();
@@ -105,7 +115,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
 
     @Override
     @GetMapping("/consents/{userId}")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
     public ResponseEntity<BiometricConsentResponse> getConsent(@PathVariable("userId") UUID userId) {
         UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
         BiometricConsent consent = biometricConsentService.getConsentByUserId(UserId.of(effectiveUserId));
@@ -114,7 +124,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
 
     @Override
     @DeleteMapping("/consents/{userId}")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
     public ResponseEntity<BiometricConsentResponse> revokeConsent(@PathVariable("userId") UUID userId) {
         UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
         BiometricConsent revoked = biometricConsentService.revokeConsent(UserId.of(effectiveUserId));
@@ -123,7 +133,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
 
     @Override
     @PostMapping(value = "/photos", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
     public ResponseEntity<BiometricPhotoResponse> uploadPhoto(
             @RequestParam(value = "userId", required = false) UUID userId,
             @RequestParam(value = "biometricConsent", required = false, defaultValue = "true") boolean biometricConsent,
@@ -244,7 +254,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
 
     @Override
     @GetMapping("/photos/{userId}")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
     public ResponseEntity<BiometricPhotoResponse> getPhoto(@PathVariable("userId") UUID userId) {
         UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
         BiometricPhoto photo = biometricConsentService.getPhotoByUserId(UserId.of(effectiveUserId));

@@ -81,7 +81,7 @@ public class SecurityConfig {
                                 "/api/v1/try-on/garments/**",
                                 "/api/v1/try-on/jobs",
                                 "/api/v1/try-on/jobs/**"
-                        ).hasAnyRole("COMPRADOR", "USER", "ADMIN", "ADMIN_STYLERADAR")
+                        ).hasAnyRole("COMPRADOR", "USER", "ADMIN", "ADMIN_STYLERADAR", "ADMIN_TIENDA")
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)

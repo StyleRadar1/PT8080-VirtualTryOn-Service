@@ -137,20 +137,26 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
             blobStoragePort.deleteBlob(photo.getPhotoUrl());
             biometricDataRepositoryPort.deletePhotoByUserId(photo.getUserId());
 
-            // Limpiar y purgar todos los trabajos del usuario para no dejar referencias biométricas pendientes
+            String photoCanonical = photo.getBlobPath() != null ? photo.getBlobPath() : photo.getPhotoUrl().value();
+
+            // Limpiar y purgar ÚNICAMENTE los trabajos del usuario que utilicen esta fotografía específica
             List<TryOnJob> userJobs = jobRepositoryPort.findJobsByUserId(photo.getUserId());
+            int purgedJobsCount = 0;
             for (TryOnJob userJob : userJobs) {
-                if (!userJob.isPhotoPurged() || userJob.getResultImageUrl() != null) {
-                    purgeSingleJobAndUserPhoto(userJob);
+                if (sharesSamePhoto(photoCanonical, userJob.getPhotoUrl())) {
+                    if (!userJob.isPhotoPurged() || userJob.getResultImageUrl() != null) {
+                        purgeSingleJobAndUserPhoto(userJob);
+                        purgedJobsCount++;
+                    }
                 }
             }
 
-            if (userJobs.isEmpty()) {
+            if (purgedJobsCount == 0) {
                 publishPurgeEvent(null, photo.getUserId().value(), photo.getPhotoId());
             }
 
-            log.info("Fotografía biométrica {} del usuario {} purgada físicamente y referencias en trabajos limpiadas (Ley 1581)",
-                    photo.getPhotoId(), photo.getUserId().value());
+            log.info("Fotografía biométrica {} del usuario {} purgada físicamente y {} trabajos asociados limpiados (Ley 1581)",
+                    photo.getPhotoId(), photo.getUserId().value(), purgedJobsCount);
             return;
         }
 
@@ -192,10 +198,15 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
             blobStoragePort.deleteBlob(job.getResultImageUrl());
         }
 
-        // 3. Eliminar fotografía de perfil biométrico si existe
+        // 3. Eliminar fotografía de perfil biométrico SOLO si la foto del trabajo coincide con la foto activa de perfil
         biometricDataRepositoryPort.findPhotoByUserId(job.getUserId()).ifPresent(photo -> {
-            blobStoragePort.deleteBlob(photo.getPhotoUrl());
-            biometricDataRepositoryPort.deletePhotoByUserId(job.getUserId());
+            String profileCanonical = photo.getBlobPath() != null ? photo.getBlobPath() : photo.getPhotoUrl().value();
+            if (sharesSamePhoto(job.getPhotoUrl(), profileCanonical)) {
+                blobStoragePort.deleteBlob(photo.getPhotoUrl());
+                biometricDataRepositoryPort.deletePhotoByUserId(job.getUserId());
+                log.info("Fotografía activa de perfil del usuario {} eliminada porque coincidía con la fotografía del trabajo purgado {}",
+                        job.getUserId().value(), job.getId());
+            }
         });
 
         JobStatus previousStatus = job.getStatus();

@@ -161,6 +161,39 @@ class BiometricConsentControllerTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-23 (POST /api/v1/try-on/consents): Cuando el cuerpo omite userId, se infiere del JWT sub y responde 201 Created")
+    void shouldGrantBiometricConsentInferringUserIdFromJwt() throws Exception {
+        when(biometricConsentService.grantConsent(eq(UserId.of(USER_UUID)), any(), anyBoolean(), any(), any()))
+                .thenReturn(sampleConsent(null));
+
+        BiometricConsentRequest requestWithoutUserId = new BiometricConsentRequest(
+                null,
+                "v1.0-LEY1581-2026",
+                true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"),
+                null
+        );
+
+        mockMvc.perform(post("/api/v1/try-on/consents")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(requestWithoutUserId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.userId").value(USER_UUID.toString()));
+    }
+
+    @Test
+    @DisplayName("SR-RF-23 / Seguridad: Usuario con rol ADMIN_TIENDA tiene permisos para operar sobre datos biométricos")
+    void shouldAllowAdminTiendaRole() throws Exception {
+        when(biometricConsentService.getConsentByUserId(eq(UserId.of(OTHER_USER_UUID))))
+                .thenReturn(sampleConsent(null));
+
+        mockMvc.perform(get("/api/v1/try-on/consents/" + OTHER_USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "ADMIN_TIENDA")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("HU SR-RF-23 (GET y DELETE /api/v1/try-on/consents/{userId}): Dado un usuario autenticado propietario o ADMIN, Cuando consulta o revoca su consentimiento, Entonces responde 200 OK")
     void shouldGetAndRevokeBiometricConsent() throws Exception {
         when(biometricConsentService.getConsentByUserId(eq(UserId.of(USER_UUID))))

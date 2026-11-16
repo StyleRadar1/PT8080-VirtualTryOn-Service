@@ -43,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -152,19 +153,29 @@ class BiometricConsentServiceImplTest {
     }
 
     @Test
-    @DisplayName("SR-RF-27: Constructor de dos argumentos y revocación cuando deleteBiometricDataService es nulo")
-    void shouldRevokeConsentSafelyWhenDeleteBiometricDataServiceIsNull() {
-        BiometricConsentServiceImpl serviceWithoutDelete = new BiometricConsentServiceImpl(repositoryAdapter, blobStorageAdapter);
-        serviceWithoutDelete.grantConsent(
+    @DisplayName("SR-RF-27: DeleteBiometricDataService es obligatorio en el constructor y garantiza que no se confirme purga si no está disponible")
+    void shouldRequireDeleteBiometricDataServiceToEnsureIntegralPurge() {
+        assertThatThrownBy(() -> new BiometricConsentServiceImpl(repositoryAdapter, blobStorageAdapter, null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("El servicio de eliminación de datos biométricos es obligatorio");
+    }
+
+    @Test
+    @DisplayName("SR-RF-27: Si la purga integral física falla durante la revocación, se aborta y no se confirma la revocación")
+    void shouldAbortRevocationWhenPurgeFails() {
+        consentService.grantConsent(
                 USER_ID,
                 "v1.0-LEY1581-2026",
                 true,
                 List.of("VIRTUAL_TRY_ON_INFERENCE"),
                 "190.24.10.1"
         );
-        BiometricConsent revoked = serviceWithoutDelete.revokeConsent(USER_ID);
-        assertThat(revoked.isValidForInference()).isFalse();
-        assertThat(revoked.getRevokedAt()).isNotNull();
+        doThrow(new RuntimeException("Fallo en Azure Blob Storage"))
+                .when(deleteBiometricDataService).purgeAllBiometricDataForUser(USER_ID);
+
+        assertThatThrownBy(() -> consentService.revokeConsent(USER_ID))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Fallo en Azure Blob Storage");
     }
 
     @Test

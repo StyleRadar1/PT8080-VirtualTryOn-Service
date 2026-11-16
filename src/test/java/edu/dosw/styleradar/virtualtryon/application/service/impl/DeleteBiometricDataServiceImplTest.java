@@ -293,7 +293,7 @@ class DeleteBiometricDataServiceImplTest {
                 .withId(userJobId)
                 .withUserId(ownerId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
-                .withPhotoUrl("biometric-silhouettes/active.png")
+                .withPhotoUrl("biometric-silhouettes/p.png")
                 .build();
 
         when(tryOnJobJpaRepository.findById(photoId)).thenReturn(Optional.empty());
@@ -306,7 +306,7 @@ class DeleteBiometricDataServiceImplTest {
 
         verify(photoJpaRepository).deleteByUserId(ownerId.value());
         verify(blobStoragePort).deleteBlob(any(SasSignedUrl.class));
-        verify(blobStoragePort).deleteBlob("biometric-silhouettes/active.png");
+        verify(blobStoragePort).deleteBlob("biometric-silhouettes/p.png");
         verify(tryOnOutfitJpaRepository).deleteByJobId(userJobId);
         verify(tryOnJobJpaRepository).save(any(TryOnJobJpaEntity.class));
     }
@@ -689,5 +689,107 @@ class DeleteBiometricDataServiceImplTest {
                 eq(PhotoPurgedDomainEvent.ROUTING_KEY),
                 any(PhotoPurgedDomainEvent.class)
         );
+    }
+
+    @Test
+    @DisplayName("SR-RF-27: Eliminación de trabajos con dos fotografías diferentes no elimina la foto activa de perfil si el trabajo usa una foto distinta")
+    void shouldNotPurgeActiveProfilePhotoWhenDeletingJobWithDifferentPhoto() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID job1Id = UUID.randomUUID();
+        UUID job2Id = UUID.randomUUID();
+        UUID job3Id = UUID.randomUUID();
+        UUID job4Id = UUID.randomUUID();
+
+        // Foto 1: Fotografía de perfil activa del usuario
+        String profilePhotoBlob = "biometrics/" + ownerId.value() + "/profile-silhouette.png";
+        BiometricPhoto activeProfilePhoto = new BiometricPhoto(
+                UUID.randomUUID(),
+                ownerId,
+                "image/png",
+                800, 600, 2048L,
+                profilePhotoBlob,
+                SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/" + profilePhotoBlob + "?sas=active"),
+                Instant.now()
+        );
+        BiometricPhotoJpaEntity profileEntity = mapper.toPhotoJpaEntity(activeProfilePhoto);
+        java.util.concurrent.atomic.AtomicReference<BiometricPhotoJpaEntity> activeProfileRef =
+                new java.util.concurrent.atomic.AtomicReference<>(profileEntity);
+        when(photoJpaRepository.findByUserId(ownerId.value())).thenAnswer(inv -> Optional.ofNullable(activeProfileRef.get()));
+        org.mockito.Mockito.doAnswer(inv -> {
+            activeProfileRef.set(null);
+            return null;
+        }).when(photoJpaRepository).deleteByUserId(ownerId.value());
+
+        // Foto 2: Fotografía alternativa usada en los trabajos 3 y 4
+        String alternatePhotoBlob = "biometrics/" + ownerId.value() + "/alternate-photo.png";
+
+        // Trabajos 1 y 2 asociados a la foto de perfil (Foto 1)
+        TryOnJob job1 = new TryOnJobBuilder()
+                .withId(job1Id)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(profilePhotoBlob)
+                .build();
+        job1.complete(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job1.png"), 1000L);
+
+        TryOnJob job2 = new TryOnJobBuilder()
+                .withId(job2Id)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://styleradarblob.blob.core.windows.net/" + profilePhotoBlob + "?sas=token2")
+                .build();
+        job2.complete(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job2.png"), 1100L);
+
+        // Trabajos 3 y 4 asociados a la foto alternativa (Foto 2)
+        TryOnJob job3 = new TryOnJobBuilder()
+                .withId(job3Id)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(alternatePhotoBlob)
+                .build();
+        job3.complete(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job3.png"), 1200L);
+
+        TryOnJob job4 = new TryOnJobBuilder()
+                .withId(job4Id)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://styleradarblob.blob.core.windows.net/" + alternatePhotoBlob + "?sas=token4")
+                .build();
+        job4.complete(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job4.png"), 1300L);
+
+        TryOnJobJpaEntity entity1 = mapper.toJobJpaEntity(job1);
+        TryOnJobJpaEntity entity2 = mapper.toJobJpaEntity(job2);
+        TryOnJobJpaEntity entity3 = mapper.toJobJpaEntity(job3);
+        TryOnJobJpaEntity entity4 = mapper.toJobJpaEntity(job4);
+
+        when(tryOnJobJpaRepository.findById(job3Id)).thenReturn(Optional.of(entity3));
+        when(tryOnJobJpaRepository.findById(job1Id)).thenReturn(Optional.of(entity1));
+        when(tryOnJobJpaRepository.findByUserIdOrderByCreatedAtDesc(ownerId.value()))
+                .thenReturn(List.of(entity1, entity2, entity3, entity4));
+
+        // 1. Solicitar borrado de la foto de Trabajo 3 (que usa Foto 2 - alternativa)
+        deleteService.deleteBiometricPhoto(job3Id, ownerId, false);
+
+        // Verifica que los trabajos 3 y 4 (que comparten Foto 2) fueron purgados con sus renders
+        verify(blobStoragePort, atLeastOnce()).deleteBlob(contains("alternate-photo.png"));
+        verify(blobStoragePort).deleteBlob(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job3.png"));
+        verify(blobStoragePort).deleteBlob(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job4.png"));
+
+        // Verifica que los trabajos 1 y 2 (Foto 1) NO fueron purgados
+        verify(blobStoragePort, never()).deleteBlob(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job1.png"));
+        verify(blobStoragePort, never()).deleteBlob(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job2.png"));
+
+        // Verifica que la foto de perfil activa del usuario NO fue eliminada de la base de datos ni de Azure
+        verify(photoJpaRepository, never()).deleteByUserId(any());
+        verify(blobStoragePort, never()).deleteBlob(activeProfilePhoto.getPhotoUrl());
+
+        // 2. Ahora solicitar borrado de Trabajo 1 (que sí usa la foto de perfil activa)
+        deleteService.deleteBiometricPhoto(job1Id, ownerId, false);
+
+        // Ahora sí se purgan los trabajos 1 y 2 y la foto de perfil activa
+        verify(blobStoragePort, atLeastOnce()).deleteBlob(contains("profile-silhouette.png"));
+        verify(blobStoragePort).deleteBlob(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job1.png"));
+        verify(blobStoragePort).deleteBlob(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job2.png"));
+        verify(photoJpaRepository).deleteByUserId(ownerId.value());
     }
 }
