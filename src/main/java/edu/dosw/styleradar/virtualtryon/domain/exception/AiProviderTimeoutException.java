@@ -9,5 +9,9 @@ public class AiProviderTimeoutException extends DomainException {
     public AiProviderTimeoutException(String message) {
         super(message, "AI_PROVIDER_TIMEOUT");
     }
+
+    public AiProviderTimeoutException(String message, Throwable cause) {
+        super(message, "AI_PROVIDER_TIMEOUT", cause);
+    }
 }
 

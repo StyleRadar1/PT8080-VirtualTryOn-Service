@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: https://styleradar-virtualtryon-prod.azurewebsites.net/swagger-ui/index.html
+      url: https://styleradar-virtualtryon-prod.azurewebsites.net/actuator/health
     steps:
       - uses: azure/login@v2
         with:
@@ -98,7 +98,12 @@ jobs:
                 SERVER_PORT=8500 \
                 SPRING_PROFILES_ACTIVE=prod \
                 TRYON_AMQP_LISTENERS_ENABLED=true \
+                TRYON_AI_PROVIDER=fashn \
+                FASHN_API_KEY="${{ secrets.FASHN_API_KEY }}" \
                 AZURE_STORAGE_ACCOUNT_KEY="${{ secrets.AZURE_STORAGE_ACCOUNT_KEY_PROD || secrets.AZURE_STORAGE_ACCOUNT_KEY }}" \
+                AZURE_STORAGE_CONTAINER=biometric-silhouettes-prod \
+                AZURE_READ_SAS_DURATION=PT15M \
+                CORS_ALLOWED_ORIGINS="${{ secrets.CORS_ALLOWED_ORIGINS_PROD || 'https://styleradar.co,https://styleradar-prod.azurewebsites.net' }}" \
                 DB_URL="${{ secrets.DB_URL_PROD }}" \
                 DB_USER="${{ secrets.DB_USERNAME_PROD }}" \
                 DB_PASSWORD="${{ secrets.DB_PASSWORD_PROD }}" \
@@ -109,6 +114,7 @@ jobs:
                 REDIS_HOST="${{ secrets.REDIS_HOST }}" \
                 REDIS_PORT="${{ secrets.REDIS_PORT }}" \
                 REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+                REDIS_SSL_ENABLED="${{ secrets.REDIS_SSL_ENABLED_PROD || 'false' }}" \
                 RABBITMQ_HOST="${{ secrets.RABBITMQ_HOST_PROD || secrets.RABBITMQ_HOST }}" \
                 RABBITMQ_PORT="${{ secrets.RABBITMQ_PORT }}" \
                 RABBITMQ_USER="${{ secrets.RABBITMQ_USER }}" \
@@ -119,17 +125,17 @@ jobs:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:prod-${{ github.sha }}
 
-      - name: Smoke Test en Azure PROD (Commit SHA y /v3/api-docs)
+      - name: Smoke Test en Azure PROD (Commit SHA y /actuator/health)
         run: |
-          SWAGGER_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/v3/api-docs"
+          HEALTH_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/actuator/health"
           INFO_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/actuator/info"
           EXPECTED_SHA="${{ github.sha }}"
           echo "Iniciando Smoke Test en PROD. Validando commit esperado: $EXPECTED_SHA"
           for i in $(seq 1 30); do
-            SWAGGER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SWAGGER_URL" || true)
+            HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
             INFO_BODY=$(curl -s "$INFO_URL" || true)
-            echo "Intento $i: Swagger HTTP $SWAGGER_STATUS | Actuator Info: $INFO_BODY"
-            if [ "$SWAGGER_STATUS" = "200" ] && echo "$INFO_BODY" | grep -q "$EXPECTED_SHA"; then
+            echo "Intento $i: Actuator Health HTTP $HEALTH_STATUS | Actuator Info: $INFO_BODY"
+            if [ "$HEALTH_STATUS" = "200" ] && echo "$INFO_BODY" | grep -q "$EXPECTED_SHA"; then
               echo "Smoke Test exitoso: Servicio respondiendo HTTP 200 y commit SHA verificado ($EXPECTED_SHA)"
               exit 0
             fi

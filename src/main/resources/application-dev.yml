@@ -47,14 +47,26 @@ styleradar:
     security:
       allow-localhost-urls: true
     ai-provider: ${TRYON_AI_PROVIDER:mock} # mock o fashn
-    daily-quota-limit: 10
+    daily-quota-limit: ${TRYON_DAILY_QUOTA_LIMIT:${TRYON_MONTHLY_QUOTA_LIMIT:10}}
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
     fashn-api-key: ${FASHN_API_KEY:}
     amqp:
       listeners-enabled: ${TRYON_AMQP_LISTENERS_ENABLED:true}
-      catalog-exchange: ${CATALOG_EVENTS_EXCHANGE:styleradar.catalog.events}
-      catalog-garment-queue: ${CATALOG_GARMENT_QUEUE:q.tryon.catalog.garment.updated}
-      catalog-garment-routing-key: ${CATALOG_GARMENT_ROUTING_KEY:catalog.garment.updated}
-      catalog-dlx: ${CATALOG_EVENTS_DLX:styleradar.catalog.dlx}
-      catalog-garment-dlq: ${CATALOG_GARMENT_DLQ:q.tryon.catalog.garment.updated.dlq}
-      catalog-garment-dlq-routing-key: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:catalog.garment.updated.dead}
+      catalog-exchange: ${CATALOG_EXCHANGE:styleradar.exchange}
+      catalog-garment-queue: ${CATALOG_GARMENT_QUEUE:styleradar.probador.prenda-publicada.q}
+      catalog-garment-routing-key: ${CATALOG_GARMENT_ROUTING_KEY:styleradar.catalogo.prenda.publicada}
+      catalog-withdrawn-queue: ${CATALOG_WITHDRAWN_QUEUE:styleradar.probador.prenda-retirada.q}
+      catalog-withdrawn-routing-key: ${CATALOG_WITHDRAWN_ROUTING_KEY:styleradar.catalogo.prenda.retirada}
+      catalog-moderation-queue: ${CATALOG_MODERATION_QUEUE:styleradar.probador.moderacion-cambiada.q}
+      catalog-moderation-routing-key: ${CATALOG_MODERATION_ROUTING_KEY:styleradar.catalogo.moderacion.cambiada}
+      user-exchange: ${USER_EXCHANGE:styleradar.exchange}
+      user-account-deleted-queue: ${USER_ACCOUNT_DELETED_QUEUE:styleradar.probador.cuenta-eliminada.q}
+      user-account-deleted-routing-key: ${USER_ACCOUNT_DELETED_ROUTING_KEY:styleradar.usuarios.cuenta.eliminada}
+      user-account-deleted-dlq: ${USER_ACCOUNT_DELETED_DLQ:styleradar.probador.cuenta-eliminada.dlq}
+      catalog-dlx: ${CATALOG_DLX:styleradar.dlx}
+      catalog-garment-dlq: ${CATALOG_GARMENT_DLQ:styleradar.probador.dlq}
+      catalog-garment-dlq-routing-key: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:styleradar.probador.dlq}
+      exchange: ${TRYON_EXCHANGE:styleradar.exchange}
+      process-queue: ${TRYON_PROCESS_QUEUE:q.tryon.job.process}
+      dlx: ${TRYON_DLX:styleradar.tryon.dlx}
+      process-dlq: ${TRYON_PROCESS_DLQ:q.tryon.job.process.dlq}
