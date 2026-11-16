@@ -53,6 +53,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -388,15 +389,130 @@ class QueryTryOnJobsServiceImplTest {
         eventListenerAdapter.onCatalogGarmentUpdated(validEvent);
         verify(catalogGarmentJpaRepository).save(any(CatalogGarmentJpaEntity.class));
 
-        eventListenerAdapter.onCatalogGarmentUpdated(null);
-        eventListenerAdapter.onCatalogGarmentUpdated(new CatalogGarmentUpdatedEvent(
-                UUID.randomUUID(), "Perfume", "CATEGORIA_INVALIDA", "https://img", true, Instant.now()
-        ));
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
+                eventListenerAdapter.onCatalogGarmentUpdated(null)
+        );
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
+                eventListenerAdapter.onCatalogGarmentUpdated(new CatalogGarmentUpdatedEvent(
+                        UUID.randomUUID(), "Perfume", "CATEGORIA_INVALIDA", "https://img", true, Instant.now()
+                ))
+        );
 
         // Error inesperado lanza AmqpRejectAndDontRequeueException para enrutar a DLQ
         doThrow(new RuntimeException("DB connection timeout")).when(catalogGarmentJpaRepository).save(any(CatalogGarmentJpaEntity.class));
         assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
                 eventListenerAdapter.onCatalogGarmentUpdated(validEvent)
+        );
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Eventos de prenda retirada y moderación cambiada actualizan visibilidad sin fallar por columnas NOT NULL")
+    void shouldProcessCatalogWithdrawnAndModerationChangedEvents() throws Exception {
+        UUID existingId = UUID.randomUUID();
+        java.util.concurrent.atomic.AtomicReference<CatalogGarmentJpaEntity> storedGarment =
+                new java.util.concurrent.atomic.AtomicReference<>(new CatalogGarmentJpaEntity(
+                        existingId, "Blazer Azul", "TOP", "https://img/blazer.png", true, Instant.now().minusSeconds(60)
+                ));
+        when(catalogGarmentJpaRepository.findById(existingId)).thenAnswer(inv -> Optional.ofNullable(storedGarment.get()));
+        when(catalogGarmentJpaRepository.save(any(CatalogGarmentJpaEntity.class))).thenAnswer(inv -> {
+            CatalogGarmentJpaEntity entity = inv.getArgument(0);
+            storedGarment.set(entity);
+            return entity;
+        });
+
+        // 1. Retiro de prenda existente -> marca visible=false preservando name y category NOT NULL
+        CatalogGarmentUpdatedEvent withdrawnEvent = new CatalogGarmentUpdatedEvent(
+                existingId, null, null, null, true, Instant.now()
+        );
+        eventListenerAdapter.onCatalogGarmentWithdrawn(withdrawnEvent);
+        assertFalse(storedGarment.get().isVisible());
+        assertEquals("Blazer Azul", storedGarment.get().getName());
+        assertEquals("TOP", storedGarment.get().getCategory());
+
+        // 2. Cambio de moderación aprobada con aliases JSON del catálogo real -> vuelve a visible=true
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+                .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        String approvedJson = """
+                {
+                  "itemId": "%s",
+                  "nombrePrenda": "Blazer Azul",
+                  "categoria": "TOP",
+                  "imagenUrl": "https://img/blazer.png",
+                  "aprobada": true,
+                  "estadoModeracion": "APPROVED"
+                }
+                """.formatted(existingId);
+        CatalogGarmentUpdatedEvent approvedEvent = mapper.readValue(approvedJson, CatalogGarmentUpdatedEvent.class);
+        assertTrue(approvedEvent.visible());
+        eventListenerAdapter.onCatalogGarmentModerationChanged(approvedEvent);
+        assertTrue(storedGarment.get().isVisible());
+
+        // 3. Cambio de moderación RECHAZADA -> resolveVisibility devuelve false
+        String rejectedJson = """
+                {
+                  "garmentId": "%s",
+                  "estadoModeracion": "RECHAZADA"
+                }
+                """.formatted(existingId);
+        CatalogGarmentUpdatedEvent rejectedEvent = mapper.readValue(rejectedJson, CatalogGarmentUpdatedEvent.class);
+        assertFalse(rejectedEvent.visible());
+        eventListenerAdapter.onCatalogGarmentModerationChanged(rejectedEvent);
+        assertFalse(storedGarment.get().isVisible());
+
+        // 4. Retiro de prenda inexistente sin name/category ni excepción
+        UUID unknownId = UUID.randomUUID();
+        when(catalogGarmentJpaRepository.findById(unknownId)).thenReturn(Optional.empty());
+        eventListenerAdapter.onCatalogGarmentWithdrawn(new CatalogGarmentUpdatedEvent(
+                unknownId, null, null, null, false, Instant.now()
+        ));
+
+        // 5. Moderación de prenda nueva aún no proyectada pero con name y category -> sincroniza completa
+        UUID newModerationId = UUID.randomUUID();
+        when(catalogGarmentJpaRepository.findById(newModerationId)).thenReturn(Optional.empty());
+        eventListenerAdapter.onCatalogGarmentModerationChanged(new CatalogGarmentUpdatedEvent(
+                newModerationId, "Chaqueta Nueva", "TOP", "https://img/chaqueta.png", true, Instant.now()
+        ));
+        verify(catalogGarmentJpaRepository, org.mockito.Mockito.atLeast(4)).save(any(CatalogGarmentJpaEntity.class));
+
+        // 6. Casos adicionales de CatalogGarmentUpdatedEvent y HandleVisibilityEvent (aliases, slugs, null updatedAt)
+        CatalogGarmentUpdatedEvent legacySlugEvent = mapper.readValue("""
+                {"itemId":"legacy-slug-id","approved":false,"fechaPublicacion":"2026-11-15T10:00:00Z"}
+                """, CatalogGarmentUpdatedEvent.class);
+        assertFalse(legacySlugEvent.visible());
+        assertThat(legacySlugEvent.garmentId()).isNotNull();
+
+        CatalogGarmentUpdatedEvent via6ArgFactory = CatalogGarmentUpdatedEvent.fromJson(
+                null, "Camisa", "TOP", "https://img/camisa.png", false, Instant.parse("2026-11-15T10:00:00Z")
+        );
+        assertFalse(via6ArgFactory.visible());
+        assertThat(via6ArgFactory.garmentId()).isNull();
+
+        UUID missingIdWithNameOnly = UUID.randomUUID();
+        when(catalogGarmentJpaRepository.findById(missingIdWithNameOnly)).thenReturn(Optional.empty());
+        eventListenerAdapter.onCatalogGarmentWithdrawn(new CatalogGarmentUpdatedEvent(
+                missingIdWithNameOnly, "Sin Categoria", null, null, false, null
+        ));
+        eventListenerAdapter.onCatalogGarmentModerationChanged(new CatalogGarmentUpdatedEvent(
+                missingIdWithNameOnly, "   ", "TOP", null, true, null
+        ));
+
+        // 7. Error de BD en moderación / payload inválido sin garmentId -> DLQ
+        doThrow(new RuntimeException("DB error")).when(catalogGarmentJpaRepository).save(any(CatalogGarmentJpaEntity.class));
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
+                eventListenerAdapter.onCatalogGarmentModerationChanged(approvedEvent)
+        );
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
+                eventListenerAdapter.onCatalogGarmentUpdated(new CatalogGarmentUpdatedEvent(
+                        null, "Sin ID", "TOP", "https://img", true, Instant.now()
+                ))
+        );
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
+                eventListenerAdapter.onCatalogGarmentWithdrawn(null)
+        );
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class, () ->
+                eventListenerAdapter.onCatalogGarmentModerationChanged(new CatalogGarmentUpdatedEvent(
+                        null, "Sin ID", "TOP", "https://img", true, Instant.now()
+                ))
         );
     }
 

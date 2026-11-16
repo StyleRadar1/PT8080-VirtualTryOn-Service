@@ -131,7 +131,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
                 .hasMessageContaining("El consentimiento biométrico ya no está vigente");
 
         assertThat(job.getStatus()).isEqualTo(JobStatus.FAILED);
-        verify(outboxPublisherPort).saveOutboxEvent(eq(job.getId()), eq("tryon.job.failed"), any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort).saveOutboxEvent(eq(job.getId()), eq("styleradar.tryon.job.failed"), any(TryOnJobDomainEvent.class));
     }
 
     @Test
@@ -416,7 +416,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
         verify(blobStoragePort).deleteBlob(renderUrl.value());
         // Verifica que el trabajo purgado NO se transicionó a COMPLETED ni se guardó evento de completed
         assertThat(purgedJob.getStatus()).isNotEqualTo(JobStatus.COMPLETED);
-        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("styleradar.tryon.job.completed"), any(TryOnJobDomainEvent.class));
     }
 
     @Test
@@ -456,7 +456,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
         // Verifica que el trabajo fue purgado y no quedó en COMPLETED
         assertThat(initialJob.isPhotoPurged()).isTrue();
         assertThat(initialJob.getStatus()).isNotEqualTo(JobStatus.COMPLETED);
-        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("styleradar.tryon.job.completed"), any(TryOnJobDomainEvent.class));
     }
 
     @Test

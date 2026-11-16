@@ -164,6 +164,25 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     }
 
     @Override
+    public Optional<CatalogGarment> updateCatalogGarmentVisibility(
+            edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId garmentId,
+            boolean visible,
+            java.time.Instant updatedAt
+    ) {
+        java.util.Objects.requireNonNull(garmentId, "El identificador de prenda no puede ser nulo");
+        java.time.Instant effectiveUpdatedAt = updatedAt != null ? updatedAt : java.time.Instant.now();
+        return quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                .map(existing -> quotaRepositoryPort.saveCatalogGarment(new CatalogGarment(
+                        existing.getGarmentId(),
+                        existing.getName(),
+                        existing.getCategory(),
+                        existing.getImageUrl(),
+                        visible,
+                        effectiveUpdatedAt
+                )));
+    }
+
+    @Override
     public TryOnJob getTryOnJob(UUID jobId, UserId callerUserId, boolean isAdmin) {
         if (jobRepositoryPort == null) {
             throw new JobNotFoundException(jobId);

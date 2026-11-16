@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.support.converter.MessageConverter;
@@ -62,7 +63,7 @@ class RabbitConfigTest {
         Queue tryOnDlq = config.tryOnJobProcessDlq("test.tryon.process.dlq");
         Binding tryOnDlqBinding = config.tryOnJobProcessDlqBinding(tryOnDlq, tryOnDlx, "test.tryon.process.dead");
         Queue tryOnQueue = config.tryOnJobProcessQueue("test.tryon.process.queue", "test.tryon.dlx", "test.tryon.process.dead");
-        Binding tryOnBinding = config.tryOnJobProcessBinding(tryOnQueue, tryOnExchange, "tryon.job.created");
+        Binding tryOnBinding = config.tryOnJobProcessBinding(tryOnQueue, tryOnExchange, "styleradar.tryon.job.created");
 
         assertThat(tryOnExchange.getName()).isEqualTo("test.tryon.events");
         assertThat(tryOnDlx.getName()).isEqualTo("test.tryon.dlx");
@@ -71,17 +72,39 @@ class RabbitConfigTest {
         assertThat(tryOnQueue.getName()).isEqualTo("test.tryon.process.queue");
         assertThat(tryOnQueue.getArguments()).containsEntry("x-dead-letter-exchange", "test.tryon.dlx");
         assertThat(tryOnBinding.getDestination()).isEqualTo("test.tryon.process.queue");
-        assertThat(tryOnBinding.getRoutingKey()).isEqualTo("tryon.job.created");
+        assertThat(tryOnBinding.getRoutingKey()).isEqualTo("styleradar.tryon.job.created");
 
         TopicExchange userExchange = config.userEventsExchange("test.user.events");
-        Queue userDeletedQueue = config.userAccountDeletedQueue("test.user.deleted.queue");
-        Binding userDeletedBinding = config.userAccountDeletedBinding(userDeletedQueue, userExchange, "user.account.deleted");
+        Queue userDeletedDlq = config.userAccountDeletedDlq("test.user.deleted.dlq");
+        Binding userDeletedDlqBinding = config.userAccountDeletedDlqBinding(userDeletedDlq, dlx, "test.user.deleted.dead");
+        Queue userDeletedQueue = config.userAccountDeletedQueue("test.user.deleted.queue", "test.catalog.dlx", "test.user.deleted.dead");
+        Binding userDeletedBinding = config.userAccountDeletedBinding(userDeletedQueue, userExchange, "styleradar.usuarios.cuenta.eliminada");
 
         assertThat(userExchange.getName()).isEqualTo("test.user.events");
+        assertThat(userDeletedDlq.getName()).isEqualTo("test.user.deleted.dlq");
+        assertThat(userDeletedDlqBinding.getRoutingKey()).isEqualTo("test.user.deleted.dead");
         assertThat(userDeletedQueue.getName()).isEqualTo("test.user.deleted.queue");
+        assertThat(userDeletedQueue.getArguments()).containsEntry("x-dead-letter-exchange", "test.catalog.dlx");
+        assertThat(userDeletedQueue.getArguments()).containsEntry("x-dead-letter-routing-key", "test.user.deleted.dead");
         assertThat(userDeletedBinding.getDestination()).isEqualTo("test.user.deleted.queue");
         assertThat(userDeletedBinding.getExchange()).isEqualTo("test.user.events");
-        assertThat(userDeletedBinding.getRoutingKey()).isEqualTo("user.account.deleted");
+        assertThat(userDeletedBinding.getRoutingKey()).isEqualTo("styleradar.usuarios.cuenta.eliminada");
+
+        Queue withdrawnDlq = config.catalogGarmentWithdrawnDlq("test.withdrawn.dlq");
+        Binding withdrawnDlqBinding = config.catalogGarmentWithdrawnDlqBinding(withdrawnDlq, dlx, "test.withdrawn.dead");
+        Queue withdrawnQueue = config.catalogGarmentWithdrawnQueue("test.withdrawn.q", "test.catalog.dlx", "test.withdrawn.dead");
+        Binding withdrawnBinding = config.catalogGarmentWithdrawnBinding(withdrawnQueue, exchange, "styleradar.catalogo.prenda.retirada");
+        assertThat(withdrawnDlq.getName()).isEqualTo("test.withdrawn.dlq");
+        assertThat(withdrawnDlqBinding.getRoutingKey()).isEqualTo("test.withdrawn.dead");
+        assertThat(withdrawnBinding.getRoutingKey()).isEqualTo("styleradar.catalogo.prenda.retirada");
+
+        Queue moderationDlq = config.catalogGarmentModerationDlq("test.moderation.dlq");
+        Binding moderationDlqBinding = config.catalogGarmentModerationDlqBinding(moderationDlq, dlx, "test.moderation.dead");
+        Queue moderationQueue = config.catalogGarmentModerationQueue("test.moderation.q", "test.catalog.dlx", "test.moderation.dead");
+        Binding moderationBinding = config.catalogGarmentModerationBinding(moderationQueue, exchange, "styleradar.catalogo.moderacion.cambiada");
+        assertThat(moderationDlq.getName()).isEqualTo("test.moderation.dlq");
+        assertThat(moderationDlqBinding.getRoutingKey()).isEqualTo("test.moderation.dead");
+        assertThat(moderationBinding.getRoutingKey()).isEqualTo("styleradar.catalogo.moderacion.cambiada");
 
         assertThat(converter).isNotNull();
     }

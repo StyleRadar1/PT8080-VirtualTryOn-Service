@@ -110,12 +110,21 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
         // 2. Despacho individual y confirmación con broker RabbitMQ
         for (OutboxEventJpaEntity event : claimedEvents) {
             try {
-                if ("tryon.job.created".equals(event.getEventType())
-                        || "tryon.job.completed".equals(event.getEventType())
-                        || "tryon.job.failed".equals(event.getEventType())) {
+                String eventType = event.getEventType();
+                if (java.util.Set.of(
+                        TryOnJobDomainEvent.ROUTING_KEY_CREATED,
+                        TryOnJobDomainEvent.ROUTING_KEY_COMPLETED,
+                        TryOnJobDomainEvent.ROUTING_KEY_FAILED,
+                        "tryon.job.created",
+                        "tryon.job.completed",
+                        "tryon.job.failed"
+                ).contains(eventType)) {
                     TryOnJobDomainEvent domainEvent = objectMapper.readValue(event.getPayload(), TryOnJobDomainEvent.class);
                     tryOnEventPublisherPort.publishJobEvent(domainEvent);
-                } else if ("tryon.photo.purged".equals(event.getEventType())) {
+                } else if (java.util.Set.of(
+                        edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.ROUTING_KEY,
+                        "tryon.photo.purged"
+                ).contains(eventType)) {
                     edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent domainEvent =
                             objectMapper.readValue(event.getPayload(), edu.dosw.styleradar.virtualtryon.domain.event.PhotoPurgedDomainEvent.class);
                     tryOnEventPublisherPort.publishPhotoPurgedEvent(domainEvent);

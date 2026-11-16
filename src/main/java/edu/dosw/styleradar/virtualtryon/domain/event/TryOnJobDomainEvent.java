@@ -45,11 +45,15 @@ public record TryOnJobDomainEvent(
         );
     }
 
+    public static final String ROUTING_KEY_CREATED = "styleradar.tryon.job.created";
+    public static final String ROUTING_KEY_COMPLETED = "styleradar.tryon.job.completed";
+    public static final String ROUTING_KEY_FAILED = "styleradar.tryon.job.failed";
+
     public String routingKey() {
         return switch (status) {
-            case QUEUED, PROCESSING -> "tryon.job.created";
-            case COMPLETED -> "tryon.job.completed";
-            case FAILED, CANCELLED -> "tryon.job.failed";
+            case QUEUED, PROCESSING -> ROUTING_KEY_CREATED;
+            case COMPLETED -> ROUTING_KEY_COMPLETED;
+            case FAILED, CANCELLED -> ROUTING_KEY_FAILED;
         };
     }
 }
