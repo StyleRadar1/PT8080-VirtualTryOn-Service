@@ -1,6 +1,7 @@
 package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
+import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
@@ -71,6 +72,9 @@ class BiometricConsentServiceImplTest {
     @Mock
     private BiometricPhotoJpaRepository photoJpaRepository;
 
+    @Mock
+    private DeleteBiometricDataService deleteBiometricDataService;
+
     private Map<UUID, BiometricConsentJpaEntity> persistedConsents;
     private Map<UUID, BiometricPhotoJpaEntity> persistedPhotos;
 
@@ -119,11 +123,11 @@ class BiometricConsentServiceImplTest {
                 Duration.ofMinutes(15),
                 "2024-11-04"
         );
-        consentService = new BiometricConsentServiceImpl(repositoryAdapter, blobStorageAdapter);
+        consentService = new BiometricConsentServiceImpl(repositoryAdapter, blobStorageAdapter, deleteBiometricDataService);
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (Positivo): Dado un usuario que otorga consentimiento biométrico, Cuando se consulta y luego se revoca, Entonces persiste en JPA y actualiza su validez")
+    @DisplayName("HU SR-RF-23 / SR-RF-27 (Positivo): Dado un usuario que otorga consentimiento biométrico, Cuando se consulta y luego se revoca, Entonces persiste en JPA, actualiza su validez y purga integralmente fotografías y renders")
     void shouldGrantGetAndRevokeConsent() {
         BiometricConsent granted = consentService.grantConsent(
                 USER_ID,
@@ -142,6 +146,9 @@ class BiometricConsentServiceImplTest {
         BiometricConsent revoked = consentService.revokeConsent(USER_ID);
         assertThat(revoked.isValidForInference()).isFalse();
         assertThat(revoked.getRevokedAt()).isNotNull();
+
+        // SR-RF-27: Verifica que la revocación de consentimiento ejecutó la purga integral de siluetas y renders
+        verify(deleteBiometricDataService).purgeAllBiometricDataForUser(USER_ID);
     }
 
     @Test
@@ -761,16 +768,31 @@ class BiometricConsentServiceImplTest {
     }
 
     @Test
-    @DisplayName("Fase B (SR-RF-23): Rechaza carga si biometricConsentAccepted=false aunque exista consentimiento previo y registra IP real o 127.0.0.1")
+    @DisplayName("SR-RF-23 (Ley 1581): Permite carga si biometricConsentAccepted=false pero existe consentimiento previo; rechaza si no existe consentimiento y registra IP real")
     void shouldRejectUploadWhenFlagIsFalseEvenWithPriorConsentAndRecordRealIp() throws Exception {
         byte[] photoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
 
-        // 1. Existe consentimiento activo previo, pero uploadPhoto con flag=false debe fallar sin bypass
-        consentService.grantConsent(USER_ID, "v1.0-LEY1581-2026", true, List.of("VIRTUAL_TRY_ON_INFERENCE"), "190.24.10.1");
-        assertThatThrownBy(() -> consentService.uploadPhoto(USER_ID, false, "image/png", photoBytes, "198.51.100.99"))
+        // 1. Usuario SIN consentimiento previo y flag=false debe ser rechazado de inmediato
+        UserId unconsentedUser = UserId.of(UUID.randomUUID());
+        assertThatThrownBy(() -> consentService.uploadPhoto(unconsentedUser, false, "image/png", photoBytes, "198.51.100.99"))
                 .isInstanceOf(ConsentRequiredException.class);
 
-        // 2. Nuevo usuario sin consentimiento previo registra clientIp explícita en auto-consentimiento
+        // 2. Usuario CON consentimiento activo previo registrado en BD: permite la carga con flag=false
+        consentService.grantConsent(USER_ID, "v1.0-LEY1581-2026", true, List.of("VIRTUAL_TRY_ON_INFERENCE"), "190.24.10.1");
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(photoBytes, MediaType.IMAGE_PNG));
+
+        BiometricPhoto uploadedWithPriorConsent = consentService.uploadPhoto(USER_ID, false, "image/png", photoBytes, "198.51.100.99");
+        assertThat(uploadedWithPriorConsent).isNotNull();
+        assertThat(uploadedWithPriorConsent.isActive()).isTrue();
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        // 3. Nuevo usuario sin consentimiento previo registra clientIp explícita en auto-consentimiento (flag=true)
         UserId secondUser = UserId.of(UUID.randomUUID());
         mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
                 .andExpect(method(HttpMethod.PUT))
@@ -784,7 +806,7 @@ class BiometricConsentServiceImplTest {
         mockAzureServer.verify();
         mockAzureServer.reset();
 
-        // 3. Usuario sin clientIp (blank/null) registra loopback 127.0.0.1 en lugar de 0.0.0.0
+        // 4. Usuario sin clientIp (blank/null) registra loopback 127.0.0.1 en lugar de 0.0.0.0
         UserId thirdUser = UserId.of(UUID.randomUUID());
         mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
                 .andExpect(method(HttpMethod.PUT))

@@ -14,6 +14,7 @@ import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnEventPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -89,7 +91,43 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
             if (job.isPhotoPurged() && job.getResultImageUrl() == null) {
                 throw new JobNotFoundException(jobOrPhotoId);
             }
+
+            String targetPhotoUrl = job.getPhotoUrl();
+            Optional<BiometricPhoto> profilePhotoOpt = biometricDataRepositoryPort.findPhotoByUserId(job.getUserId());
+            String profileBlobPath = profilePhotoOpt.map(BiometricPhoto::getBlobPath).orElse(null);
+            String profilePhotoUrl = profilePhotoOpt.map(BiometricPhoto::getPhotoUrl).map(SasSignedUrl::value).orElse(null);
+
+            boolean isJobPhotoMatchingProfile = targetPhotoUrl != null && (
+                    sharesSamePhoto(targetPhotoUrl, profileBlobPath)
+                            || sharesSamePhoto(targetPhotoUrl, profilePhotoUrl)
+            );
+
+            // 1. Purgar el trabajo solicitado directamente
             purgeSingleJobAndUserPhoto(job);
+
+            // 2. SR-RF-27: Buscar y purgar todos los demás trabajos del usuario que compartan la misma fotografía biométrica,
+            // eliminando sus renders físicos en Azure Blob Storage y revocando cualquier resultado asociado accesible.
+            List<TryOnJob> userJobs = jobRepositoryPort.findJobsByUserId(job.getUserId());
+            for (TryOnJob otherJob : userJobs) {
+                if (otherJob.getId().equals(job.getId())) {
+                    continue;
+                }
+                if (otherJob.isPhotoPurged() && otherJob.getResultImageUrl() == null) {
+                    continue;
+                }
+
+                boolean sharesPhoto = sharesSamePhoto(targetPhotoUrl, otherJob.getPhotoUrl())
+                        || (isJobPhotoMatchingProfile && (
+                        sharesSamePhoto(profileBlobPath, otherJob.getPhotoUrl())
+                                || sharesSamePhoto(profilePhotoUrl, otherJob.getPhotoUrl())
+                ));
+
+                if (sharesPhoto) {
+                    purgeSingleJobAndUserPhoto(otherJob);
+                    log.info("Trabajo asociado/compartido {} del usuario {} purgado por eliminación de fotografía común (SR-RF-27)",
+                            otherJob.getId(), otherJob.getUserId().value());
+                }
+            }
             return;
         }
 
@@ -107,7 +145,7 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
             // Limpiar y purgar todos los trabajos del usuario para no dejar referencias biométricas pendientes
             List<TryOnJob> userJobs = jobRepositoryPort.findJobsByUserId(photo.getUserId());
             for (TryOnJob userJob : userJobs) {
-                if (!userJob.isPhotoPurged()) {
+                if (!userJob.isPhotoPurged() || userJob.getResultImageUrl() != null) {
                     purgeSingleJobAndUserPhoto(userJob);
                 }
             }
@@ -133,7 +171,7 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
 
         List<TryOnJob> userJobs = jobRepositoryPort.findJobsByUserId(userId);
         for (TryOnJob job : userJobs) {
-            if (!job.isPhotoPurged()) {
+            if (!job.isPhotoPurged() || job.getResultImageUrl() != null) {
                 purgeSingleJobAndUserPhoto(job);
             }
         }
@@ -198,5 +236,53 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
                 log.warn("Fallo al publicar evento de purga directo: {}", ex.getMessage());
             }
         }
+    }
+
+    static boolean sharesSamePhoto(String photoUrl1, String photoUrl2) {
+        if (photoUrl1 == null || photoUrl2 == null || photoUrl1.isBlank() || photoUrl2.isBlank()) {
+            return false;
+        }
+        if (photoUrl1.startsWith("PURGED") || photoUrl2.startsWith("PURGED")) {
+            return false;
+        }
+        if (photoUrl1.trim().equalsIgnoreCase(photoUrl2.trim())) {
+            return true;
+        }
+        String blob1 = extractBlobNameOrPath(photoUrl1);
+        String blob2 = extractBlobNameOrPath(photoUrl2);
+        return !blob1.isBlank() && blob1.equalsIgnoreCase(blob2);
+    }
+
+    static String extractBlobNameOrPath(String urlOrPath) {
+        if (urlOrPath == null || urlOrPath.isBlank()) {
+            return "";
+        }
+        String clean = urlOrPath.trim();
+        int queryIdx = clean.indexOf('?');
+        if (queryIdx >= 0) {
+            clean = clean.substring(0, queryIdx);
+        }
+        try {
+            if (clean.contains("://")) {
+                URI uri = URI.create(clean).normalize();
+                String path = uri.getPath();
+                if (path != null && !path.isBlank()) {
+                    while (path.startsWith("/")) {
+                        path = path.substring(1);
+                    }
+                    int firstSlash = path.indexOf('/');
+                    if (firstSlash >= 0) {
+                        return path.substring(firstSlash + 1);
+                    }
+                    return path;
+                }
+            }
+        } catch (Exception ignored) {
+            // fallback al camino estándar
+        }
+        while (clean.startsWith("/")) {
+            clean = clean.substring(1);
+        }
+        return clean;
     }
 }

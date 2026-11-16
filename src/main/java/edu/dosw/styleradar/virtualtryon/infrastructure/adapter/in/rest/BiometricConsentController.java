@@ -125,16 +125,16 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     @PostMapping(value = "/photos", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<BiometricPhotoResponse> uploadPhoto(
-            @RequestParam("userId") UUID userId,
-            @RequestParam("biometricConsent") boolean biometricConsent,
+            @RequestParam(value = "userId", required = false) UUID userId,
+            @RequestParam(value = "biometricConsent", required = false, defaultValue = "true") boolean biometricConsent,
             @RequestPart("photo") MultipartFile photo
     ) {
-        verifyCallerIdentityAndPermissions(userId);
+        UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
         try {
             byte[] bytes = photo == null ? null : photo.getBytes();
             String contentType = photo == null ? null : photo.getContentType();
             BiometricPhoto uploaded = biometricConsentService.uploadPhoto(
-                    UserId.of(userId),
+                    UserId.of(effectiveUserId),
                     biometricConsent,
                     contentType,
                     bytes,
@@ -252,6 +252,10 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     }
 
     private void verifyCallerIdentityAndPermissions(UUID targetUserId) {
+        resolveAndVerifyCallerUserId(targetUserId);
+    }
+
+    private UUID resolveAndVerifyCallerUserId(UUID targetUserId) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null
                 || !authentication.isAuthenticated()
@@ -273,30 +277,36 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
         boolean isAdmin = authentication.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .anyMatch(ADMIN_ROLES::contains);
-        if (isAdmin) {
-            return;
-        }
 
         Object principal = authentication.getPrincipal();
+        UUID authenticatedUuid;
         if (principal instanceof AuthenticatedUser authenticatedUser) {
-            if (!authenticatedUser.canAccessUser(targetUserId)) {
+            authenticatedUuid = authenticatedUser.userId();
+            if (isAdmin) {
+                return targetUserId != null ? targetUserId : authenticatedUuid;
+            }
+            if (targetUserId != null && !authenticatedUser.canAccessUser(targetUserId)) {
                 throw new AccessDeniedException(
                         "No tiene permisos para consultar o modificar los datos biométricos de otro usuario"
                 );
             }
-            return;
+            return targetUserId != null ? targetUserId : authenticatedUuid;
         }
 
         String principalName = principal instanceof UserDetails userDetails
                 ? userDetails.getUsername()
                 : authentication.getName();
         try {
-            UUID authenticatedUuid = UUID.fromString(principalName);
-            if (!authenticatedUuid.equals(targetUserId)) {
+            authenticatedUuid = UUID.fromString(principalName);
+            if (isAdmin) {
+                return targetUserId != null ? targetUserId : authenticatedUuid;
+            }
+            if (targetUserId != null && !authenticatedUuid.equals(targetUserId)) {
                 throw new AccessDeniedException(
                         "No tiene permisos para consultar o modificar los datos biométricos de otro usuario"
                 );
             }
+            return targetUserId != null ? targetUserId : authenticatedUuid;
         } catch (IllegalArgumentException ignored) {
             throw new AccessDeniedException(
                     "Identidad de usuario autenticado inválida para validar titularidad biométrica"

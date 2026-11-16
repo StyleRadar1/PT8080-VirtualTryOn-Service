@@ -118,6 +118,20 @@ public class JwtTokenProvider {
                 return claimUuid;
             }
         }
+        Object rawSnakeUserId = claims.get("user_id");
+        if (rawSnakeUserId != null) {
+            UUID claimUuid = parseUuidOrNull(rawSnakeUserId.toString());
+            if (claimUuid != null) {
+                return claimUuid;
+            }
+        }
+        Object rawId = claims.get("id");
+        if (rawId != null) {
+            UUID claimUuid = parseUuidOrNull(rawId.toString());
+            if (claimUuid != null) {
+                return claimUuid;
+            }
+        }
         if (subject == null || subject.isBlank()) {
             throw new JwtException("Subject del token JWT ausente");
         }
@@ -148,6 +162,29 @@ public class JwtTokenProvider {
             }
         }
         addNormalizedRole(collected, claims.get("role", String.class));
+
+        Object authoritiesObj = claims.get("authorities");
+        if (authoritiesObj instanceof java.util.Collection<?> authCollection) {
+            for (Object item : authCollection) {
+                addNormalizedRole(collected, item == null ? null : item.toString());
+            }
+        } else if (authoritiesObj instanceof String authCsv) {
+            for (String token : authCsv.split(",")) {
+                addNormalizedRole(collected, token);
+            }
+        }
+
+        Object scopeObj = claims.get("scope");
+        if (scopeObj instanceof java.util.Collection<?> scopeCollection) {
+            for (Object item : scopeCollection) {
+                addNormalizedRole(collected, item == null ? null : item.toString());
+            }
+        } else if (scopeObj instanceof String scopeStr) {
+            for (String token : scopeStr.split("[ ,]")) {
+                addNormalizedRole(collected, token);
+            }
+        }
+
         return java.util.List.copyOf(collected);
     }
 

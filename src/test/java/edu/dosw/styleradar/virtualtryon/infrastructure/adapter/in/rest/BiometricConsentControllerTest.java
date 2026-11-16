@@ -243,13 +243,22 @@ class BiometricConsentControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("MISSING_REQUEST_PART"));
 
-        // Sin parámetro obligatorio biometricConsent -> 400 Bad Request (opción estricta Fase B)
+        // Parámetro biometricConsent opcional con valor por defecto true (SR-RF-23 homologación de contrato)
         mockMvc.perform(multipart("/api/v1/try-on/photos")
                         .file(file)
                         .param("userId", USER_UUID.toString())
+                        .header("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errorCode").value("MISSING_REQUEST_PART"));
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.width").value(400));
+
+        // Parámetro userId opcional deducido automáticamente de la identidad JWT del usuario autenticado
+        mockMvc.perform(multipart("/api/v1/try-on/photos")
+                        .file(file)
+                        .header("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.width").value(400));
     }
 
     @Test
@@ -413,6 +422,32 @@ class BiometricConsentControllerTest {
                 .compact();
         AuthenticatedUser csvUser = jwtTokenProvider.validateAndExtractUser(csvRolesJwt);
         assertThat(csvUser.roles()).containsExactly("COMPRADOR", "ADMIN_STYLERADAR");
+
+        // SR-RF-23: Token con claim user_id snake_case y authorities (formato OAuth2 / Spring Security)
+        String snakeUserIdJwt = Jwts.builder()
+                .subject("auth0|usuario-externo")
+                .claim("user_id", USER_UUID.toString())
+                .claim("authorities", List.of("ROLE_COMPRADOR", "ROLE_USER"))
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256)
+                .compact();
+        AuthenticatedUser snakeUser = jwtTokenProvider.validateAndExtractUser(snakeUserIdJwt);
+        assertThat(snakeUser.userId()).isEqualTo(USER_UUID);
+        assertThat(snakeUser.roles()).contains("COMPRADOR", "USER");
+
+        // SR-RF-23: Token con claim id y scope separado por espacios
+        String scopeJwt = Jwts.builder()
+                .subject("usuario-con-scope")
+                .claim("id", USER_UUID.toString())
+                .claim("scope", "ROLE_COMPRADOR ADMIN")
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256)
+                .compact();
+        AuthenticatedUser scopeUser = jwtTokenProvider.validateAndExtractUser(scopeJwt);
+        assertThat(scopeUser.userId()).isEqualTo(USER_UUID);
+        assertThat(scopeUser.roles()).contains("COMPRADOR", "ADMIN");
 
         // Token sin roles o con roles vacíos lanza JwtException y HTTP responde 401
         String noRoleJwt = Jwts.builder()

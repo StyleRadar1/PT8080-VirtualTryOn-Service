@@ -495,4 +495,79 @@ class DeleteBiometricDataServiceImplTest {
         verify(tryOnJobJpaRepository, never()).save(any(TryOnJobJpaEntity.class));
         verify(outboxPublisherPort, never()).saveOutboxEvent(any(), any(), any());
     }
+
+    @Test
+    @DisplayName("SR-RF-27: Borrado de fotografía compartida entre múltiples trabajos purga integralmente todos los trabajos y elimina sus renders asociados en Azure")
+    void shouldPurgeAllJobsAndResultsSharingSameBiometricPhotoWhenOneJobIsPurged() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID job1Id = UUID.randomUUID();
+        UUID job2Id = UUID.randomUUID();
+        String sharedPhotoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/user-1/silhouette.png?sv=2024-11-04&sig=sig1";
+        String sharedPhotoUrlJob2 = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/user-1/silhouette.png?sv=2024-11-04&sig=sig2";
+        String render1Url = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/user-1/render-job1.png";
+        String render2Url = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/user-1/render-job2.png";
+
+        TryOnJob job1 = new TryOnJobBuilder()
+                .withId(job1Id)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(sharedPhotoUrl)
+                .build();
+        job1.complete(SasSignedUrl.of(render1Url), 1000L);
+
+        TryOnJob job2 = new TryOnJobBuilder()
+                .withId(job2Id)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl(sharedPhotoUrlJob2)
+                .build();
+        job2.complete(SasSignedUrl.of(render2Url), 1200L);
+
+        TryOnJobJpaEntity job1Entity = mapper.toJobJpaEntity(job1);
+        TryOnJobJpaEntity job2Entity = mapper.toJobJpaEntity(job2);
+
+        when(tryOnJobJpaRepository.findById(job1Id)).thenReturn(Optional.of(job1Entity));
+        when(tryOnJobJpaRepository.findByUserIdOrderByCreatedAtDesc(ownerId.value()))
+                .thenReturn(List.of(job1Entity, job2Entity));
+
+        deleteService.deleteBiometricPhoto(job1Id, ownerId, false);
+
+        // 1. Verifica eliminación física de la fotografía frontal común en Azure Blob Storage
+        verify(blobStoragePort, org.mockito.Mockito.atLeastOnce()).deleteBlob(org.mockito.ArgumentMatchers.contains("silhouette.png"));
+
+        // 2. Verifica eliminación física de los renders de AMBOS trabajos en Azure Blob Storage
+        verify(blobStoragePort).deleteBlob(SasSignedUrl.of(render1Url));
+        verify(blobStoragePort).deleteBlob(SasSignedUrl.of(render2Url));
+
+        // 3. Verifica eliminación de outfits para ambos trabajos
+        verify(tryOnOutfitJpaRepository).deleteByJobId(job1Id);
+        verify(tryOnOutfitJpaRepository).deleteByJobId(job2Id);
+
+        // 4. Verifica publicación de eventos outbox para ambos trabajos
+        verify(outboxPublisherPort).saveOutboxEvent(
+                org.mockito.ArgumentMatchers.eq(job1Id),
+                org.mockito.ArgumentMatchers.eq(PhotoPurgedDomainEvent.ROUTING_KEY),
+                any(PhotoPurgedDomainEvent.class)
+        );
+        verify(outboxPublisherPort).saveOutboxEvent(
+                org.mockito.ArgumentMatchers.eq(job2Id),
+                org.mockito.ArgumentMatchers.eq(PhotoPurgedDomainEvent.ROUTING_KEY),
+                any(PhotoPurgedDomainEvent.class)
+        );
+    }
+
+    @Test
+    @DisplayName("SR-RF-27: Verifica helper sharesSamePhoto con variantes de tokens SAS, rutas relativas y URLs purgadas")
+    void shouldCorrectlyIdentifySharedPhotos() {
+        String url1 = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/user-1/silhouette.png?sv=2024-11-04&sig=sig1";
+        String url2 = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/user-1/silhouette.png?sv=2024-11-04&sig=sig2";
+        String differentPhoto = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/user-1/silhouette-different.png";
+
+        assertTrue(DeleteBiometricDataServiceImpl.sharesSamePhoto(url1, url2));
+        assertTrue(DeleteBiometricDataServiceImpl.sharesSamePhoto(url1, "user-1/silhouette.png"));
+        assertTrue(DeleteBiometricDataServiceImpl.sharesSamePhoto("user-1/silhouette.png", "user-1/silhouette.png"));
+        org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto(url1, differentPhoto));
+        org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto("PURGED_BY_USER_REQUEST", "PURGED_BY_USER_REQUEST"));
+        org.junit.jupiter.api.Assertions.assertFalse(DeleteBiometricDataServiceImpl.sharesSamePhoto(null, url1));
+    }
 }

@@ -1,6 +1,7 @@
 package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.BiometricConsentService;
+import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
@@ -41,15 +42,26 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
 
     private final BiometricDataRepositoryPort biometricDataRepositoryPort;
     private final BlobStoragePort blobStoragePort;
+    private final DeleteBiometricDataService deleteBiometricDataService;
     private final TryOnValidatorHandler photoValidationChain;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public BiometricConsentServiceImpl(
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            BlobStoragePort blobStoragePort,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) DeleteBiometricDataService deleteBiometricDataService
+    ) {
+        this.biometricDataRepositoryPort = biometricDataRepositoryPort;
+        this.blobStoragePort = blobStoragePort;
+        this.deleteBiometricDataService = deleteBiometricDataService;
+        this.photoValidationChain = buildPhotoValidationChain();
+    }
 
     public BiometricConsentServiceImpl(
             BiometricDataRepositoryPort biometricDataRepositoryPort,
             BlobStoragePort blobStoragePort
     ) {
-        this.biometricDataRepositoryPort = biometricDataRepositoryPort;
-        this.blobStoragePort = blobStoragePort;
-        this.photoValidationChain = buildPhotoValidationChain();
+        this(biometricDataRepositoryPort, blobStoragePort, null);
     }
 
     private static TryOnValidatorHandler buildPhotoValidationChain() {
@@ -100,6 +112,12 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
         existing.revoke(Instant.now());
         BiometricConsent updated = biometricDataRepositoryPort.saveConsent(existing);
         log.info("Consentimiento biométrico revocado para el usuario {}", userId.value());
+
+        // SR-RF-27 / Ley 1581 de 2012: La revocación de consentimiento exige la purga integral
+        // física e irrevocable de todas las fotografías de silueta y renders generados del titular.
+        if (deleteBiometricDataService != null) {
+            deleteBiometricDataService.purgeAllBiometricDataForUser(userId);
+        }
         return updated;
     }
 
@@ -121,7 +139,12 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
             byte[] photoBytes,
             String clientIp
     ) {
-        if (!biometricConsentAccepted) {
+        boolean hasPersistedValidConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
+                .map(BiometricConsent::isValidForInference)
+                .orElse(false);
+
+        boolean effectiveConsentAccepted = biometricConsentAccepted || hasPersistedValidConsent;
+        if (!effectiveConsentAccepted) {
             throw new ConsentRequiredException(userId.value());
         }
 
@@ -132,10 +155,6 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
                 photoBytes
         );
         photoValidationChain.validate(validationContext);
-
-        boolean hasPersistedValidConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
-                .map(BiometricConsent::isValidForInference)
-                .orElse(false);
 
         if (!hasPersistedValidConsent) {
             String effectiveIp = (clientIp != null && !clientIp.isBlank()) ? clientIp.trim() : "127.0.0.1";
