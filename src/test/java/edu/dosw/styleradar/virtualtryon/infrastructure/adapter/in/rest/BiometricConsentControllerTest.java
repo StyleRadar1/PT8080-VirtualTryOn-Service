@@ -183,14 +183,47 @@ class BiometricConsentControllerTest {
     }
 
     @Test
-    @DisplayName("SR-RF-23 / Seguridad: Usuario con rol ADMIN_TIENDA tiene permisos para operar sobre datos biométricos")
-    void shouldAllowAdminTiendaRole() throws Exception {
-        when(biometricConsentService.getConsentByUserId(eq(UserId.of(OTHER_USER_UUID))))
-                .thenReturn(sampleConsent(null));
+    @DisplayName("SR-RF-23 / Seguridad: Usuario con rol ADMIN_TIENDA NO tiene permisos administrativos sobre datos de otros usuarios (403 en consulta, modificación y revocación)")
+    void shouldDenyAdminTiendaFromAccessingOrModifyingOtherUserData() throws Exception {
+        String adminTiendaToken = bearerToken(USER_UUID, "ADMIN_TIENDA");
 
+        // 1. No puede consultar consentimiento de otro usuario (403 Forbidden)
         mockMvc.perform(get("/api/v1/try-on/consents/" + OTHER_USER_UUID)
-                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "ADMIN_TIENDA")))
-                .andExpect(status().isOk());
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken))
+                .andExpect(status().isForbidden());
+
+        // 2. No puede consultar fotografía biométrica de otro usuario (403 Forbidden)
+        mockMvc.perform(get("/api/v1/try-on/photos/" + OTHER_USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken))
+                .andExpect(status().isForbidden());
+
+        // 3. No puede registrar/modificar consentimiento a nombre de otro usuario (403 Forbidden)
+        BiometricConsentRequest otherUserRequest = new BiometricConsentRequest(
+                OTHER_USER_UUID,
+                "v1.0-LEY1581-2026",
+                true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"),
+                null
+        );
+        mockMvc.perform(post("/api/v1/try-on/consents")
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(otherUserRequest)))
+                .andExpect(status().isForbidden());
+
+        // 4. No puede revocar consentimiento de otro usuario (403 Forbidden)
+        mockMvc.perform(delete("/api/v1/try-on/consents/" + OTHER_USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken))
+                .andExpect(status().isForbidden());
+
+        // 5. No puede cargar fotografía para otro usuario (403 Forbidden)
+        MockMultipartFile dummyPhoto = new MockMultipartFile("photo", "sil.png", "image/png", new byte[]{1, 2, 3});
+        mockMvc.perform(multipart("/api/v1/try-on/photos")
+                        .file(dummyPhoto)
+                        .param("userId", OTHER_USER_UUID.toString())
+                        .param("biometricConsent", "true")
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken))
+                .andExpect(status().isForbidden());
     }
 
     @Test

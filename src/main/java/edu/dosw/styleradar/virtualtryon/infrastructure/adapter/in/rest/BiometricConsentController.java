@@ -69,10 +69,8 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     private static final Set<String> ADMIN_ROLES = Set.of(
             "ROLE_ADMIN",
             "ROLE_ADMIN_STYLERADAR",
-            "ROLE_ADMIN_TIENDA",
             "ADMIN",
-            "ADMIN_STYLERADAR",
-            "ADMIN_TIENDA"
+            "ADMIN_STYLERADAR"
     );
 
     private final BiometricConsentService biometricConsentService;
