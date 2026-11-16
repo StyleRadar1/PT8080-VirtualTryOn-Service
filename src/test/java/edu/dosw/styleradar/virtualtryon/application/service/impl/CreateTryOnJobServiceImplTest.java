@@ -225,7 +225,7 @@ class CreateTryOnJobServiceImplTest {
 
         verify(outboxPublisherPort).saveOutboxEvent(
                 eq(queued.getId()),
-                eq("tryon.job.created"),
+                eq(TryOnJobDomainEvent.ROUTING_KEY_CREATED),
                 any(TryOnJobDomainEvent.class)
         );
         verify(outboxPublisherPort).publishPendingEvents();
@@ -438,7 +438,7 @@ class CreateTryOnJobServiceImplTest {
         // El trabajo debe quedar creado en estado QUEUED sin abortar, garantizado por Outbox
         assertThat(job).isNotNull();
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
-        verify(outboxPublisherPort).saveOutboxEvent(eq(job.getId()), eq("tryon.job.created"), any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort).saveOutboxEvent(eq(job.getId()), eq(TryOnJobDomainEvent.ROUTING_KEY_CREATED), any(TryOnJobDomainEvent.class));
         verify(outboxPublisherPort).publishPendingEvents();
     }
 
@@ -505,7 +505,7 @@ class CreateTryOnJobServiceImplTest {
         TryOnJob job = serviceWithOutbox.createTryOnJob(userId, garmentId, photoUrl, true);
 
         assertThat(job).isNotNull();
-        verify(mockOutbox).saveOutboxEvent(eq(job.getId()), eq("tryon.job.created"), any());
+        verify(mockOutbox).saveOutboxEvent(eq(job.getId()), eq(TryOnJobDomainEvent.ROUTING_KEY_CREATED), any());
         verify(mockOutbox).publishPendingEvents();
     }
 

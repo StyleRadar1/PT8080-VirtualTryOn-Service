@@ -113,9 +113,9 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(job.getResultImageUrl().value()).doesNotContain("sp=r").isEqualTo("https://storage/render.png");
 
         ArgumentCaptor<TryOnJobDomainEvent> eventCaptor = ArgumentCaptor.forClass(TryOnJobDomainEvent.class);
-        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), eventCaptor.capture());
+        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("styleradar.tryon.job.completed"), eventCaptor.capture());
         assertThat(eventCaptor.getValue().status()).isEqualTo(JobStatus.COMPLETED);
-        assertThat(eventCaptor.getValue().routingKey()).isEqualTo("tryon.job.completed");
+        assertThat(eventCaptor.getValue().routingKey()).isEqualTo("styleradar.tryon.job.completed");
         verify(outboxPublisherPort).publishPendingEvents();
     }
 
@@ -145,7 +145,7 @@ class ProcessTryOnJobServiceImplTest {
                 .isInstanceOf(AiProviderTimeoutException.class);
 
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
-        verify(outboxPublisherPort, never()).saveOutboxEvent(any(), eq("tryon.job.failed"), any());
+        verify(outboxPublisherPort, never()).saveOutboxEvent(any(), eq("styleradar.tryon.job.failed"), any());
     }
 
     @Test
@@ -171,9 +171,9 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(job.getErrorMessage()).contains("AiProviderTimeoutException");
 
         ArgumentCaptor<TryOnJobDomainEvent> eventCaptor = ArgumentCaptor.forClass(TryOnJobDomainEvent.class);
-        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.job.failed"), eventCaptor.capture());
+        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("styleradar.tryon.job.failed"), eventCaptor.capture());
         assertThat(eventCaptor.getValue().status()).isEqualTo(JobStatus.FAILED);
-        assertThat(eventCaptor.getValue().routingKey()).isEqualTo("tryon.job.failed");
+        assertThat(eventCaptor.getValue().routingKey()).isEqualTo("styleradar.tryon.job.failed");
     }
 
     @Test
@@ -261,7 +261,7 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(recovered).isEqualTo(1);
         assertThat(staleJob.getStatus()).isEqualTo(JobStatus.FAILED);
         assertThat(staleJob.getErrorMessage()).contains("Timeout de procesamiento");
-        verify(outboxPublisherPort).saveOutboxEvent(eq(staleJob.getId()), eq("tryon.job.failed"), any());
+        verify(outboxPublisherPort).saveOutboxEvent(eq(staleJob.getId()), eq("styleradar.tryon.job.failed"), any());
     }
 
     @Test

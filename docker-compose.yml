@@ -30,12 +30,24 @@ services:
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
       FLYWAY_ENABLED: ${FLYWAY_ENABLED:-true}
       TRYON_AMQP_LISTENERS_ENABLED: ${TRYON_AMQP_LISTENERS_ENABLED:-true}
-      CATALOG_EVENTS_EXCHANGE: ${CATALOG_EVENTS_EXCHANGE:-styleradar.catalog.events}
-      CATALOG_GARMENT_QUEUE: ${CATALOG_GARMENT_QUEUE:-q.tryon.catalog.garment.updated}
-      CATALOG_GARMENT_ROUTING_KEY: ${CATALOG_GARMENT_ROUTING_KEY:-catalog.garment.updated}
-      CATALOG_EVENTS_DLX: ${CATALOG_EVENTS_DLX:-styleradar.catalog.dlx}
-      CATALOG_GARMENT_DLQ: ${CATALOG_GARMENT_DLQ:-q.tryon.catalog.garment.updated.dlq}
-      CATALOG_GARMENT_DLQ_ROUTING_KEY: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:-catalog.garment.updated.dead}
+      CATALOG_EXCHANGE: ${CATALOG_EXCHANGE:-styleradar.exchange}
+      CATALOG_GARMENT_QUEUE: ${CATALOG_GARMENT_QUEUE:-styleradar.probador.prenda-publicada.q}
+      CATALOG_GARMENT_ROUTING_KEY: ${CATALOG_GARMENT_ROUTING_KEY:-styleradar.catalogo.prenda.publicada}
+      CATALOG_WITHDRAWN_QUEUE: ${CATALOG_WITHDRAWN_QUEUE:-styleradar.probador.prenda-retirada.q}
+      CATALOG_WITHDRAWN_ROUTING_KEY: ${CATALOG_WITHDRAWN_ROUTING_KEY:-styleradar.catalogo.prenda.retirada}
+      CATALOG_MODERATION_QUEUE: ${CATALOG_MODERATION_QUEUE:-styleradar.probador.moderacion-cambiada.q}
+      CATALOG_MODERATION_ROUTING_KEY: ${CATALOG_MODERATION_ROUTING_KEY:-styleradar.catalogo.moderacion.cambiada}
+      USER_EXCHANGE: ${USER_EXCHANGE:-styleradar.exchange}
+      USER_ACCOUNT_DELETED_QUEUE: ${USER_ACCOUNT_DELETED_QUEUE:-styleradar.probador.cuenta-eliminada.q}
+      USER_ACCOUNT_DELETED_ROUTING_KEY: ${USER_ACCOUNT_DELETED_ROUTING_KEY:-styleradar.usuarios.cuenta.eliminada}
+      USER_ACCOUNT_DELETED_DLQ: ${USER_ACCOUNT_DELETED_DLQ:-styleradar.probador.cuenta-eliminada.dlq}
+      CATALOG_DLX: ${CATALOG_DLX:-styleradar.dlx}
+      CATALOG_GARMENT_DLQ: ${CATALOG_GARMENT_DLQ:-styleradar.probador.dlq}
+      CATALOG_GARMENT_DLQ_ROUTING_KEY: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:-styleradar.probador.dlq}
+      TRYON_EXCHANGE: ${TRYON_EXCHANGE:-styleradar.exchange}
+      TRYON_PROCESS_QUEUE: ${TRYON_PROCESS_QUEUE:-q.tryon.job.process}
+      TRYON_DLX: ${TRYON_DLX:-styleradar.tryon.dlx}
+      TRYON_PROCESS_DLQ: ${TRYON_PROCESS_DLQ:-q.tryon.job.process.dlq}
       JPA_DDL_AUTO: ${JPA_DDL_AUTO:-validate}
       TRYON_AI_PROVIDER: ${TRYON_AI_PROVIDER:-mock}
       FASHN_API_URL: ${FASHN_API_URL:-https://api.fashn.ai/v1}
@@ -45,7 +57,7 @@ services:
       AZURE_STORAGE_BASE_URL: ${AZURE_STORAGE_BASE_URL:?AZURE_STORAGE_BASE_URL es obligatorio en variables de entorno}
       AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:?AZURE_STORAGE_CONTAINER es obligatorio en variables de entorno}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:?AZURE_STORAGE_ACCOUNT_KEY es obligatorio en variables de entorno}
-      AZURE_READ_SAS_DURATION: ${AZURE_READ_SAS_DURATION:-PT60M}
+      AZURE_READ_SAS_DURATION: ${AZURE_READ_SAS_DURATION:-PT15M}
       AZURE_STORAGE_API_VERSION: ${AZURE_STORAGE_API_VERSION:-2024-11-04}
     depends_on:
       probador-postgres:

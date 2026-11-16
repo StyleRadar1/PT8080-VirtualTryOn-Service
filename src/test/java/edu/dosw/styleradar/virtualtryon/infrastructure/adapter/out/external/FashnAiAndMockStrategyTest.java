@@ -365,5 +365,104 @@ class FashnAiAndMockStrategyTest {
                 .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
         server.verify();
     }
+
+    @Test
+    @DisplayName("Fase B (SR-RF-25): Aplica Circuit Breaker (Resilience4j), ignora errores 4xx permanentes y corta polling cuando vence el timeout global")
+    void shouldEnforceTotalTimeoutAndOpenCircuitBreakerAfterTransientFailures() {
+        // 1. Timeout global acotado en polling
+        RestClient.Builder timeoutBuilder = RestClient.builder().baseUrl(FASHN_URL);
+        MockRestServiceServer timeoutServer = MockRestServiceServer.bindTo(timeoutBuilder).build();
+        timeoutServer.expect(requestTo(FASHN_URL + "/run"))
+                .andRespond(withSuccess("{\"id\":\"slow-job\"}", MediaType.APPLICATION_JSON));
+        timeoutServer.expect(org.springframework.test.web.client.ExpectedCount.between(0, 10),
+                        requestTo(FASHN_URL + "/status/slow-job"))
+                .andRespond(withSuccess("{\"status\":\"processing\"}", MediaType.APPLICATION_JSON));
+
+        FashnAiRestClientAdapter timeoutAdapter = new FashnAiRestClientAdapter(
+                timeoutBuilder,
+                "clave-test",
+                Duration.ofMillis(20),
+                10,
+                Duration.ofMillis(35),
+                null
+        );
+        assertThat(timeoutAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        timeoutServer.verify();
+
+        // 2. CircuitBreaker Resilience4j: ignora 4xx permanentes y se abre tras fallos 5xx transitorios
+        io.github.resilience4j.circuitbreaker.CircuitBreakerConfig cbConfig =
+                io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.custom()
+                        .slidingWindowType(io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+                        .slidingWindowSize(2)
+                        .minimumNumberOfCalls(2)
+                        .failureRateThreshold(50.0f)
+                        .waitDurationInOpenState(Duration.ofSeconds(30))
+                        .ignoreExceptions(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class)
+                        .build();
+        io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry registry =
+                io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry.of(cbConfig);
+        io.github.resilience4j.circuitbreaker.CircuitBreaker cb = registry.circuitBreaker("fashnAi");
+
+        RestClient.Builder cbBuilder = RestClient.builder().baseUrl(FASHN_URL);
+        MockRestServiceServer cbServer = MockRestServiceServer.bindTo(cbBuilder).build();
+        cbServer.expect(requestTo(FASHN_URL + "/run"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest());
+        cbServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withServerError());
+        cbServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withServerError());
+
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry> provider =
+                Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(registry);
+        assertThat(new FashnAiRestClientAdapter(FASHN_URL, "clave-test", Duration.ofSeconds(5), provider)).isNotNull();
+
+        FashnAiRestClientAdapter cbAdapter = new FashnAiRestClientAdapter(
+                cbBuilder,
+                "clave-test",
+                Duration.ZERO,
+                2,
+                Duration.ofSeconds(5),
+                cb
+        );
+
+        // 4xx -> AiInferencePermanentException sin contabilizar fallo en CircuitBreaker
+        assertThatThrownBy(() -> cbAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
+        assertThat(cb.getState()).isEqualTo(io.github.resilience4j.circuitbreaker.CircuitBreaker.State.CLOSED);
+
+        // Dos errores 500 -> abren el circuito
+        assertThat(cbAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        assertThat(cbAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        assertThat(cb.getState()).isEqualTo(io.github.resilience4j.circuitbreaker.CircuitBreaker.State.OPEN);
+
+        // Con el circuito OPEN no ejecuta llamadas HTTP adicionales y retorna Optional.empty()
+        assertThat(cbAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        cbServer.verify();
+
+        // 3. Constructor con pollInterval=null y totalTimeout=ZERO + bordes de ejecución (sin id, canceled, output vacío, queryExternalJobStatus)
+        RestClient.Builder edgeBuilder = RestClient.builder().baseUrl(FASHN_URL);
+        MockRestServiceServer edgeServer = MockRestServiceServer.bindTo(edgeBuilder).build();
+        edgeServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withSuccess("{\"error\":null}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withSuccess("{\"id\":\"e-canceled\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/e-canceled")).andRespond(withSuccess("{\"status\":\"canceled\",\"error\":\"cancelled\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withSuccess("{\"id\":\"e-empty-out\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/e-empty-out")).andRespond(withSuccess("{\"status\":\"completed\",\"output\":[]}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/e-empty-out")).andRespond(withSuccess("{\"status\":\"processing\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/ext-canceled")).andRespond(withSuccess("{\"status\":\"canceled\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/ext-proc")).andRespond(withSuccess("{\"status\":\"processing\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/ext-err")).andRespond(withServerError());
+
+        FashnAiRestClientAdapter edgeAdapter = new FashnAiRestClientAdapter(
+                edgeBuilder, "clave-test", null, 2, Duration.ZERO, null
+        );
+        assertThat(edgeAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        assertThatThrownBy(() -> edgeAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
+        assertThat(edgeAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        assertThat(edgeAdapter.queryExternalJobStatus("ext-canceled")).isEqualTo(JobStatus.FAILED);
+        assertThat(edgeAdapter.queryExternalJobStatus("ext-proc")).isEqualTo(JobStatus.PROCESSING);
+        assertThat(edgeAdapter.queryExternalJobStatus("ext-err")).isEqualTo(JobStatus.FAILED);
+        edgeServer.verify();
+    }
 }
 

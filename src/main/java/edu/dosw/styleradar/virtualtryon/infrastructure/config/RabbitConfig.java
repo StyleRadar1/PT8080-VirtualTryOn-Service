@@ -15,6 +15,7 @@ import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.retry.interceptor.RetryInterceptorBuilder;
 import org.springframework.retry.interceptor.RetryOperationsInterceptor;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp.TryOnJobRetryRecoverer;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -35,16 +36,28 @@ public class RabbitConfig {
     public static final String DEFAULT_CATALOG_DLQ = "styleradar.probador.dlq";
     public static final String DEFAULT_CATALOG_DLQ_ROUTING_KEY = "styleradar.probador.dlq";
 
-    public static final String DEFAULT_TRYON_EXCHANGE = "styleradar.tryon.events";
+    public static final String DEFAULT_TRYON_EXCHANGE = "styleradar.exchange";
     public static final String DEFAULT_TRYON_PROCESS_QUEUE = "q.tryon.job.process";
-    public static final String DEFAULT_TRYON_ROUTING_KEY_CREATED = "tryon.job.created";
+    public static final String DEFAULT_TRYON_ROUTING_KEY_CREATED = "styleradar.tryon.job.created";
     public static final String DEFAULT_TRYON_DLX = "styleradar.tryon.dlx";
     public static final String DEFAULT_TRYON_PROCESS_DLQ = "q.tryon.job.process.dlq";
     public static final String DEFAULT_TRYON_PROCESS_DLQ_ROUTING_KEY = "tryon.job.process.dead";
 
+    public static final String DEFAULT_CATALOG_WITHDRAWN_QUEUE = "styleradar.probador.prenda-retirada.q";
+    public static final String DEFAULT_CATALOG_WITHDRAWN_ROUTING_KEY = "styleradar.catalogo.prenda.retirada";
+    public static final String DEFAULT_CATALOG_WITHDRAWN_DLQ = "styleradar.probador.prenda-retirada.dlq";
+    public static final String DEFAULT_CATALOG_WITHDRAWN_DLQ_ROUTING_KEY = "styleradar.probador.prenda-retirada.dead";
+
+    public static final String DEFAULT_CATALOG_MODERATION_QUEUE = "styleradar.probador.moderacion-cambiada.q";
+    public static final String DEFAULT_CATALOG_MODERATION_ROUTING_KEY = "styleradar.catalogo.moderacion.cambiada";
+    public static final String DEFAULT_CATALOG_MODERATION_DLQ = "styleradar.probador.moderacion-cambiada.dlq";
+    public static final String DEFAULT_CATALOG_MODERATION_DLQ_ROUTING_KEY = "styleradar.probador.moderacion-cambiada.dead";
+
     public static final String DEFAULT_USER_EVENTS_EXCHANGE = "styleradar.exchange";
     public static final String DEFAULT_USER_ACCOUNT_DELETED_QUEUE = "styleradar.probador.cuenta-eliminada.q";
     public static final String DEFAULT_USER_ACCOUNT_DELETED_ROUTING_KEY = "styleradar.usuarios.cuenta.eliminada";
+    public static final String DEFAULT_USER_ACCOUNT_DELETED_DLQ = "styleradar.probador.cuenta-eliminada.dlq";
+    public static final String DEFAULT_USER_ACCOUNT_DELETED_DLQ_ROUTING_KEY = "styleradar.probador.cuenta-eliminada.dead";
 
     @Bean
     public TopicExchange catalogEventsExchange(
@@ -95,6 +108,80 @@ public class RabbitConfig {
             @Value("${styleradar.tryon.amqp.catalog-garment-routing-key:" + DEFAULT_CATALOG_ROUTING_KEY + "}") String routingKey
     ) {
         return BindingBuilder.bind(catalogGarmentUpdatedQueue).to(catalogEventsExchange).with(routingKey);
+    }
+
+    @Bean
+    public Queue catalogGarmentWithdrawnDlq(
+            @Value("${styleradar.tryon.amqp.catalog-withdrawn-dlq:" + DEFAULT_CATALOG_WITHDRAWN_DLQ + "}") String dlqName
+    ) {
+        return QueueBuilder.durable(dlqName).build();
+    }
+
+    @Bean
+    public Binding catalogGarmentWithdrawnDlqBinding(
+            @Qualifier("catalogGarmentWithdrawnDlq") Queue catalogGarmentWithdrawnDlq,
+            @Qualifier("catalogDeadLetterExchange") DirectExchange catalogDeadLetterExchange,
+            @Value("${styleradar.tryon.amqp.catalog-withdrawn-dlq-routing-key:" + DEFAULT_CATALOG_WITHDRAWN_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return BindingBuilder.bind(catalogGarmentWithdrawnDlq).to(catalogDeadLetterExchange).with(dlqRoutingKey);
+    }
+
+    @Bean
+    public Queue catalogGarmentWithdrawnQueue(
+            @Value("${styleradar.tryon.amqp.catalog-withdrawn-queue:" + DEFAULT_CATALOG_WITHDRAWN_QUEUE + "}") String queueName,
+            @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxName,
+            @Value("${styleradar.tryon.amqp.catalog-withdrawn-dlq-routing-key:" + DEFAULT_CATALOG_WITHDRAWN_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return QueueBuilder.durable(queueName)
+                .deadLetterExchange(dlxName)
+                .deadLetterRoutingKey(dlqRoutingKey)
+                .build();
+    }
+
+    @Bean
+    public Binding catalogGarmentWithdrawnBinding(
+            @Qualifier("catalogGarmentWithdrawnQueue") Queue catalogGarmentWithdrawnQueue,
+            @Qualifier("catalogEventsExchange") TopicExchange catalogEventsExchange,
+            @Value("${styleradar.tryon.amqp.catalog-withdrawn-routing-key:" + DEFAULT_CATALOG_WITHDRAWN_ROUTING_KEY + "}") String routingKey
+    ) {
+        return BindingBuilder.bind(catalogGarmentWithdrawnQueue).to(catalogEventsExchange).with(routingKey);
+    }
+
+    @Bean
+    public Queue catalogGarmentModerationDlq(
+            @Value("${styleradar.tryon.amqp.catalog-moderation-dlq:" + DEFAULT_CATALOG_MODERATION_DLQ + "}") String dlqName
+    ) {
+        return QueueBuilder.durable(dlqName).build();
+    }
+
+    @Bean
+    public Binding catalogGarmentModerationDlqBinding(
+            @Qualifier("catalogGarmentModerationDlq") Queue catalogGarmentModerationDlq,
+            @Qualifier("catalogDeadLetterExchange") DirectExchange catalogDeadLetterExchange,
+            @Value("${styleradar.tryon.amqp.catalog-moderation-dlq-routing-key:" + DEFAULT_CATALOG_MODERATION_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return BindingBuilder.bind(catalogGarmentModerationDlq).to(catalogDeadLetterExchange).with(dlqRoutingKey);
+    }
+
+    @Bean
+    public Queue catalogGarmentModerationQueue(
+            @Value("${styleradar.tryon.amqp.catalog-moderation-queue:" + DEFAULT_CATALOG_MODERATION_QUEUE + "}") String queueName,
+            @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxName,
+            @Value("${styleradar.tryon.amqp.catalog-moderation-dlq-routing-key:" + DEFAULT_CATALOG_MODERATION_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return QueueBuilder.durable(queueName)
+                .deadLetterExchange(dlxName)
+                .deadLetterRoutingKey(dlqRoutingKey)
+                .build();
+    }
+
+    @Bean
+    public Binding catalogGarmentModerationBinding(
+            @Qualifier("catalogGarmentModerationQueue") Queue catalogGarmentModerationQueue,
+            @Qualifier("catalogEventsExchange") TopicExchange catalogEventsExchange,
+            @Value("${styleradar.tryon.amqp.catalog-moderation-routing-key:" + DEFAULT_CATALOG_MODERATION_ROUTING_KEY + "}") String routingKey
+    ) {
+        return BindingBuilder.bind(catalogGarmentModerationQueue).to(catalogEventsExchange).with(routingKey);
     }
 
     @Bean
@@ -157,9 +244,32 @@ public class RabbitConfig {
 
     @Bean
     public Queue userAccountDeletedQueue(
-            @Value("${styleradar.tryon.amqp.user-account-deleted-queue:" + DEFAULT_USER_ACCOUNT_DELETED_QUEUE + "}") String queueName
+            @Value("${styleradar.tryon.amqp.user-account-deleted-queue:" + DEFAULT_USER_ACCOUNT_DELETED_QUEUE + "}") String queueName,
+            @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxExchange,
+            @Value("${styleradar.tryon.amqp.user-account-deleted-dlq-routing-key:" + DEFAULT_USER_ACCOUNT_DELETED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
     ) {
-        return QueueBuilder.durable(queueName).build();
+        return QueueBuilder.durable(queueName)
+                .deadLetterExchange(dlxExchange)
+                .deadLetterRoutingKey(dlqRoutingKey)
+                .build();
+    }
+
+    @Bean
+    public Queue userAccountDeletedDlq(
+            @Value("${styleradar.tryon.amqp.user-account-deleted-dlq:" + DEFAULT_USER_ACCOUNT_DELETED_DLQ + "}") String dlqName
+    ) {
+        return QueueBuilder.durable(dlqName).build();
+    }
+
+    @Bean
+    public Binding userAccountDeletedDlqBinding(
+            @Qualifier("userAccountDeletedDlq") Queue userAccountDeletedDlq,
+            @Qualifier("catalogDeadLetterExchange") DirectExchange catalogDeadLetterExchange,
+            @Value("${styleradar.tryon.amqp.user-account-deleted-dlq-routing-key:" + DEFAULT_USER_ACCOUNT_DELETED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return BindingBuilder.bind(userAccountDeletedDlq)
+                .to(catalogDeadLetterExchange)
+                .with(dlqRoutingKey);
     }
 
     @Bean

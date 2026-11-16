@@ -29,7 +29,7 @@ public record BiometricConsentRequest(
         @Schema(description = "Finalidades autorizadas para el tratamiento de la silueta", example = "[\"VIRTUAL_TRY_ON_INFERENCE\", \"TEMPORARY_SILHOUETTE_STORAGE\"]")
         List<String> purposes,
 
-        @Schema(description = "Dirección IP desde la cual se otorga el consentimiento", example = "190.24.112.45")
+        @Schema(description = "Dirección IP informada por el cliente (ignorado por seguridad: la IP autoritativa se obtiene exclusivamente de la infraestructura confiable del servidor)", example = "190.24.112.45")
         String ipAddress
 ) {
 }

@@ -110,21 +110,35 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
             String contentType,
             byte[] photoBytes
     ) {
-        boolean hasPersistedValidConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
-                .map(BiometricConsent::isValidForInference)
-                .orElse(false);
+        return uploadPhoto(userId, biometricConsentAccepted, contentType, photoBytes, null);
+    }
 
-        boolean effectiveConsent = biometricConsentAccepted || hasPersistedValidConsent;
+    @Override
+    public BiometricPhoto uploadPhoto(
+            UserId userId,
+            boolean biometricConsentAccepted,
+            String contentType,
+            byte[] photoBytes,
+            String clientIp
+    ) {
+        if (!biometricConsentAccepted) {
+            throw new ConsentRequiredException(userId.value());
+        }
 
         TryOnValidationContext validationContext = new TryOnValidationContext(
                 userId,
-                effectiveConsent,
+                true,
                 contentType,
                 photoBytes
         );
         photoValidationChain.validate(validationContext);
 
+        boolean hasPersistedValidConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
+                .map(BiometricConsent::isValidForInference)
+                .orElse(false);
+
         if (!hasPersistedValidConsent) {
+            String effectiveIp = (clientIp != null && !clientIp.isBlank()) ? clientIp.trim() : "127.0.0.1";
             BiometricConsent autoRegisteredConsent = new BiometricConsent(
                     UUID.randomUUID(),
                     userId,
@@ -133,7 +147,7 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
                     List.of("VIRTUAL_TRY_ON_INFERENCE", "TEMPORARY_SILHOUETTE_STORAGE"),
                     Instant.now(),
                     null,
-                    "0.0.0.0"
+                    effectiveIp
             );
             biometricDataRepositoryPort.saveConsent(autoRegisteredConsent);
         }

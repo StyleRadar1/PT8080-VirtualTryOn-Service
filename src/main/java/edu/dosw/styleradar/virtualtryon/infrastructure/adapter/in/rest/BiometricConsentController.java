@@ -32,11 +32,17 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 
 /**
  * Adaptador REST de entrada que expone los endpoints de consentimiento biométrico (Ley 1581)
@@ -61,13 +67,24 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
 
     private final BiometricConsentService biometricConsentService;
     private final VirtualTryOnDtoMapper dtoMapper;
+    private final List<String> trustedProxies;
 
     public BiometricConsentController(
             BiometricConsentService biometricConsentService,
             VirtualTryOnDtoMapper dtoMapper
     ) {
+        this(biometricConsentService, dtoMapper, List.of("127.0.0.1", "::1"));
+    }
+
+    @Autowired
+    public BiometricConsentController(
+            BiometricConsentService biometricConsentService,
+            VirtualTryOnDtoMapper dtoMapper,
+            @Value("${styleradar.tryon.trusted-proxies:127.0.0.1,::1}") List<String> trustedProxies
+    ) {
         this.biometricConsentService = biometricConsentService;
         this.dtoMapper = dtoMapper;
+        this.trustedProxies = trustedProxies == null ? List.of() : List.copyOf(trustedProxies);
     }
 
     @Override
@@ -75,12 +92,13 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<BiometricConsentResponse> grantConsent(@Valid @RequestBody BiometricConsentRequest request) {
         verifyCallerIdentityAndPermissions(request.userId());
+        String effectiveIp = resolveClientIp();
         BiometricConsent consent = biometricConsentService.grantConsent(
                 UserId.of(request.userId()),
                 request.termsVersion(),
                 Boolean.TRUE.equals(request.accepted()),
                 request.purposes(),
-                request.ipAddress()
+                effectiveIp
         );
         return ResponseEntity.status(HttpStatus.CREATED).body(dtoMapper.toConsentResponse(consent));
     }
@@ -108,7 +126,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<BiometricPhotoResponse> uploadPhoto(
             @RequestParam("userId") UUID userId,
-            @RequestParam(value = "biometricConsent", defaultValue = "true") boolean biometricConsent,
+            @RequestParam("biometricConsent") boolean biometricConsent,
             @RequestPart("photo") MultipartFile photo
     ) {
         verifyCallerIdentityAndPermissions(userId);
@@ -119,12 +137,109 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
                     UserId.of(userId),
                     biometricConsent,
                     contentType,
-                    bytes
+                    bytes,
+                    resolveClientIp()
             );
             return ResponseEntity.status(HttpStatus.CREATED).body(dtoMapper.toPhotoResponse(uploaded));
         } catch (IOException ex) {
             throw new InvalidPhotoException("No fue posible procesar los bytes de la fotografía recibida");
         }
+    }
+
+    /**
+     * Resuelve la IP a registrar. Las cabeceras X-Forwarded-For / X-Real-IP solo se consideran si la
+     * conexión directa proviene de un proxy confiable; de lo contrario cualquier cliente podría falsificarlas.
+     * Cada hop se valida como IP literal (sin DNS) y en X-Forwarded-For se toma el hop más a la derecha
+     * que no sea un proxy confiable.
+     */
+    private String resolveClientIp() {
+        if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs)) {
+            return null;
+        }
+        HttpServletRequest request = attrs.getRequest();
+        String remoteAddr = request.getRemoteAddr();
+        if (!isTrustedProxy(remoteAddr)) {
+            return remoteAddr;
+        }
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            String[] hops = forwardedFor.split(",");
+            for (int i = hops.length - 1; i >= 0; i--) {
+                String hop = hops[i].trim();
+                if (!isIpLiteral(hop)) {
+                    break;
+                }
+                if (!isTrustedProxy(hop)) {
+                    return hop;
+                }
+            }
+        }
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null && isIpLiteral(realIp.trim()) && !isTrustedProxy(realIp.trim())) {
+            return realIp.trim();
+        }
+        return remoteAddr;
+    }
+
+    private static boolean isIpLiteral(String value) {
+        if (value == null || value.isEmpty() || value.length() > 45) {
+            return false;
+        }
+        if (value.indexOf(':') >= 0) {
+            if (!value.matches("[0-9a-fA-F:.]+")) {
+                return false;
+            }
+        } else if (!value.matches("(\\d{1,3})(\\.\\d{1,3}){3}")) {
+            return false;
+        }
+        try {
+            // Literal validado arriba: no dispara resolución DNS.
+            java.net.InetAddress.getByName(value);
+            return true;
+        } catch (java.net.UnknownHostException ex) {
+            return false;
+        }
+    }
+
+    private boolean isTrustedProxy(String address) {
+        if (!isIpLiteral(address)) {
+            return false;
+        }
+        try {
+            byte[] candidate = java.net.InetAddress.getByName(address).getAddress();
+            for (String entry : trustedProxies) {
+                String[] parts = entry.split("/", 2);
+                if (!isIpLiteral(parts[0].trim())) {
+                    continue;
+                }
+                byte[] network = java.net.InetAddress.getByName(parts[0].trim()).getAddress();
+                if (network.length != candidate.length) {
+                    continue;
+                }
+                int prefix = parts.length == 2 ? Integer.parseInt(parts[1].trim()) : network.length * 8;
+                if (prefix >= 0 && prefix <= network.length * 8 && matchesPrefix(candidate, network, prefix)) {
+                    return true;
+                }
+            }
+        } catch (java.net.UnknownHostException | NumberFormatException ex) {
+            return false;
+        }
+        return false;
+    }
+
+    private static boolean matchesPrefix(byte[] candidate, byte[] network, int prefixBits) {
+        int fullBytes = prefixBits / 8;
+        for (int i = 0; i < fullBytes; i++) {
+            if (candidate[i] != network[i]) {
+                return false;
+            }
+        }
+        int remaining = prefixBits % 8;
+        if (remaining == 0) {
+            return true;
+        }
+        int mask = 0xFF << (8 - remaining);
+        return (candidate[fullBytes] & mask) == (network[fullBytes] & mask);
     }
 
     @Override

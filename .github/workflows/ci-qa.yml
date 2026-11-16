@@ -105,7 +105,12 @@ jobs:
                 SERVER_PORT=8500 \
                 SPRING_PROFILES_ACTIVE=qa \
                 TRYON_AMQP_LISTENERS_ENABLED=true \
+                TRYON_AI_PROVIDER=fashn \
+                FASHN_API_KEY="${{ secrets.FASHN_API_KEY }}" \
                 AZURE_STORAGE_ACCOUNT_KEY="${{ secrets.AZURE_STORAGE_ACCOUNT_KEY_QA || secrets.AZURE_STORAGE_ACCOUNT_KEY }}" \
+                AZURE_STORAGE_CONTAINER=biometric-silhouettes-qa \
+                AZURE_READ_SAS_DURATION=PT15M \
+                CORS_ALLOWED_ORIGINS="${{ secrets.CORS_ALLOWED_ORIGINS_QA || 'http://localhost:3000,https://styleradar-qa.azurewebsites.net' }}" \
                 DB_URL="${{ secrets.DB_URL_QA }}" \
                 DB_USER="${{ secrets.DB_USERNAME_QA }}" \
                 DB_PASSWORD="${{ secrets.DB_PASSWORD_QA }}" \
@@ -116,10 +121,12 @@ jobs:
                 REDIS_HOST="${{ secrets.REDIS_HOST }}" \
                 REDIS_PORT="${{ secrets.REDIS_PORT }}" \
                 REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+                REDIS_SSL_ENABLED="${{ secrets.REDIS_SSL_ENABLED_QA || 'false' }}" \
                 RABBITMQ_HOST="${{ secrets.RABBITMQ_HOST_QA || secrets.RABBITMQ_HOST }}" \
-                RABBITMQ_PORT="${{ secrets.RABBITMQ_PORT }}" \
-                RABBITMQ_USER="${{ secrets.RABBITMQ_USER }}" \
-                RABBITMQ_PASSWORD="${{ secrets.RABBITMQ_PASSWORD }}"
+                RABBITMQ_PORT="${{ secrets.RABBITMQ_PORT_QA || secrets.RABBITMQ_PORT }}" \
+                RABBITMQ_USER="${{ secrets.RABBITMQ_USER_QA || secrets.RABBITMQ_USER }}" \
+                RABBITMQ_PASSWORD="${{ secrets.RABBITMQ_PASSWORD_QA || secrets.RABBITMQ_PASSWORD }}" \
+                RABBITMQ_VHOST="${{ secrets.RABBITMQ_VHOST_QA || secrets.RABBITMQ_VHOST || '/' }}"
 
       - uses: azure/webapps-deploy@v3
         id: deploy

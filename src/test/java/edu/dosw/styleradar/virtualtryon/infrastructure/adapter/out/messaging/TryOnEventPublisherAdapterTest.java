@@ -72,7 +72,7 @@ class TryOnEventPublisherAdapterTest {
 
         verify(rabbitTemplate).convertAndSend(
                 eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE),
-                eq("tryon.photo.purged"),
+                eq("styleradar.tryon.photo.purged"),
                 eq(event),
                 any(CorrelationData.class)
         );
@@ -116,7 +116,7 @@ class TryOnEventPublisherAdapterTest {
         ArgumentCaptor<CorrelationData> captor = ArgumentCaptor.forClass(CorrelationData.class);
         verify(rabbitTemplate).convertAndSend(
                 eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE),
-                eq("tryon.job.created"),
+                eq("styleradar.tryon.job.created"),
                 eq(event),
                 captor.capture()
         );
@@ -146,7 +146,7 @@ class TryOnEventPublisherAdapterTest {
 
         confirmingAdapter.publishJobEvent(event);
 
-        verify(rabbitTemplate).convertAndSend(eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE), eq("tryon.job.completed"), eq(event), any(CorrelationData.class));
+        verify(rabbitTemplate).convertAndSend(eq(RabbitConfig.DEFAULT_TRYON_EXCHANGE), eq("styleradar.tryon.job.completed"), eq(event), any(CorrelationData.class));
     }
 
     @Test

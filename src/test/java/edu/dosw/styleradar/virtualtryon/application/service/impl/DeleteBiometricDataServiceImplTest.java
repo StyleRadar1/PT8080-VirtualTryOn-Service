@@ -33,6 +33,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
@@ -341,11 +342,20 @@ class DeleteBiometricDataServiceImplTest {
         ));
 
         eventListenerAdapter.onUserAccountDeleted(new UserAccountDeletedEvent(userId.value(), Instant.now()));
-        eventListenerAdapter.onUserAccountDeleted(null);
-        eventListenerAdapter.onUserAccountDeleted(new UserAccountDeletedEvent(null, Instant.now()));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                AmqpRejectAndDontRequeueException.class,
+                () -> eventListenerAdapter.onUserAccountDeleted(null)
+        );
+        org.junit.jupiter.api.Assertions.assertThrows(
+                AmqpRejectAndDontRequeueException.class,
+                () -> eventListenerAdapter.onUserAccountDeleted(new UserAccountDeletedEvent(null, Instant.now()))
+        );
 
         TryOnEventListenerAdapter listenerWithoutDeleteService = new TryOnEventListenerAdapter(queryTryOnJobsService);
-        listenerWithoutDeleteService.onUserAccountDeleted(new UserAccountDeletedEvent(userId.value(), Instant.now()));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                AmqpRejectAndDontRequeueException.class,
+                () -> listenerWithoutDeleteService.onUserAccountDeleted(new UserAccountDeletedEvent(userId.value(), Instant.now()))
+        );
 
         assertTrue(alreadyPurgedJob.isPhotoPurged());
         verify(outboxPublisherPort, org.mockito.Mockito.atLeastOnce()).saveOutboxEvent(
@@ -353,6 +363,29 @@ class DeleteBiometricDataServiceImplTest {
                 org.mockito.ArgumentMatchers.eq(PhotoPurgedDomainEvent.ROUTING_KEY),
                 any(PhotoPurgedDomainEvent.class)
         );
+    }
+
+    @Test
+    @DisplayName("Fase B (HU SR-RF-27): Deserializa UserAccountDeletedEvent desde aliases en español, IDs numéricos y valores nulos")
+    void shouldDeserializeUserAccountDeletedEventAliases() throws Exception {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+                .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+
+        UUID expectedUuid = UUID.randomUUID();
+        UserAccountDeletedEvent spanishAliasEvent = mapper.readValue("""
+                {"usuarioId":"%s","fechaEliminacion":"2026-11-15T12:00:00Z"}
+                """.formatted(expectedUuid), UserAccountDeletedEvent.class);
+        org.junit.jupiter.api.Assertions.assertEquals(expectedUuid, spanishAliasEvent.userId());
+        org.junit.jupiter.api.Assertions.assertEquals(Instant.parse("2026-11-15T12:00:00Z"), spanishAliasEvent.deletedAt());
+
+        UserAccountDeletedEvent numericIdEvent = mapper.readValue("""
+                {"id": 987654}
+                """, UserAccountDeletedEvent.class);
+        org.junit.jupiter.api.Assertions.assertNotNull(numericIdEvent.userId());
+        org.junit.jupiter.api.Assertions.assertNotNull(numericIdEvent.deletedAt());
+
+        UserAccountDeletedEvent emptyEvent = mapper.readValue("{}", UserAccountDeletedEvent.class);
+        org.junit.jupiter.api.Assertions.assertNull(emptyEvent.userId());
     }
 
     @Test

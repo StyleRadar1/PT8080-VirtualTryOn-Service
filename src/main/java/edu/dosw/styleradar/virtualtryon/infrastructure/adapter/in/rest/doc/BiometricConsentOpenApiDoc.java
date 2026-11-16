@@ -165,8 +165,8 @@ public interface BiometricConsentOpenApiDoc {
     ResponseEntity<BiometricPhotoResponse> uploadPhoto(
             @Parameter(description = "UUID del usuario propietario de la silueta", required = true)
             @RequestParam("userId") UUID userId,
-            @Parameter(description = "Aceptación explícita de tratamiento biométrico (Ley 1581)", required = false)
-            @RequestParam(value = "biometricConsent", defaultValue = "true") boolean biometricConsent,
+            @Parameter(description = "Aceptación explícita de tratamiento biométrico (Ley 1581)", required = true)
+            @RequestParam("biometricConsent") boolean biometricConsent,
             @Parameter(description = "Archivo de imagen frontal de cuerpo completo en formato JPEG o PNG (máx. 5 MB, mín. 300x400 px)", required = true)
             @RequestPart("photo") MultipartFile photo
     );

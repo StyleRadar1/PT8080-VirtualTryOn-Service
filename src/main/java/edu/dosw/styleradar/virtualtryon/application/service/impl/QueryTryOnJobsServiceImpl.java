@@ -160,7 +160,44 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
 
     @Override
     public CatalogGarment syncCatalogGarment(CatalogGarment garment) {
-        return quotaRepositoryPort.saveCatalogGarment(garment);
+        java.util.Objects.requireNonNull(garment, "La prenda de catálogo no puede ser nula");
+        return quotaRepositoryPort.findCatalogGarmentById(garment.getGarmentId())
+                .map(existing -> {
+                    if (existing.getUpdatedAt() != null && garment.getUpdatedAt() != null
+                            && garment.getUpdatedAt().isBefore(existing.getUpdatedAt())) {
+                        log.warn("Descartando sincronización obsoleta para prenda {}: updatedAt entrante {} es anterior a existente {}",
+                                garment.getGarmentId().value(), garment.getUpdatedAt(), existing.getUpdatedAt());
+                        return existing;
+                    }
+                    return quotaRepositoryPort.saveCatalogGarment(garment);
+                })
+                .orElseGet(() -> quotaRepositoryPort.saveCatalogGarment(garment));
+    }
+
+    @Override
+    public Optional<CatalogGarment> updateCatalogGarmentVisibility(
+            edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId garmentId,
+            boolean visible,
+            java.time.Instant updatedAt
+    ) {
+        java.util.Objects.requireNonNull(garmentId, "El identificador de prenda no puede ser nulo");
+        java.time.Instant effectiveUpdatedAt = updatedAt != null ? updatedAt : java.time.Instant.now();
+        return quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                .map(existing -> {
+                    if (existing.getUpdatedAt() != null && effectiveUpdatedAt.isBefore(existing.getUpdatedAt())) {
+                        log.warn("Descartando cambio de visibilidad obsoleto para prenda {}: updatedAt entrante {} es anterior a existente {}",
+                                garmentId.value(), effectiveUpdatedAt, existing.getUpdatedAt());
+                        return existing;
+                    }
+                    return quotaRepositoryPort.saveCatalogGarment(new CatalogGarment(
+                            existing.getGarmentId(),
+                            existing.getName(),
+                            existing.getCategory(),
+                            existing.getImageUrl(),
+                            visible,
+                            effectiveUpdatedAt
+                    ));
+                });
     }
 
     @Override

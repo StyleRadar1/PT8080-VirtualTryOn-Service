@@ -180,7 +180,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             ));
 
             // Persistencia obligatoria del evento en el Outbox en la misma transacción PostgreSQL
-            outboxPublisherPort.saveOutboxEvent(saved.getId(), "tryon.job.created", TryOnJobDomainEvent.fromJob(saved));
+            outboxPublisherPort.saveOutboxEvent(saved.getId(), TryOnJobDomainEvent.ROUTING_KEY_CREATED, TryOnJobDomainEvent.fromJob(saved));
             return saved;
         });
 

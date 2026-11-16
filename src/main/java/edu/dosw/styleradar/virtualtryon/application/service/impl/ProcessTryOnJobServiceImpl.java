@@ -186,7 +186,7 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
                         "Generación de prueba virtual completada exitosamente en " + elapsed + " ms (" + targetJob.getAiProvider() + ")"
                 ));
                 // Persistencia de evento en Transactional Outbox
-                outboxPublisherPort.saveOutboxEvent(targetJob.getId(), "tryon.job.completed", TryOnJobDomainEvent.fromJob(targetJob));
+                outboxPublisherPort.saveOutboxEvent(targetJob.getId(), TryOnJobDomainEvent.ROUTING_KEY_COMPLETED, TryOnJobDomainEvent.fromJob(targetJob));
                 return targetJob;
             });
 
@@ -323,7 +323,7 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
         refundQuotaWithinTransaction(targetJob);
         outboxPublisherPort.saveOutboxEvent(
                 targetJob.getId(),
-                "tryon.job.failed",
+                TryOnJobDomainEvent.ROUTING_KEY_FAILED,
                 TryOnJobDomainEvent.fromJob(targetJob)
         );
         return targetJob;

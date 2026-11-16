@@ -6,7 +6,9 @@ import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Puerto de entrada (Use Case) para la consulta de cuotas mensuales de prueba virtual,
@@ -27,5 +29,13 @@ public interface GetUserQuotaUseCase {
     }
 
     CatalogGarment syncCatalogGarment(CatalogGarment garment);
+
+    default Optional<CatalogGarment> updateCatalogGarmentVisibility(
+            GarmentId garmentId,
+            boolean visible,
+            Instant updatedAt
+    ) {
+        return Optional.empty();
+    }
 }
 

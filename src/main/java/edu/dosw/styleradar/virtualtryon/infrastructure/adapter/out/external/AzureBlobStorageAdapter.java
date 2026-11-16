@@ -124,8 +124,9 @@ public class AzureBlobStorageAdapter implements BlobStoragePort {
         } catch (IllegalArgumentException ex) {
             throw new IllegalStateException("AZURE_STORAGE_ACCOUNT_KEY debe tener un formato Base64 válido", ex);
         }
-        if (readSasDuration == null || readSasDuration.isNegative() || readSasDuration.isZero()) {
-            throw new IllegalStateException("La duración del token SAS de lectura (readSasDuration) debe ser positiva");
+        if (readSasDuration == null || readSasDuration.isNegative() || readSasDuration.isZero()
+                || readSasDuration.compareTo(Duration.ofMinutes(15)) > 0) {
+            throw new IllegalStateException("La duración del token SAS de lectura (readSasDuration) debe ser positiva y no exceder 15 minutos");
         }
     }
 

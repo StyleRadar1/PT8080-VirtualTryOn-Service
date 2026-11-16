@@ -97,15 +97,71 @@ public class JwtTokenProvider {
             throw new JwtException("Fechas de vigencia del token JWT inválidas");
         }
 
+        UUID userId = resolveUserId(claims);
+        java.util.List<String> roles = extractRoles(claims);
+        if (roles.isEmpty()) {
+            throw new JwtException("El token JWT no contiene roles válidos");
+        }
+        return new AuthenticatedUser(userId, roles.get(0), roles);
+    }
+
+    private static UUID resolveUserId(Claims claims) {
         String subject = claims.getSubject();
+        UUID subjectUuid = parseUuidOrNull(subject);
+        if (subjectUuid != null) {
+            return subjectUuid;
+        }
+        Object rawUserIdClaim = claims.get("userId");
+        if (rawUserIdClaim != null) {
+            UUID claimUuid = parseUuidOrNull(rawUserIdClaim.toString());
+            if (claimUuid != null) {
+                return claimUuid;
+            }
+        }
         if (subject == null || subject.isBlank()) {
             throw new JwtException("Subject del token JWT ausente");
         }
+        return parseUserId(subject.trim());
+    }
 
-        UUID userId = parseUserId(subject.trim());
-        String roleClaim = claims.get("role", String.class);
-        String resolvedRole = (roleClaim == null || roleClaim.isBlank()) ? "COMPRADOR" : roleClaim;
-        return new AuthenticatedUser(userId, resolvedRole);
+    private static UUID parseUuidOrNull(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw.trim());
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private static java.util.List<String> extractRoles(Claims claims) {
+        java.util.Set<String> collected = new java.util.LinkedHashSet<>();
+        Object rolesObj = claims.get("roles");
+        if (rolesObj instanceof java.util.Collection<?> roleCollection) {
+            for (Object item : roleCollection) {
+                addNormalizedRole(collected, item == null ? null : item.toString());
+            }
+        } else if (rolesObj instanceof String rawRolesCsv) {
+            for (String token : rawRolesCsv.split(",")) {
+                addNormalizedRole(collected, token);
+            }
+        }
+        addNormalizedRole(collected, claims.get("role", String.class));
+        return java.util.List.copyOf(collected);
+    }
+
+    private static void addNormalizedRole(java.util.Set<String> target, String rawRole) {
+        if (rawRole == null || rawRole.isBlank()) {
+            return;
+        }
+        String normalized = rawRole.trim().toUpperCase();
+        if (normalized.startsWith("ROLE_")) {
+            normalized = normalized.substring(5);
+        }
+        if (!normalized.isBlank()) {
+            target.add(normalized);
+        }
     }
 
     private static UUID parseUserId(String rawSubject) {
