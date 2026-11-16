@@ -14,6 +14,7 @@ import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnEventPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -89,7 +91,38 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
             if (job.isPhotoPurged() && job.getResultImageUrl() == null) {
                 throw new JobNotFoundException(jobOrPhotoId);
             }
+
+            String targetPhotoUrl = job.getPhotoUrl();
+            Optional<BiometricPhoto> profilePhotoOpt = biometricDataRepositoryPort.findPhotoByUserId(job.getUserId());
+            String profileCanonical = profilePhotoOpt
+                    .map(p -> p.getBlobPath() != null ? p.getBlobPath() : p.getPhotoUrl().value())
+                    .orElse(null);
+
+            boolean isJobPhotoMatchingProfile = sharesSamePhoto(targetPhotoUrl, profileCanonical);
+
+            // 1. Purgar el trabajo solicitado directamente
             purgeSingleJobAndUserPhoto(job);
+
+            // 2. SR-RF-27: Buscar y purgar todos los demás trabajos del usuario que compartan la misma fotografía biométrica,
+            // eliminando sus renders físicos en Azure Blob Storage y revocando cualquier resultado asociado accesible.
+            List<TryOnJob> userJobs = jobRepositoryPort.findJobsByUserId(job.getUserId());
+            for (TryOnJob otherJob : userJobs) {
+                if (otherJob.getId().equals(job.getId())) {
+                    continue;
+                }
+                if (otherJob.isPhotoPurged() && otherJob.getResultImageUrl() == null) {
+                    continue;
+                }
+
+                boolean sharesPhoto = sharesSamePhoto(targetPhotoUrl, otherJob.getPhotoUrl())
+                        || (isJobPhotoMatchingProfile && sharesSamePhoto(profileCanonical, otherJob.getPhotoUrl()));
+
+                if (sharesPhoto) {
+                    purgeSingleJobAndUserPhoto(otherJob);
+                    log.info("Trabajo asociado/compartido {} del usuario {} purgado por eliminación de fotografía común (SR-RF-27)",
+                            otherJob.getId(), otherJob.getUserId().value());
+                }
+            }
             return;
         }
 
@@ -104,20 +137,26 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
             blobStoragePort.deleteBlob(photo.getPhotoUrl());
             biometricDataRepositoryPort.deletePhotoByUserId(photo.getUserId());
 
-            // Limpiar y purgar todos los trabajos del usuario para no dejar referencias biométricas pendientes
+            String photoCanonical = photo.getBlobPath() != null ? photo.getBlobPath() : photo.getPhotoUrl().value();
+
+            // Limpiar y purgar ÚNICAMENTE los trabajos del usuario que utilicen esta fotografía específica
             List<TryOnJob> userJobs = jobRepositoryPort.findJobsByUserId(photo.getUserId());
+            int purgedJobsCount = 0;
             for (TryOnJob userJob : userJobs) {
-                if (!userJob.isPhotoPurged()) {
-                    purgeSingleJobAndUserPhoto(userJob);
+                if (sharesSamePhoto(photoCanonical, userJob.getPhotoUrl())) {
+                    if (!userJob.isPhotoPurged() || userJob.getResultImageUrl() != null) {
+                        purgeSingleJobAndUserPhoto(userJob);
+                        purgedJobsCount++;
+                    }
                 }
             }
 
-            if (userJobs.isEmpty()) {
+            if (purgedJobsCount == 0) {
                 publishPurgeEvent(null, photo.getUserId().value(), photo.getPhotoId());
             }
 
-            log.info("Fotografía biométrica {} del usuario {} purgada físicamente y referencias en trabajos limpiadas (Ley 1581)",
-                    photo.getPhotoId(), photo.getUserId().value());
+            log.info("Fotografía biométrica {} del usuario {} purgada físicamente y {} trabajos asociados limpiados (Ley 1581)",
+                    photo.getPhotoId(), photo.getUserId().value(), purgedJobsCount);
             return;
         }
 
@@ -133,7 +172,7 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
 
         List<TryOnJob> userJobs = jobRepositoryPort.findJobsByUserId(userId);
         for (TryOnJob job : userJobs) {
-            if (!job.isPhotoPurged()) {
+            if (!job.isPhotoPurged() || job.getResultImageUrl() != null) {
                 purgeSingleJobAndUserPhoto(job);
             }
         }
@@ -159,10 +198,15 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
             blobStoragePort.deleteBlob(job.getResultImageUrl());
         }
 
-        // 3. Eliminar fotografía de perfil biométrico si existe
+        // 3. Eliminar fotografía de perfil biométrico SOLO si la foto del trabajo coincide con la foto activa de perfil
         biometricDataRepositoryPort.findPhotoByUserId(job.getUserId()).ifPresent(photo -> {
-            blobStoragePort.deleteBlob(photo.getPhotoUrl());
-            biometricDataRepositoryPort.deletePhotoByUserId(job.getUserId());
+            String profileCanonical = photo.getBlobPath() != null ? photo.getBlobPath() : photo.getPhotoUrl().value();
+            if (sharesSamePhoto(job.getPhotoUrl(), profileCanonical)) {
+                blobStoragePort.deleteBlob(photo.getPhotoUrl());
+                biometricDataRepositoryPort.deletePhotoByUserId(job.getUserId());
+                log.info("Fotografía activa de perfil del usuario {} eliminada porque coincidía con la fotografía del trabajo purgado {}",
+                        job.getUserId().value(), job.getId());
+            }
         });
 
         JobStatus previousStatus = job.getStatus();
@@ -198,5 +242,58 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
                 log.warn("Fallo al publicar evento de purga directo: {}", ex.getMessage());
             }
         }
+    }
+
+    static boolean sharesSamePhoto(String photoUrl1, String photoUrl2) {
+        if (photoUrl1 == null || photoUrl2 == null) {
+            return false;
+        }
+        String p1 = photoUrl1.trim();
+        String p2 = photoUrl2.trim();
+        if (p1.isEmpty() || p2.isEmpty() || p1.startsWith("PURGED") || p2.startsWith("PURGED")) {
+            return false;
+        }
+        if (p1.equalsIgnoreCase(p2)) {
+            return true;
+        }
+        String blob1 = extractBlobNameOrPath(p1);
+        String blob2 = extractBlobNameOrPath(p2);
+        if (blob1.isEmpty() || blob2.isEmpty()) {
+            return false;
+        }
+        return blob1.equalsIgnoreCase(blob2) || blob1.endsWith("/" + blob2) || blob2.endsWith("/" + blob1);
+    }
+
+    static String extractBlobNameOrPath(String urlOrPath) {
+        if (urlOrPath == null) {
+            return "";
+        }
+        String clean = urlOrPath.trim();
+        if (clean.isEmpty()) {
+            return "";
+        }
+        int queryIdx = clean.indexOf('?');
+        if (queryIdx >= 0) {
+            clean = clean.substring(0, queryIdx);
+        }
+        if (clean.contains("://")) {
+            try {
+                URI uri = URI.create(clean).normalize();
+                String path = uri.getPath();
+                if (path != null) {
+                    while (path.startsWith("/")) {
+                        path = path.substring(1);
+                    }
+                    int firstSlash = path.indexOf('/');
+                    clean = (firstSlash >= 0) ? path.substring(firstSlash + 1) : path;
+                }
+            } catch (Exception ignored) {
+                // conservar valor limpio
+            }
+        }
+        while (clean.startsWith("/")) {
+            clean = clean.substring(1);
+        }
+        return clean;
     }
 }

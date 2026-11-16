@@ -161,6 +161,72 @@ class BiometricConsentControllerTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-23 (POST /api/v1/try-on/consents): Cuando el cuerpo omite userId, se infiere del JWT sub y responde 201 Created")
+    void shouldGrantBiometricConsentInferringUserIdFromJwt() throws Exception {
+        when(biometricConsentService.grantConsent(eq(UserId.of(USER_UUID)), any(), anyBoolean(), any(), any()))
+                .thenReturn(sampleConsent(null));
+
+        BiometricConsentRequest requestWithoutUserId = new BiometricConsentRequest(
+                null,
+                "v1.0-LEY1581-2026",
+                true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"),
+                null
+        );
+
+        mockMvc.perform(post("/api/v1/try-on/consents")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(requestWithoutUserId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.userId").value(USER_UUID.toString()));
+    }
+
+    @Test
+    @DisplayName("SR-RF-23 / Seguridad: Usuario con rol ADMIN_TIENDA NO tiene permisos administrativos sobre datos de otros usuarios (403 en consulta, modificación y revocación)")
+    void shouldDenyAdminTiendaFromAccessingOrModifyingOtherUserData() throws Exception {
+        String adminTiendaToken = bearerToken(USER_UUID, "ADMIN_TIENDA");
+
+        // 1. No puede consultar consentimiento de otro usuario (403 Forbidden)
+        mockMvc.perform(get("/api/v1/try-on/consents/" + OTHER_USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken))
+                .andExpect(status().isForbidden());
+
+        // 2. No puede consultar fotografía biométrica de otro usuario (403 Forbidden)
+        mockMvc.perform(get("/api/v1/try-on/photos/" + OTHER_USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken))
+                .andExpect(status().isForbidden());
+
+        // 3. No puede registrar/modificar consentimiento a nombre de otro usuario (403 Forbidden)
+        BiometricConsentRequest otherUserRequest = new BiometricConsentRequest(
+                OTHER_USER_UUID,
+                "v1.0-LEY1581-2026",
+                true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"),
+                null
+        );
+        mockMvc.perform(post("/api/v1/try-on/consents")
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(otherUserRequest)))
+                .andExpect(status().isForbidden());
+
+        // 4. No puede revocar consentimiento de otro usuario (403 Forbidden)
+        mockMvc.perform(delete("/api/v1/try-on/consents/" + OTHER_USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken))
+                .andExpect(status().isForbidden());
+
+        // 5. No puede cargar fotografía para otro usuario (403 Forbidden)
+        MockMultipartFile dummyPhoto = new MockMultipartFile("photo", "sil.png", "image/png", new byte[]{1, 2, 3});
+        mockMvc.perform(multipart("/api/v1/try-on/photos")
+                        .file(dummyPhoto)
+                        .param("userId", OTHER_USER_UUID.toString())
+                        .param("biometricConsent", "true")
+                        .header(HttpHeaders.AUTHORIZATION, adminTiendaToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("HU SR-RF-23 (GET y DELETE /api/v1/try-on/consents/{userId}): Dado un usuario autenticado propietario o ADMIN, Cuando consulta o revoca su consentimiento, Entonces responde 200 OK")
     void shouldGetAndRevokeBiometricConsent() throws Exception {
         when(biometricConsentService.getConsentByUserId(eq(UserId.of(USER_UUID))))
@@ -243,13 +309,22 @@ class BiometricConsentControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("MISSING_REQUEST_PART"));
 
-        // Sin parámetro obligatorio biometricConsent -> 400 Bad Request (opción estricta Fase B)
+        // Parámetro biometricConsent opcional con valor por defecto true (SR-RF-23 homologación de contrato)
         mockMvc.perform(multipart("/api/v1/try-on/photos")
                         .file(file)
                         .param("userId", USER_UUID.toString())
+                        .header("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errorCode").value("MISSING_REQUEST_PART"));
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.width").value(400));
+
+        // Parámetro userId opcional deducido automáticamente de la identidad JWT del usuario autenticado
+        mockMvc.perform(multipart("/api/v1/try-on/photos")
+                        .file(file)
+                        .header("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.width").value(400));
     }
 
     @Test
@@ -414,6 +489,32 @@ class BiometricConsentControllerTest {
         AuthenticatedUser csvUser = jwtTokenProvider.validateAndExtractUser(csvRolesJwt);
         assertThat(csvUser.roles()).containsExactly("COMPRADOR", "ADMIN_STYLERADAR");
 
+        // SR-RF-23: Token con claim user_id snake_case y authorities (formato OAuth2 / Spring Security)
+        String snakeUserIdJwt = Jwts.builder()
+                .subject("auth0|usuario-externo")
+                .claim("user_id", USER_UUID.toString())
+                .claim("authorities", List.of("ROLE_COMPRADOR", "ROLE_USER"))
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256)
+                .compact();
+        AuthenticatedUser snakeUser = jwtTokenProvider.validateAndExtractUser(snakeUserIdJwt);
+        assertThat(snakeUser.userId()).isEqualTo(USER_UUID);
+        assertThat(snakeUser.roles()).contains("COMPRADOR", "USER");
+
+        // SR-RF-23: Token con claim id y scope separado por espacios
+        String scopeJwt = Jwts.builder()
+                .subject("usuario-con-scope")
+                .claim("id", USER_UUID.toString())
+                .claim("scope", "ROLE_COMPRADOR ADMIN")
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256)
+                .compact();
+        AuthenticatedUser scopeUser = jwtTokenProvider.validateAndExtractUser(scopeJwt);
+        assertThat(scopeUser.userId()).isEqualTo(USER_UUID);
+        assertThat(scopeUser.roles()).contains("COMPRADOR", "ADMIN");
+
         // Token sin roles o con roles vacíos lanza JwtException y HTTP responde 401
         String noRoleJwt = Jwts.builder()
                 .subject(USER_UUID.toString())
@@ -520,6 +621,80 @@ class BiometricConsentControllerTest {
                 .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
                 .signWith(signingKey, Jwts.SIG.HS256).compact();
         assertThat(jwtTokenProvider.validateAndExtractUser(numericSubjectJwt).userId()).isNotNull();
+
+        // Validaciones avanzadas de claims JWT: authorities como CSV, scope como colección/string, claims user_id/id
+        UUID altUuid = UUID.randomUUID();
+        String authoritiesCsvJwt = Jwts.builder().subject(USER_UUID.toString())
+                .claim("authorities", "ROLE_COMPRADOR,ROLE_ADMIN_STYLERADAR")
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        assertThat(jwtTokenProvider.validateAndExtractUser(authoritiesCsvJwt).roles())
+                .contains("COMPRADOR", "ADMIN_STYLERADAR");
+
+        String scopeCollectionJwt = Jwts.builder().subject("john_doe")
+                .claim("user_id", "not-a-uuid")
+                .claim("id", altUuid.toString())
+                .claim("scope", List.of("ROLE_COMPRADOR", "ROLE_USER"))
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        AuthenticatedUser scopeCollUser = jwtTokenProvider.validateAndExtractUser(scopeCollectionJwt);
+        assertThat(scopeCollUser.userId()).isEqualTo(altUuid);
+        assertThat(scopeCollUser.roles()).contains("COMPRADOR", "USER");
+
+        String scopeStringJwt = Jwts.builder().subject(USER_UUID.toString())
+                .claim("scope", "ROLE_COMPRADOR ROLE_VENTAS")
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        assertThat(jwtTokenProvider.validateAndExtractUser(scopeStringJwt).roles()).contains("COMPRADOR", "VENTAS");
+
+        // Cobertura completa de resolveAndVerifyCallerUserId con UserDetails y roles
+        when(biometricConsentService.getConsentByUserId(eq(UserId.of(USER_UUID)))).thenReturn(sampleConsent(null));
+        when(biometricConsentService.getConsentByUserId(eq(UserId.of(OTHER_USER_UUID)))).thenReturn(sampleConsent(null));
+
+        // 1. targetUserId == null -> infiere ID del usuario autenticado
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(
+                        new AuthenticatedUser(USER_UUID, "COMPRADOR"), null,
+                        List.of(new SimpleGrantedAuthority("ROLE_COMPRADOR"))
+                )
+        );
+        assertThat(directCtrl.getConsent(null).getStatusCode().value()).isEqualTo(200);
+
+        // 2. UserDetails como principal para usuario comprador consultando su propio consentimiento
+        org.springframework.security.core.userdetails.UserDetails buyerDetails =
+                User.withUsername(USER_UUID.toString()).password("pwd").roles("COMPRADOR").build();
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(buyerDetails, null, buyerDetails.getAuthorities())
+        );
+        assertThat(directCtrl.getConsent(USER_UUID).getStatusCode().value()).isEqualTo(200);
+
+        // 3. UserDetails como principal no-admin consultando consentimiento ajeno -> 403
+        assertThatThrownBy(() -> directCtrl.getConsent(OTHER_USER_UUID)).isInstanceOf(AccessDeniedException.class);
+
+        // 4. UserDetails como principal ADMIN consultando consentimiento ajeno -> 200
+        org.springframework.security.core.userdetails.UserDetails adminDetails =
+                User.withUsername(USER_UUID.toString()).password("pwd").roles("ADMIN_STYLERADAR").build();
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(adminDetails, null, adminDetails.getAuthorities())
+        );
+        assertThat(directCtrl.getConsent(OTHER_USER_UUID).getStatusCode().value()).isEqualTo(200);
+
+        // 5. UserDetails con nombre de usuario no UUID -> AccessDeniedException
+        org.springframework.security.core.userdetails.UserDetails invalidIdDetails =
+                User.withUsername("not-a-valid-uuid").password("pwd").roles("ADMIN_STYLERADAR").build();
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(invalidIdDetails, null, invalidIdDetails.getAuthorities())
+        );
+        assertThatThrownBy(() -> directCtrl.getConsent(USER_UUID)).isInstanceOf(AccessDeniedException.class);
+
+        // 6. Usuario sin rol permitido
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(
+                        new AuthenticatedUser(USER_UUID, "GUEST"), null,
+                        List.of(new SimpleGrantedAuthority("ROLE_GUEST"))
+                )
+        );
+        assertThatThrownBy(() -> directCtrl.getConsent(USER_UUID)).isInstanceOf(AccessDeniedException.class);
 
         String badSubjectJwt = Jwts.builder().subject("not-a-uuid-abc").claim("role", "COMPRADOR")
                 .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
