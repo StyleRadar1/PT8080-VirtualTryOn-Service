@@ -19,6 +19,7 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.Secu
 import edu.dosw.styleradar.virtualtryon.infrastructure.config.SecurityConfig;
 import edu.dosw.styleradar.virtualtryon.infrastructure.exception.GlobalExceptionHandler;
 import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,11 +40,14 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Base64;
+import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 
@@ -150,7 +154,7 @@ class BiometricConsentControllerTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
                         .string("X-Frame-Options", "DENY"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
-                        .string("Content-Security-Policy", "default-src 'self'"))
+                        .string("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'"))
                 .andExpect(jsonPath("$.userId").value(USER_UUID.toString()))
                 .andExpect(jsonPath("$.validForInference").value(true));
     }
@@ -210,7 +214,7 @@ class BiometricConsentControllerTest {
     @Test
     @DisplayName("HU SR-RF-23 (POST /api/v1/try-on/photos): Dado un archivo multipart vertical válido y JWT del propietario, Cuando se carga, Entonces responde 201 Created")
     void shouldUploadBiometricPhoto() throws Exception {
-        when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(true), any(), any()))
+        when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(true), any(), any(), eq("203.0.113.10")))
                 .thenReturn(samplePhoto());
 
         MockMultipartFile file = new MockMultipartFile(
@@ -224,6 +228,7 @@ class BiometricConsentControllerTest {
                         .file(file)
                         .param("userId", USER_UUID.toString())
                         .param("biometricConsent", "true")
+                        .header("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.width").value(400))
@@ -231,6 +236,15 @@ class BiometricConsentControllerTest {
                 .andExpect(jsonPath("$.contentType").value("image/png"));
 
         mockMvc.perform(multipart("/api/v1/try-on/photos")
+                        .param("userId", USER_UUID.toString())
+                        .param("biometricConsent", "true")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("MISSING_REQUEST_PART"));
+
+        // Sin parámetro obligatorio biometricConsent -> 400 Bad Request (opción estricta Fase B)
+        mockMvc.perform(multipart("/api/v1/try-on/photos")
+                        .file(file)
                         .param("userId", USER_UUID.toString())
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
                 .andExpect(status().isBadRequest())
@@ -247,7 +261,7 @@ class BiometricConsentControllerTest {
                 new byte[]{1, 2}
         );
 
-        when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(false), any(), any()))
+        when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(false), any(), any(), any()))
                 .thenThrow(new ConsentRequiredException(USER_UUID));
 
         mockMvc.perform(multipart("/api/v1/try-on/photos")
@@ -258,7 +272,7 @@ class BiometricConsentControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("CONSENT_REQUIRED"));
 
-        when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(true), any(), any()))
+        when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(true), any(), any(), any()))
                 .thenThrow(new InvalidPhotoException("La fotografía debe medir al menos 300x400 píxeles"));
 
         mockMvc.perform(multipart("/api/v1/try-on/photos")
@@ -370,5 +384,145 @@ class BiometricConsentControllerTest {
         String expiredToken = pastProvider.generateToken(USER_UUID, "COMPRADOR");
         assertThatThrownBy(() -> jwtTokenProvider.validateAndExtractUser(expiredToken))
                 .isInstanceOf(JwtException.class);
+
+        // Token multi-rol ("roles": ["USER", "ADMIN"]) con sub numérico + claim userId UUID
+        byte[] decodedSecret = Base64.getDecoder().decode(validSecret);
+        SecretKeySpec signingKey = new SecretKeySpec(decodedSecret, "HmacSHA256");
+        Instant now = Instant.now();
+        String multiClaimJwt = Jwts.builder()
+                .subject("98765")
+                .claim("userId", USER_UUID.toString())
+                .claim("roles", List.of("ROLE_USER", "ADMIN"))
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256)
+                .compact();
+        AuthenticatedUser multiClaimUser = jwtTokenProvider.validateAndExtractUser(multiClaimJwt);
+        assertThat(multiClaimUser.userId()).isEqualTo(USER_UUID);
+        assertThat(multiClaimUser.roles()).containsExactly("USER", "ADMIN");
+        assertThat(multiClaimUser.canAccessUser(OTHER_USER_UUID)).isTrue();
+
+        // Token CSV en "roles" sin role individual también es soportado
+        String csvRolesJwt = Jwts.builder()
+                .subject(USER_UUID.toString())
+                .claim("roles", "comprador, role_admin_styleradar")
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256)
+                .compact();
+        AuthenticatedUser csvUser = jwtTokenProvider.validateAndExtractUser(csvRolesJwt);
+        assertThat(csvUser.roles()).containsExactly("COMPRADOR", "ADMIN_STYLERADAR");
+
+        // Token sin roles o con roles vacíos lanza JwtException y HTTP responde 401
+        String noRoleJwt = Jwts.builder()
+                .subject(USER_UUID.toString())
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256)
+                .compact();
+        assertThatThrownBy(() -> jwtTokenProvider.validateAndExtractUser(noRoleJwt))
+                .isInstanceOf(JwtException.class);
+        mockMvc.perform(get("/api/v1/try-on/consents/{userId}", USER_UUID)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + noRoleJwt))
+                .andExpect(status().isUnauthorized());
+
+        // /actuator/metrics restringido a ADMIN/ADMIN_STYLERADAR (401 sin token, 403 para COMPRADOR)
+        mockMvc.perform(get("/actuator/metrics"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/actuator/metrics")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/actuator/metrics")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + multiClaimJwt))
+                .andExpect(status().is(org.hamcrest.Matchers.not(org.hamcrest.Matchers.anyOf(
+                        org.hamcrest.Matchers.is(401),
+                        org.hamcrest.Matchers.is(403)
+                ))));
+
+        // Fase B extra: grantConsent con ipAddress en blanco resuelve X-Real-IP, uploadPhoto resuelve X-Real-IP y getRemoteAddr
+        when(biometricConsentService.grantConsent(any(), any(), anyBoolean(), any(), eq("198.51.100.77")))
+                .thenReturn(sampleConsent(null));
+        BiometricConsentRequest blankIpRequest = new BiometricConsentRequest(
+                USER_UUID, "v1.0-LEY1581-2026", true, List.of("VIRTUAL_TRY_ON_INFERENCE"), "   "
+        );
+        mockMvc.perform(post("/api/v1/try-on/consents")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR"))
+                        .header("X-Real-IP", "198.51.100.77")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(blankIpRequest)))
+                .andExpect(status().isCreated());
+
+        when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(true), any(), any(), eq("198.51.100.88")))
+                .thenReturn(samplePhoto());
+        MockMultipartFile validPngStub = new MockMultipartFile("photo", "p.png", MediaType.IMAGE_PNG_VALUE, new byte[]{1, 2});
+        mockMvc.perform(multipart("/api/v1/try-on/photos")
+                        .file(validPngStub)
+                        .param("userId", USER_UUID.toString())
+                        .param("biometricConsent", "true")
+                        .header("X-Forwarded-For", "   ")
+                        .header("X-Real-IP", "198.51.100.88")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
+                .andExpect(status().isCreated());
+
+        when(biometricConsentService.uploadPhoto(eq(UserId.of(USER_UUID)), eq(true), any(), any(), eq("127.0.0.1")))
+                .thenReturn(samplePhoto());
+        mockMvc.perform(multipart("/api/v1/try-on/photos")
+                        .file(validPngStub)
+                        .param("userId", USER_UUID.toString())
+                        .param("biometricConsent", "true")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(USER_UUID, "COMPRADOR")))
+                .andExpect(status().isCreated());
+
+        // Invocación directa uploadPhoto con photo=null y RequestContextHolder vacío
+        org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+        BiometricConsentController directCtrl = new BiometricConsentController(biometricConsentService, new VirtualTryOnDtoMapper());
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(
+                        new AuthenticatedUser(USER_UUID, "ADMIN_STYLERADAR"),
+                        null,
+                        List.of(new SimpleGrantedAuthority("ROLE_ADMIN_STYLERADAR"))
+                )
+        );
+        when(biometricConsentService.uploadPhoto(eq(UserId.of(OTHER_USER_UUID)), eq(true), eq(null), eq(null), eq(null)))
+                .thenReturn(samplePhoto());
+        assertThat(directCtrl.uploadPhoto(OTHER_USER_UUID, true, null).getStatusCode().value()).isEqualTo(201);
+
+        // Cobertura de AuthenticatedUser y JwtTokenProvider (branches de validación JWT y roles)
+        AuthenticatedUser nullPrimaryRole = new AuthenticatedUser(USER_UUID, null, List.of("ADMIN_STYLERADAR"));
+        assertThat(nullPrimaryRole.role()).isEqualTo("ADMIN_STYLERADAR");
+        assertThat(nullPrimaryRole.canAccessUser(OTHER_USER_UUID)).isTrue();
+        assertThat(new AuthenticatedUser(USER_UUID, "COMPRADOR", null).roles()).containsExactly("COMPRADOR");
+        assertThatThrownBy(() -> new AuthenticatedUser(USER_UUID, null, List.of("  ")))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        SecretKeySpec hs384Key = new SecretKeySpec(decodedSecret, "HmacSHA384");
+        String wrongAlgJwt = Jwts.builder().subject(USER_UUID.toString()).claim("role", "COMPRADOR")
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(60)))
+                .signWith(hs384Key, Jwts.SIG.HS384).compact();
+        assertThatThrownBy(() -> jwtTokenProvider.validateAndExtractUser(wrongAlgJwt)).isInstanceOf(JwtException.class);
+
+        String futureIatJwt = Jwts.builder().subject(USER_UUID.toString()).claim("role", "COMPRADOR")
+                .issuedAt(Date.from(now.plusSeconds(300))).expiration(Date.from(now.plusSeconds(600)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        assertThatThrownBy(() -> jwtTokenProvider.validateAndExtractUser(futureIatJwt)).isInstanceOf(JwtException.class);
+
+        String missingIatJwt = Jwts.builder().subject(USER_UUID.toString()).claim("role", "COMPRADOR")
+                .expiration(Date.from(now.plusSeconds(300))).signWith(signingKey, Jwts.SIG.HS256).compact();
+        assertThatThrownBy(() -> jwtTokenProvider.validateAndExtractUser(missingIatJwt)).isInstanceOf(JwtException.class);
+
+        String missingSubjectJwt = Jwts.builder().claim("userId", "not-a-uuid").claim("role", "COMPRADOR")
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        assertThatThrownBy(() -> jwtTokenProvider.validateAndExtractUser(missingSubjectJwt)).isInstanceOf(JwtException.class);
+
+        String numericSubjectJwt = Jwts.builder().subject("12345").claim("role", "COMPRADOR")
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        assertThat(jwtTokenProvider.validateAndExtractUser(numericSubjectJwt).userId()).isNotNull();
+
+        String badSubjectJwt = Jwts.builder().subject("not-a-uuid-abc").claim("role", "COMPRADOR")
+                .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(300)))
+                .signWith(signingKey, Jwts.SIG.HS256).compact();
+        assertThatThrownBy(() -> jwtTokenProvider.validateAndExtractUser(badSubjectJwt)).isInstanceOf(JwtException.class);
     }
 }

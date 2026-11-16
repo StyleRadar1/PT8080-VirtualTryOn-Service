@@ -172,7 +172,52 @@ public class PhotoValidationChainTest {
 
         assertThatThrownBy(() -> validationChain.validate(context))
                 .isInstanceOf(InvalidPhotoException.class)
+                .hasMessageContaining("magic bytes");
+    }
+
+    @Test
+    @DisplayName("Fase B (SR-RF-23 - Magic Bytes y MIME Spoofing): Valida cabecera binaria real de PNG/JPEG, rechaza spoofing/bytes corruptos y acepta JPEG válido")
+    void shouldEnforceMagicBytesMimeConsistencyAndAllowValidJpeg() throws Exception {
+        // 1. Magic bytes PNG válidos seguidos de carga corrupta -> fallo de decodificación ImageIO
+        byte[] validPngHeaderCorruptBody = new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2};
+        assertThatThrownBy(() -> validationChain.validate(
+                new TryOnValidationContext(USER_ID, true, "image/png", validPngHeaderCorruptBody)
+        ))
+                .isInstanceOf(InvalidPhotoException.class)
                 .hasMessageContaining("imagen válida");
+
+        // 2. Arreglo más corto que cabecera JPEG -> rechazado por magic bytes
+        byte[] shortJpeg = new byte[]{(byte) 0xFF, (byte) 0xD8};
+        assertThatThrownBy(() -> validationChain.validate(
+                new TryOnValidationContext(USER_ID, true, "image/jpeg", shortJpeg)
+        ))
+                .isInstanceOf(InvalidPhotoException.class)
+                .hasMessageContaining("magic bytes");
+
+        // 3. MIME spoofing: PNG real declarado como image/jpeg y JPEG real declarado como image/png
+        byte[] validPng = createFullBodyFrontalPngBytes(400, 600);
+        assertThatThrownBy(() -> validationChain.validate(
+                new TryOnValidationContext(USER_ID, true, "image/jpeg", validPng)
+        ))
+                .isInstanceOf(InvalidPhotoException.class)
+                .hasMessageContaining("magic bytes");
+
+        BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(validPng));
+        ByteArrayOutputStream jpgOut = new ByteArrayOutputStream();
+        ImageIO.write(img, "jpg", jpgOut);
+        byte[] validJpeg = jpgOut.toByteArray();
+
+        assertThatThrownBy(() -> validationChain.validate(
+                new TryOnValidationContext(USER_ID, true, "image/png", validJpeg)
+        ))
+                .isInstanceOf(InvalidPhotoException.class)
+                .hasMessageContaining("magic bytes");
+
+        // 4. JPEG válido con Content-Type image/jpeg y espacios/mayúsculas pasa la cadena
+        TryOnValidationContext jpegCtx = new TryOnValidationContext(USER_ID, true, " IMAGE/JPEG ", validJpeg);
+        assertThatCode(() -> validationChain.validate(jpegCtx)).doesNotThrowAnyException();
+        assertThat(jpegCtx.getImageWidth()).isEqualTo(400);
+        assertThat(jpegCtx.getImageHeight()).isEqualTo(600);
     }
 
     @Test

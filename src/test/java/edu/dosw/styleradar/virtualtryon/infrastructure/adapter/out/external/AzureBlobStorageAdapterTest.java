@@ -42,7 +42,7 @@ class AzureBlobStorageAdapterTest {
                 STORAGE_BASE_URL,
                 CONTAINER,
                 VALID_KEY,
-                Duration.ofMinutes(30),
+                Duration.ofMinutes(15),
                 "2024-11-04"
         );
     }
@@ -77,10 +77,14 @@ class AzureBlobStorageAdapterTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("formato Base64 válido");
 
-        // Non-positive duration
+        // Non-positive duration or exceeding 15 minutes
         assertThatThrownBy(() -> new AzureBlobStorageAdapter(restClientBuilder, STORAGE_BASE_URL, CONTAINER, VALID_KEY, Duration.ZERO, "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("debe ser positiva");
+
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(restClientBuilder, STORAGE_BASE_URL, CONTAINER, VALID_KEY, Duration.ofMinutes(16), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no exceder 15 minutos");
     }
 
     @Test

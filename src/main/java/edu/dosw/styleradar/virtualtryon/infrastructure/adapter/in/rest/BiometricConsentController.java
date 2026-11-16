@@ -32,6 +32,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
 import java.io.IOException;
@@ -75,12 +78,15 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<BiometricConsentResponse> grantConsent(@Valid @RequestBody BiometricConsentRequest request) {
         verifyCallerIdentityAndPermissions(request.userId());
+        String effectiveIp = (request.ipAddress() == null || request.ipAddress().isBlank())
+                ? resolveClientIp()
+                : request.ipAddress();
         BiometricConsent consent = biometricConsentService.grantConsent(
                 UserId.of(request.userId()),
                 request.termsVersion(),
                 Boolean.TRUE.equals(request.accepted()),
                 request.purposes(),
-                request.ipAddress()
+                effectiveIp
         );
         return ResponseEntity.status(HttpStatus.CREATED).body(dtoMapper.toConsentResponse(consent));
     }
@@ -108,7 +114,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<BiometricPhotoResponse> uploadPhoto(
             @RequestParam("userId") UUID userId,
-            @RequestParam(value = "biometricConsent", defaultValue = "true") boolean biometricConsent,
+            @RequestParam("biometricConsent") boolean biometricConsent,
             @RequestPart("photo") MultipartFile photo
     ) {
         verifyCallerIdentityAndPermissions(userId);
@@ -119,12 +125,32 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
                     UserId.of(userId),
                     biometricConsent,
                     contentType,
-                    bytes
+                    bytes,
+                    resolveClientIp()
             );
             return ResponseEntity.status(HttpStatus.CREATED).body(dtoMapper.toPhotoResponse(uploaded));
         } catch (IOException ex) {
             throw new InvalidPhotoException("No fue posible procesar los bytes de la fotografía recibida");
         }
+    }
+
+    private String resolveClientIp() {
+        if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs)) {
+            return null;
+        }
+        HttpServletRequest request = attrs.getRequest();
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            String firstHop = forwardedFor.split(",")[0].trim();
+            if (!firstHop.isBlank()) {
+                return firstHop;
+            }
+        }
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+            return realIp.trim();
+        }
+        return request.getRemoteAddr();
     }
 
     @Override
