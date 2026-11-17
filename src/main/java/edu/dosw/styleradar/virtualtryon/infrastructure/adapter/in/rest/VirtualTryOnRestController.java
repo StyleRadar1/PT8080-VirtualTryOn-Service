@@ -206,16 +206,8 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
         String principalName = principal instanceof UserDetails userDetails
                 ? userDetails.getUsername()
                 : authentication.getName();
-        try {
-            UUID authenticatedUuid = UUID.fromString(principalName);
-            UUID targetUserId = requestedUserId != null ? requestedUserId : authenticatedUuid;
-            if (!isAdmin && !authenticatedUuid.equals(targetUserId)) {
-                throw new AccessDeniedException(
-                        "No tiene permisos para operar en el Probador Virtual en nombre de otro usuario"
-                );
-            }
-            return targetUserId;
-        } catch (IllegalArgumentException ignored) {
+        UUID authenticatedUuid = UserId.parseToUuid(principalName);
+        if (authenticatedUuid == null) {
             if (isAdmin && requestedUserId != null) {
                 return requestedUserId;
             }
@@ -223,6 +215,13 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
                     "Identidad de usuario autenticado inválida para validar titularidad en el Probador Virtual"
             );
         }
+        UUID targetUserId = requestedUserId != null ? requestedUserId : authenticatedUuid;
+        if (!isAdmin && !authenticatedUuid.equals(targetUserId)) {
+            throw new AccessDeniedException(
+                    "No tiene permisos para operar en el Probador Virtual en nombre de otro usuario"
+            );
+        }
+        return targetUserId;
     }
 
     private boolean isAdminCaller() {

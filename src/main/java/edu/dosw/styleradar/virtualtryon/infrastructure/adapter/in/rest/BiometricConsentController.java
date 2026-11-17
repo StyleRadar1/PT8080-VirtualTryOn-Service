@@ -306,12 +306,12 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
         String principalName = principal instanceof UserDetails userDetails
                 ? userDetails.getUsername()
                 : authentication.getName();
-        try {
-            return UUID.fromString(principalName);
-        } catch (IllegalArgumentException ignored) {
+        UUID parsed = UserId.parseToUuid(principalName);
+        if (parsed == null) {
             throw new AccessDeniedException(
                     "Identidad de usuario autenticado inválida para validar titularidad biométrica"
             );
         }
+        return parsed;
     }
 }

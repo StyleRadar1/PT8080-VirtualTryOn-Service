@@ -4,8 +4,8 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -24,20 +24,9 @@ public record UserAccountDeletedEvent(
             @JsonProperty("userId") @JsonAlias({"usuarioId", "id", "userId"}) Object rawUserId,
             @JsonProperty("deletedAt") @JsonAlias({"fechaEliminacion", "fechaEvento", "timestamp"}) Instant deletedAt
     ) {
-        UUID parsedUserId = parseFlexibleUuid(rawUserId);
+        UUID parsedUserId = UserId.parseToUuid(rawUserId);
         Instant parsedDeletedAt = deletedAt != null ? deletedAt : Instant.now();
         return new UserAccountDeletedEvent(parsedUserId, parsedDeletedAt);
     }
-
-    private static UUID parseFlexibleUuid(Object raw) {
-        if (raw == null) {
-            return null;
-        }
-        String str = raw.toString().trim();
-        try {
-            return UUID.fromString(str);
-        } catch (IllegalArgumentException e) {
-            return UUID.nameUUIDFromBytes(str.getBytes(StandardCharsets.UTF_8));
-        }
-    }
 }
+

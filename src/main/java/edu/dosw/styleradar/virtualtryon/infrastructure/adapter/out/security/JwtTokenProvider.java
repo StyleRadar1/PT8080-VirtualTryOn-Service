@@ -1,5 +1,6 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security;
 
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.JwtException;
@@ -111,7 +112,7 @@ public class JwtTokenProvider {
         if (subjectUuid != null) {
             return subjectUuid;
         }
-        for (String key : new String[]{"userId", "user_id", "id"}) {
+        for (String key : new String[]{"userId", "user_id", "id", "usuarioId"}) {
             Object raw = claims.get(key);
             if (raw != null) {
                 UUID claimUuid = parseUuidOrNull(raw.toString());
@@ -123,7 +124,11 @@ public class JwtTokenProvider {
         if (subject == null || subject.isBlank()) {
             throw new JwtException("Subject del token JWT ausente");
         }
-        return parseUserId(subject.trim());
+        UUID parsed = UserId.parseToUuid(subject);
+        if (parsed == null) {
+            throw new JwtException("Identificador de usuario en subject JWT inválido");
+        }
+        return parsed;
     }
 
     private static UUID parseUuidOrNull(String raw) {
@@ -177,14 +182,11 @@ public class JwtTokenProvider {
     }
 
     private static UUID parseUserId(String rawSubject) {
-        try {
-            return UUID.fromString(rawSubject);
-        } catch (IllegalArgumentException ex) {
-            if (rawSubject.matches("[1-9][0-9]*")) {
-                return UUID.nameUUIDFromBytes(("styleradar-user-" + rawSubject).getBytes(StandardCharsets.UTF_8));
-            }
-            throw new JwtException("Identificador de usuario en subject JWT inválido", ex);
+        UUID parsed = UserId.parseToUuid(rawSubject);
+        if (parsed == null) {
+            throw new JwtException("Identificador de usuario en subject JWT inválido");
         }
+        return parsed;
     }
 }
 
