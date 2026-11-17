@@ -71,11 +71,22 @@ public class JwtTokenProvider {
         if (userId == null) {
             throw new IllegalArgumentException("El identificador de usuario no puede ser nulo");
         }
+        return generateTokenForSubject(userId.toString(), role);
+    }
+
+    /**
+     * Genera un token JWT firmado con HS256 permitiendo un subject arbitrario (UUID o ID numérico de Auth).
+     */
+    public String generateTokenForSubject(String subject, String role) {
+        if (subject == null || subject.isBlank()) {
+            throw new IllegalArgumentException("El identificador de usuario (subject) no puede ser nulo ni vacío");
+        }
         String resolvedRole = (role == null || role.isBlank()) ? "COMPRADOR" : role.trim().toUpperCase();
         var now = clock.instant();
         return Jwts.builder()
-                .subject(userId.toString())
+                .subject(subject)
                 .claim("role", resolvedRole)
+                .claim("roles", java.util.List.of(resolvedRole))
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(duration)))
                 .signWith(key, Jwts.SIG.HS256)

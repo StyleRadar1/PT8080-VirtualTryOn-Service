@@ -44,6 +44,7 @@ import java.util.UUID;
  * Adaptador primario (Driving) REST para el microservicio de Probador Virtual.
  * Implementa la interfaz de documentación OpenAPI VirtualTryOnOpenApiDoc y delega
  * en CreateTryOnJobService, QueryTryOnJobsService y DeleteBiometricDataService (SR-RF-24 a SR-RF-27).
+ * Admite de manera flexible identificadores canónicos UUID e identificadores numéricos emitidos por ms-auth.
  */
 @RestController
 @RequestMapping("/api/v1/try-on")
@@ -92,9 +93,13 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<TryOnJobResponse> startTryOn(@Valid @RequestBody StartTryOnRequest request) {
         UUID targetUserId = resolveAndVerifyCallerUserId(request.userId());
+        UUID garmentUuid = GarmentId.parseToUuid(request.garmentId());
+        if (garmentUuid == null) {
+            throw new IllegalArgumentException("El identificador de la prenda (garmentId) no es válido");
+        }
         TryOnJob createdJob = createTryOnJobService.createTryOnJob(
                 UserId.of(targetUserId),
-                GarmentId.of(request.garmentId()),
+                GarmentId.of(garmentUuid),
                 request.photoUrl(),
                 Boolean.TRUE.equals(request.biometricConsent())
         );
@@ -116,7 +121,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @Override
     @GetMapping("/jobs")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
-    public ResponseEntity<List<TryOnJobResponse>> getUserTryOnHistory(@RequestParam(required = false) UUID userId) {
+    public ResponseEntity<List<TryOnJobResponse>> getUserTryOnHistory(@RequestParam(required = false) Object userId) {
         UUID targetUserId = resolveAndVerifyCallerUserId(userId);
         List<TryOnJobResponse> history = queryTryOnJobsService.getJobHistory(UserId.of(targetUserId)).stream()
                 .map(dtoMapper::toJobResponse)
@@ -127,7 +132,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @Override
     @GetMapping("/quotas")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
-    public ResponseEntity<UserQuotaResponse> getUserQuotas(@RequestParam(required = false) UUID userId) {
+    public ResponseEntity<UserQuotaResponse> getUserQuotas(@RequestParam(required = false) Object userId) {
         UUID targetUserId = resolveAndVerifyCallerUserId(userId);
         UserQuota quota = queryTryOnJobsService.getUserQuota(UserId.of(targetUserId));
         return ResponseEntity.ok(dtoMapper.toQuotaResponse(quota));
@@ -137,20 +142,32 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @GetMapping("/garments/{garmentId}/validate")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<GarmentValidationResponse> validateGarmentForTryOn(
-            @PathVariable("garmentId") UUID garmentId,
-            @RequestParam(value = "userId", required = false) UUID userId,
-            @RequestParam(value = "selectedGarmentIds", required = false) List<UUID> selectedGarmentIds
+            @PathVariable("garmentId") Object garmentId,
+            @RequestParam(value = "userId", required = false) Object userId,
+            @RequestParam(value = "selectedGarmentIds", required = false) List<?> selectedGarmentIds
     ) {
         UUID targetUserId = resolveAndVerifyCallerUserId(userId);
-        GarmentValidationResult result = (selectedGarmentIds == null || selectedGarmentIds.isEmpty())
+        UUID garmentUuid = GarmentId.parseToUuid(garmentId);
+        if (garmentUuid == null) {
+            throw new IllegalArgumentException("El identificador de la prenda no es válido: " + garmentId);
+        }
+        List<GarmentId> selectedGarments = (selectedGarmentIds == null || selectedGarmentIds.isEmpty())
+                ? List.of()
+                : selectedGarmentIds.stream()
+                        .map(GarmentId::parseToUuid)
+                        .filter(java.util.Objects::nonNull)
+                        .map(GarmentId::of)
+                        .toList();
+
+        GarmentValidationResult result = selectedGarments.isEmpty()
                 ? queryTryOnJobsService.validateGarmentEligibility(
                         UserId.of(targetUserId),
-                        GarmentId.of(garmentId)
+                        GarmentId.of(garmentUuid)
                 )
                 : queryTryOnJobsService.validateGarmentEligibility(
                         UserId.of(targetUserId),
-                        GarmentId.of(garmentId),
-                        selectedGarmentIds.stream().map(GarmentId::of).toList()
+                        GarmentId.of(garmentUuid),
+                        selectedGarments
                 );
         return ResponseEntity.ok(dtoMapper.toGarmentValidationResponse(result));
     }
@@ -169,7 +186,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
         return ResponseEntity.noContent().build();
     }
 
-    private UUID resolveAndVerifyCallerUserId(UUID requestedUserId) {
+    private UUID resolveAndVerifyCallerUserId(Object requestedUserIdRaw) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null
                 || !authentication.isAuthenticated()
@@ -191,6 +208,13 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
         boolean isAdmin = authentication.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .anyMatch(ADMIN_ROLES::contains);
+
+        UUID requestedUserId = UserId.parseToUuid(requestedUserIdRaw);
+        if (requestedUserIdRaw != null && requestedUserId == null) {
+            throw new AccessDeniedException(
+                    "Identificador de usuario solicitado inválido para validar titularidad"
+            );
+        }
 
         Object principal = authentication.getPrincipal();
         if (principal instanceof AuthenticatedUser authenticatedUser) {

@@ -11,6 +11,8 @@ import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.doc.BiometricConsentOpenApiDoc;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.AuthenticatedUser;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -41,13 +43,12 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 
 /**
  * Adaptador REST de entrada que expone los endpoints de consentimiento biométrico (Ley 1581)
  * y de carga y validación de la fotografía frontal de silueta del usuario (SR-RF-23),
  * verificando identidad Bearer JWT, permisos de rol y titularidad del recurso biométrico.
+ * Admite tanto identificadores canónicos UUID como IDs numéricos emitidos por ms-auth.
  */
 @RestController
 @RequestMapping("/api/v1/try-on")
@@ -114,7 +115,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     @Override
     @GetMapping("/consents/{userId}")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
-    public ResponseEntity<BiometricConsentResponse> getConsent(@PathVariable("userId") UUID userId) {
+    public ResponseEntity<BiometricConsentResponse> getConsent(@PathVariable("userId") Object userId) {
         UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
         BiometricConsent consent = biometricConsentService.getConsentByUserId(UserId.of(effectiveUserId));
         return ResponseEntity.ok(dtoMapper.toConsentResponse(consent));
@@ -123,7 +124,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     @Override
     @DeleteMapping("/consents/{userId}")
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
-    public ResponseEntity<BiometricConsentResponse> revokeConsent(@PathVariable("userId") UUID userId) {
+    public ResponseEntity<BiometricConsentResponse> revokeConsent(@PathVariable("userId") Object userId) {
         UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
         BiometricConsent revoked = biometricConsentService.revokeConsent(UserId.of(effectiveUserId));
         return ResponseEntity.ok(dtoMapper.toConsentResponse(revoked));
@@ -133,7 +134,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
     @PostMapping(value = "/photos", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
     public ResponseEntity<BiometricPhotoResponse> uploadPhoto(
-            @RequestParam(value = "userId", required = false) UUID userId,
+            @RequestParam(value = "userId", required = false) Object userId,
             @RequestParam(value = "biometricConsent", required = false, defaultValue = "true") boolean biometricConsent,
             @RequestPart("photo") MultipartFile photo
     ) {
@@ -154,11 +155,18 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
         }
     }
 
+    @Override
+    @GetMapping("/photos/{userId}")
+    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
+    public ResponseEntity<BiometricPhotoResponse> getPhoto(@PathVariable("userId") Object userId) {
+        UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
+        BiometricPhoto photo = biometricConsentService.getPhotoByUserId(UserId.of(effectiveUserId));
+        return ResponseEntity.ok(dtoMapper.toPhotoResponse(photo));
+    }
+
     /**
      * Resuelve la IP a registrar. Las cabeceras X-Forwarded-For / X-Real-IP solo se consideran si la
      * conexión directa proviene de un proxy confiable; de lo contrario cualquier cliente podría falsificarlas.
-     * Cada hop se valida como IP literal (sin DNS) y en X-Forwarded-For se toma el hop más a la derecha
-     * que no sea un proxy confiable.
      */
     private String resolveClientIp() {
         if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs)) {
@@ -201,7 +209,6 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
             return false;
         }
         try {
-            // Literal validado arriba: no dispara resolución DNS.
             java.net.InetAddress.getByName(value);
             return true;
         } catch (java.net.UnknownHostException ex) {
@@ -250,16 +257,7 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
         return (candidate[fullBytes] & mask) == (network[fullBytes] & mask);
     }
 
-    @Override
-    @GetMapping("/photos/{userId}")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA')")
-    public ResponseEntity<BiometricPhotoResponse> getPhoto(@PathVariable("userId") UUID userId) {
-        UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
-        BiometricPhoto photo = biometricConsentService.getPhotoByUserId(UserId.of(effectiveUserId));
-        return ResponseEntity.ok(dtoMapper.toPhotoResponse(photo));
-    }
-
-    private UUID resolveAndVerifyCallerUserId(UUID targetUserId) {
+    private UUID resolveAndVerifyCallerUserId(Object targetUserIdRaw) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null
                 || !authentication.isAuthenticated()
@@ -279,6 +277,13 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
         }
 
         UUID authenticatedUuid = extractAuthenticatedUserId(authentication);
+        UUID targetUserId = UserId.parseToUuid(targetUserIdRaw);
+        if (targetUserIdRaw != null && targetUserId == null) {
+            throw new AccessDeniedException(
+                    "Identificador de usuario inválido para validar titularidad biométrica"
+            );
+        }
+
         if (targetUserId == null) {
             return authenticatedUuid;
         }
