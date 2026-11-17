@@ -182,13 +182,16 @@ Aquí entramos en el detalle interno de nuestro microservicio (`PT8080-VirtualTr
 
 * **Adaptadores de Entrada (`infrastructure.adapter.in`):** Las peticiones dirigidas al puerto `8500` son recibidas por controladores REST dedicados: `VirtualTryOnRestController` (procesamiento y consulta de jobs en `/api/v1/try-on/jobs`) y `BiometricConsentController` (gestión de consentimientos y fotos de silueta bajo Ley 1581). `TryOnEventListenerAdapter` procesa eventos AMQP entrantes de RabbitMQ, mientras que `GlobalExceptionHandler` captura fallos y los traduce al estándar RFC 7807 (Problem Details).
 * **Mapeo y Puertos de Entrada (`application.port.in`):** El mapper de entrada `VirtualTryOnDtoMapper` (`MapperIn`) transforma los DTOs de transporte en objetos y comandos de dominio puro. Estos invocan los puertos de entrada (`CreateTryOnJobUseCase`, `GetJobStatusUseCase`, `GetJobHistoryUseCase`, `GetUserQuotaUseCase` y `DeleteBiometricPhotoUseCase`), los cuales son coordinados por los servicios de aplicación (`CreateTryOnJobService`, `QueryTryOnJobsService` y `DeleteBiometricDataService`).
-* **Cadena de Validaciones de Dominio (Chain of Responsibility):** Antes de crear un trabajo de prueba virtual, `CreateTryOnJobService` ejecuta una cadena de 5 validadores secuenciales sobre el contexto de negocio (`TryOnValidationContext`):
-  1. `BiometricConsentValidator` (Regla V01): Comprueba que el usuario tenga consentimiento de datos biométricos activo y vigente (Ley 1581 Habeas Data).
-  2. `MonthlyUserQuotaValidator` (Regla V02): Valida que el usuario disponga de cuota mensual suficiente según su plan (Free vs. Radar+).
-  3. `GarmentCategoryValidator` (Regla V03): Verifica que la prenda pertenezca a una categoría soportada (`TOPS`, `BOTTOMS`, `ONE_PIECES`).
-  4. `ImageFormatResolutionValidator` (Regla V04): Controla formato (`JPEG`, `PNG`, `WebP`), peso máximo ($\le 10\text{ MB}$) y dimensiones mínimas.
-  5. `PoseReferenceValidator` (Regla V05): Revisa la pose corporal frontal adecuada para el renderizado.
-  Si cualquiera de las reglas se incumple, la cadena interrumpe el flujo de forma temprana y evita consumir créditos innecesarios en la IA generativa.
+* **Cadenas de Validación de Dominio (Chain of Responsibility):** La arquitectura separa limpiamente dos flujos de validación secuenciales para no acoplar la subida del archivo físico con la solicitud de renderizado:
+  1. **Cadena de Creación de Prueba Virtual (`CreateTryOnJobService`):** Ejecuta una cadena de **3 validadores** antes de encolar el trabajo:
+     - `BiometricConsentValidator` (Regla V01): Comprueba que el usuario disponga de consentimiento activo y vigente (Ley 1581 Habeas Data).
+     - `MonthlyUserQuotaValidator` (Regla V02): Valida que el usuario tenga saldo en su cuota mensual según su plan (Free vs. Radar+).
+     - `GarmentCategoryValidator` (Regla V03): Verifica que la prenda pertenezca a una categoría compatible (`TOPS`, `BOTTOMS`, `ONE_PIECES`).
+     Si cualquiera de estas tres reglas se incumple, la cadena interrumpe el flujo de forma temprana y evita consumir créditos innecesarios en la IA generativa.
+  2. **Cadena de Gestión y Registro de Fotografía Biométrica (`BiometricConsentService` / SR-RF-23):** Desacoplada en el endpoint de carga de silueta para validar la calidad del archivo antes de subirlo al Blob Storage:
+     - `BiometricConsentValidator`: Valida la preexistencia del consentimiento.
+     - `ImageFormatResolutionValidator` (Regla V04): Controla estrictamente los formatos admitidos (**únicamente JPEG o PNG**, rechazando WebP), peso máximo de **hasta 5 MB** (no 10 MB), *magic bytes* y resolución mínima de 300x400 píxeles.
+     - `PoseReferenceValidator` (Regla V05): Revisa la pose corporal frontal adecuada para el renderizado.
 * **Adaptadores de Salida (`infrastructure.adapter.out`):** Los puertos de salida aíslan al dominio de la infraestructura tecnológica:
   - `FashnAiRestClientAdapter`: Cliente WebClient reactivo que delega la inferencia a la API externa de FASHN AI.
   - `AzureBlobStorageAdapter`: Gestiona el guardado seguro de siluetas y la generación de URLs firmadas SAS temporales en el contenedor de Azure Blob Storage.
@@ -212,7 +215,7 @@ Este diagrama presenta el modelo de dominio en Java puro (sin dependencias de fr
   - *Value Objects inmutables:* `UserId`, `GarmentId`, `BillingPeriod` y `SasSignedUrl`, que encapsulan validaciones y evitan el paso de tipos primitivos o cadenas desnudas.
 * **Jerarquía de Excepciones de Dominio:** Todas las excepciones de negocio (`ConsentRequiredException`, `QuotaExceededException`, `InvalidPhotoException`, `InvalidGarmentException`, `JobNotFoundException`, `AiProviderTimeoutException`) extienden de `DomainException`, portando códigos de error semánticos legibles para ser mapeados directamente al estándar RFC 7807 por el controlador de excepciones.
 * **Patrones de Diseño Implementados:**
-  - **Chain of Responsibility:** La interfaz `TryOnValidatorHandler` y la clase abstracta `AbstractTryOnValidatorHandler` encadenan secuencialmente a los 5 validadores de dominio (`BiometricConsentValidator`, `MonthlyUserQuotaValidator`, `GarmentCategoryValidator`, `ImageFormatResolutionValidator` y `PoseReferenceValidator`) sobre `TryOnValidationContext`. Permite añadir o modificar reglas de negocio sin alterar el flujo de los demás validadores.
+  - **Chain of Responsibility:** La interfaz `TryOnValidatorHandler` y la clase abstracta `AbstractTryOnValidatorHandler` estructuran las validaciones en dos cadenas desacopladas: la cadena de creación de jobs (`BiometricConsentValidator`, `MonthlyUserQuotaValidator` y `GarmentCategoryValidator`) y la cadena de ingesta de fotografía biométrica (`BiometricConsentValidator`, `ImageFormatResolutionValidator` y `PoseReferenceValidator`) sobre `TryOnValidationContext`. Esto permite añadir o modificar reglas de negocio sin alterar el flujo de los demás validadores.
   - **Strategy:** `AiInferenceStrategy` desacopla el motor de inferencia con dos implementaciones intercambiables: `FashnAiStrategy` (integración productiva con la API externa) y `MockAiStrategy` (simulación local para pruebas automatizadas y CI/CD sin consumo de créditos reales).
   - **Builder:** `TryOnJobBuilder` asegura la construcción válida del agregado `TryOnJob`, verificando que se inicialice con estado `QUEUED`, sin foto purgada y con fechas en UTC consistentes.
 
@@ -231,7 +234,7 @@ Representa el diseño físico de persistencia de nuestro microservicio, cumplien
   - `try_on_outfits`: Vincula looks guardados con prendas asociadas y URL del resultado generado.
   - `job_audit_logs`: Bitácora inmutable de transiciones de estado (`previous_status` a `new_status` con motivo), crucial para trazabilidad y depuración de incidentes.
 * **Redis 7.2 (`probador-redis`):** Caché en memoria para consulta ultrarrápida del estado de cuotas de usuario, semáforo de jobs concurrentes y claves de idempotencia, evitando saturar la base relacional con lecturas redundantes en picos de tráfico.
-* **Azure Blob Storage:** Almacén seguro de objetos binarios organizado en contenedores privados (`biometric-silhouettes` y `tryon-renders`). La base de datos relacional nunca almacena binarios de imágenes, únicamente URLs temporales firmadas mediante tokens SAS con tiempo de vida restringido (TTL de 24 horas), garantizando seguridad y cumplimiento del derecho al olvido.
+* **Azure Blob Storage:** Almacén seguro de objetos binarios organizado en contenedores privados (`biometric-silhouettes` y `tryon-renders`). La base de datos relacional nunca almacena binarios de imágenes ni credenciales SAS: las migraciones `V6` y `V7` eliminan estrictamente cualquier parámetro query de las URLs guardadas en PostgreSQL (`photo_url`, `result_image_url`, `final_render_url`), persistiendo exclusivamente la ruta canónica limpia del blob. Cuando el cliente consulta un recurso, el servicio genera dinámicamente un token Service SAS de solo lectura (`sp=r`) con firma criptográfica HMAC-SHA256 y una duración máxima estrictamente limitada a **15 minutos** (`PT15M`, no 24 horas), garantizando el cumplimiento de la Ley 1581 y minimizando la exposición de datos biométricos.
 
 #### 3.5 Diagrama de Despliegue General (Infraestructura de Contenedores y Servicios)
 
@@ -256,11 +259,11 @@ Este diagrama describe la topología física y de despliegue de toda la solució
   - `Chat` (:8320) — Comunicación interactiva y mensajería en la plataforma.
   - `Playlist` (:8260) — Listas y recomendaciones personalizadas de outfits.
   - `Geolocation` (:8240) — Búsqueda geográfica y cercanía de tiendas.
-  - `Virtual Try-on` (:8500 / :8520) — Nuestro microservicio, desplegado en un contenedor dedicado para aislar el consumo computacional de la orquestación de IA y proteger la disponibilidad global del sistema.
+  - `Virtual Try-on` (:8500) — Nuestro microservicio, desplegado en un contenedor dedicado para aislar el consumo computacional de la orquestación de IA y proteger la disponibilidad global del sistema.
   - `Notification` (:8300) — Servicio de despacho de notificaciones y correos.
   - `Analytics` (:8420) — Telemetría, analítica de uso y métricas de plataforma.
 * **Dispositivo de Bases de Datos Relacionales (`«Device» Postgres Database`):**
-  Un servidor dedicado de PostgreSQL hospeda 12 bases de datos lógicamente independientes (`Auth`, `User`, `Item Catalog`, `Store`, `Inventory`, `Payments`, `Donations`, `Chat`, `Geolocation`, `Playlist`, `Virtual Try-on` correspondiente a `probador_db`, `Notification`, `Analytics`). Esta arquitectura garantiza aislamiento total de transacciones y mantenimiento individual por esquema sin riesgo de impacto cruzado.
+  Un servidor dedicado de PostgreSQL hospeda 13 bases de datos lógicamente independientes (`Auth`, `User`, `Item Catalog`, `Store`, `Inventory`, `Payments`, `Donations`, `Chat`, `Geolocation`, `Playlist`, `Virtual Try-on` correspondiente a `probador_db`, `Notification`, `Analytics`). Esta arquitectura garantiza aislamiento total de transacciones y mantenimiento individual por esquema sin riesgo de impacto cruzado.
 * **Dispositivo de Caché Distribuida (`«Device» Redis`):**
   Un servidor de Redis centraliza el almacenamiento volátil de alta frecuencia para los servicios con mayor demanda de concurrencia y velocidad de respuesta (`Auth`, `Payments`, `Notification`, `Chat`, `Analytics`, y las operaciones de cuotas y bloqueos concurrentes de `Virtual Try-on`).
 * **Dispositivo Broker de Mensajería (`«Device» RabbitMQAdapter`):**
