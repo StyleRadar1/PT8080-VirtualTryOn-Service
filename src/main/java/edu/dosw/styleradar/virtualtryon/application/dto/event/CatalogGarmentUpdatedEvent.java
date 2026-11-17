@@ -4,8 +4,8 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Set;
@@ -47,7 +47,7 @@ public record CatalogGarmentUpdatedEvent(
             @JsonProperty("moderationStatus") @JsonAlias({"estadoModeracion", "estado", "moderationState"}) String moderationStatus,
             @JsonProperty("updatedAt") @JsonAlias({"fechaPublicacion", "fechaActualizacion", "fechaEvento", "timestamp"}) Instant updatedAt
     ) {
-        UUID parsedGarmentId = parseFlexibleUuid(rawGarmentId);
+        UUID parsedGarmentId = GarmentId.parseToUuid(rawGarmentId);
         boolean isVisible = resolveVisibility(visible, approved, moderationStatus);
         Instant parsedUpdatedAt = updatedAt != null ? updatedAt : Instant.now();
         return new CatalogGarmentUpdatedEvent(parsedGarmentId, name, category, imageUrl, isVisible, parsedUpdatedAt);
@@ -76,17 +76,6 @@ public record CatalogGarmentUpdatedEvent(
         }
         return visible == null || visible;
     }
-
-    private static UUID parseFlexibleUuid(Object raw) {
-        if (raw == null) {
-            return null;
-        }
-        String str = raw.toString().trim();
-        try {
-            return UUID.fromString(str);
-        } catch (IllegalArgumentException e) {
-            return UUID.nameUUIDFromBytes(str.getBytes(StandardCharsets.UTF_8));
-        }
-    }
 }
+
 

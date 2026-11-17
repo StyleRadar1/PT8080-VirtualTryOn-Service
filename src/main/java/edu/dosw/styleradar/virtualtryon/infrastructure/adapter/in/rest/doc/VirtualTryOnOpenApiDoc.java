@@ -30,6 +30,7 @@ public interface VirtualTryOnOpenApiDoc {
             summary = "Iniciar trabajo de prueba virtual (Virtual Try-On)",
             description = "Recibe la fotografía frontal del usuario y la prenda seleccionada. Valida el consentimiento biométrico, " +
                     "verifica la disponibilidad de cuota mensual y despacha el trabajo asíncrono hacia el motor de IA. " +
+                    "El userId es opcional: si se omite, se infiere del JWT autenticado. " +
                     "Retorna HTTP 202 Accepted con la cabecera Location hacia el recurso del trabajo."
     )
     @ApiResponses({
@@ -63,7 +64,7 @@ public interface VirtualTryOnOpenApiDoc {
     @Operation(
             summary = "Consultar historial de trabajos de prueba virtual del usuario (SR-RF-26)",
             description = "Retorna el listado de trabajos de prueba virtual del usuario autenticado (o del usuario solicitado si es ADMIN), " +
-                    "incluyendo sus URLs firmadas de solo lectura (sp=r) para resultados completados."
+                    "incluyendo sus URLs firmadas de solo lectura (sp=r) para resultados completados. Admite UUID o ID numérico de Auth."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Historial de trabajos obtenido exitosamente"),
@@ -72,14 +73,15 @@ public interface VirtualTryOnOpenApiDoc {
             @ApiResponse(responseCode = "403", description = "Acceso denegado al historial de otro usuario",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
+    @org.springframework.web.bind.annotation.GetMapping("/jobs")
     ResponseEntity<List<TryOnJobResponse>> getUserTryOnHistory(
-            @Parameter(description = "Identificador opcional del usuario comprador (UUID)", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
-            UUID userId
+            @Parameter(description = "Identificador opcional del usuario comprador (acepta UUID o ID numérico de Auth)", schema = @Schema(type = "string", example = "12345"))
+            @org.springframework.web.bind.annotation.RequestParam(required = false) Object userId
     );
 
     @Operation(
             summary = "Consultar saldo de cuotas del usuario (SR-RF-24)",
-            description = "Consulta la cantidad de pruebas virtuales consumidas y restantes en el mes calendario para el usuario autenticado."
+            description = "Consulta la cantidad de pruebas virtuales consumidas y restantes en el mes calendario para el usuario autenticado. Admite UUID o ID numérico de Auth."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Saldo de cuotas obtenido exitosamente",
@@ -89,16 +91,17 @@ public interface VirtualTryOnOpenApiDoc {
             @ApiResponse(responseCode = "403", description = "Acceso denegado a cuotas de otro usuario",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
+    @org.springframework.web.bind.annotation.GetMapping("/quotas")
     ResponseEntity<UserQuotaResponse> getUserQuotas(
-            @Parameter(description = "Identificador del usuario (UUID)", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
-            UUID userId
+            @Parameter(description = "Identificador del usuario (acepta UUID o ID numérico de Auth)", schema = @Schema(type = "string", example = "12345"))
+            @org.springframework.web.bind.annotation.RequestParam(required = false) Object userId
     );
 
     @Operation(
             summary = "Validar elegibilidad de prenda del catálogo y cuota mensual del usuario (SR-RF-24)",
             description = "Verifica que el usuario tenga consentimiento biométrico activo y cuota mensual disponible, " +
                     "consulta la prenda en el catálogo y evalúa compatibilidad (TOP, BOTTOM, ONE_PIECE), visibilidad " +
-                    "y posibles reemplazos por zona corporal respecto a selectedGarmentIds."
+                    "y posibles reemplazos por zona corporal respecto a selectedGarmentIds. Admite UUID o IDs numéricos/texto de Auth y Catálogo."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Evaluación completada (incluye incompatible/oculta con eligibleForTryOn=false)",
@@ -112,13 +115,14 @@ public interface VirtualTryOnOpenApiDoc {
             @ApiResponse(responseCode = "429", description = "Cuota mensual de pruebas virtuales excedida",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
+    @org.springframework.web.bind.annotation.GetMapping("/garments/{garmentId}/validate")
     ResponseEntity<GarmentValidationResponse> validateGarmentForTryOn(
-            @Parameter(description = "Identificador único de la prenda del catálogo (UUID)", example = "f8e7d6c5-b4a3-2109-8765-43210fedcba9")
-            UUID garmentId,
-            @Parameter(description = "Identificador único del usuario comprador (UUID)", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
-            UUID userId,
-            @Parameter(description = "Lista opcional de UUIDs de prendas ya seleccionadas para detectar reemplazos por zona")
-            List<UUID> selectedGarmentIds
+            @Parameter(description = "Identificador único de la prenda del catálogo (acepta UUID o ID numérico/texto)", schema = @Schema(type = "string", example = "f8e7d6c5-b4a3-2109-8765-43210fedcba9"))
+            @org.springframework.web.bind.annotation.PathVariable("garmentId") Object garmentId,
+            @Parameter(description = "Identificador del usuario comprador (acepta UUID o ID numérico de Auth)", schema = @Schema(type = "string", example = "12345"))
+            @org.springframework.web.bind.annotation.RequestParam(value = "userId", required = false) Object userId,
+            @Parameter(description = "Lista opcional de identificadores de prendas ya seleccionadas para detectar reemplazos por zona")
+            @org.springframework.web.bind.annotation.RequestParam(value = "selectedGarmentIds", required = false) List<?> selectedGarmentIds
     );
 
     @Operation(
@@ -135,8 +139,9 @@ public interface VirtualTryOnOpenApiDoc {
             @ApiResponse(responseCode = "404", description = "Fotografía o trabajo inexistente o ya purgado previamente",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
+    @org.springframework.web.bind.annotation.DeleteMapping("/personal-photos/{jobId}")
     ResponseEntity<Void> deleteBiometricPhoto(
             @Parameter(description = "Identificador del trabajo o foto a eliminar", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
-            UUID jobId
+            @org.springframework.web.bind.annotation.PathVariable UUID jobId
     );
 }

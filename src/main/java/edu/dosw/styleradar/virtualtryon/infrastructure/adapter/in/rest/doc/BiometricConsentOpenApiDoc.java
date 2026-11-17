@@ -25,8 +25,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.UUID;
-
 /**
  * Contrato declarativo OpenAPI 3.0 para la gestión del consentimiento biométrico (Ley 1581 de 2012)
  * y la carga validada de fotografías frontales de silueta del usuario (SR-RF-23).
@@ -70,7 +68,7 @@ public interface BiometricConsentOpenApiDoc {
 
     @Operation(
             summary = "Consultar estado del consentimiento biométrico del usuario (SR-RF-23)",
-            description = "Obtiene el registro de consentimiento biométrico más reciente otorgado por el usuario autenticado."
+            description = "Obtiene el registro de consentimiento biométrico más reciente otorgado por el usuario autenticado. Admite UUID o ID numérico de Auth."
     )
     @ApiResponses(value = {
             @ApiResponse(
@@ -96,12 +94,13 @@ public interface BiometricConsentOpenApiDoc {
     })
     @GetMapping("/consents/{userId}")
     ResponseEntity<BiometricConsentResponse> getConsent(
-            @Parameter(description = "UUID del usuario", required = true) @PathVariable("userId") UUID userId
+            @Parameter(description = "Identificador del usuario (acepta UUID o ID numérico de Auth)", schema = @Schema(type = "string", example = "12345"), required = true)
+            @PathVariable("userId") Object userId
     );
 
     @Operation(
             summary = "Revocar consentimiento de tratamiento de datos biométricos (Ley 1581)",
-            description = "Revoca la autorización de tratamiento de datos biométricos del usuario autenticado registrando la fecha de revocación."
+            description = "Revoca la autorización de tratamiento de datos biométricos del usuario autenticado registrando la fecha de revocación. Admite UUID o ID numérico de Auth."
     )
     @ApiResponses(value = {
             @ApiResponse(
@@ -127,7 +126,8 @@ public interface BiometricConsentOpenApiDoc {
     })
     @DeleteMapping("/consents/{userId}")
     ResponseEntity<BiometricConsentResponse> revokeConsent(
-            @Parameter(description = "UUID del usuario", required = true) @PathVariable("userId") UUID userId
+            @Parameter(description = "Identificador del usuario (acepta UUID o ID numérico de Auth)", schema = @Schema(type = "string", example = "12345"), required = true)
+            @PathVariable("userId") Object userId
     );
 
     @Operation(
@@ -163,8 +163,8 @@ public interface BiometricConsentOpenApiDoc {
     })
     @PostMapping(value = "/photos", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ResponseEntity<BiometricPhotoResponse> uploadPhoto(
-            @Parameter(description = "UUID del usuario propietario de la silueta (opcional si se infiere del claim sub del JWT)", required = false)
-            @RequestParam(value = "userId", required = false) UUID userId,
+            @Parameter(description = "Identificador del usuario propietario de la silueta (opcional si se infiere del JWT autenticado; acepta UUID o ID numérico de Auth)", schema = @Schema(type = "string", example = "12345"), required = false)
+            @RequestParam(value = "userId", required = false) Object userId,
             @Parameter(description = "Aceptación explícita de tratamiento biométrico conforme a la Ley 1581 de 2012 (opcional, por defecto true)", required = false)
             @RequestParam(value = "biometricConsent", required = false, defaultValue = "true") boolean biometricConsent,
             @Parameter(description = "Archivo de imagen frontal de cuerpo completo en formato JPEG o PNG (máx. 5 MB, mín. 300x400 px)", required = true)
@@ -173,7 +173,7 @@ public interface BiometricConsentOpenApiDoc {
 
     @Operation(
             summary = "Consultar fotografía frontal cargada por el usuario (SR-RF-23)",
-            description = "Retorna los metadatos validados (dimensiones, formato, peso y URL SAS) de la fotografía frontal activa del usuario autenticado."
+            description = "Retorna los metadatos validados (dimensiones, formato, peso y URL SAS) de la fotografía frontal activa del usuario autenticado. Admite UUID o ID numérico de Auth."
     )
     @ApiResponses(value = {
             @ApiResponse(
@@ -199,6 +199,7 @@ public interface BiometricConsentOpenApiDoc {
     })
     @GetMapping("/photos/{userId}")
     ResponseEntity<BiometricPhotoResponse> getPhoto(
-            @Parameter(description = "UUID del usuario", required = true) @PathVariable("userId") UUID userId
+            @Parameter(description = "Identificador del usuario (acepta UUID o ID numérico de Auth)", schema = @Schema(type = "string", example = "12345"), required = true)
+            @PathVariable("userId") Object userId
     );
 }
