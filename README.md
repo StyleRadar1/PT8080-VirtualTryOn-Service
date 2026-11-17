@@ -175,7 +175,7 @@ Este diagrama ubica a nuestro microservicio (`ms-probador-virtual`) dentro de la
 #### 3.2 Diagrama de Componentes Específico (Arquitectura Hexagonal PT8080)
 
 <div align="center">
-  <img src="docs/uml/DiagramEspecificComponent.png" alt="Diagrama de Componentes Específico Probador Virtual" width="100%" />
+  <img src="docs/uml/TryOnVirtualComponentes.png" alt="Diagrama de Componentes Específico Probador Virtual" width="100%" />
 </div>
 
 Aquí entramos en el detalle interno de nuestro microservicio (`PT8080-VirtualTryOn-Service`), diseñado bajo **Arquitectura Hexagonal (Puertos y Adaptadores)** y principios de Domain-Driven Design (DDD). El flujo se lee de izquierda a derecha:
@@ -199,7 +199,7 @@ Aquí entramos en el detalle interno de nuestro microservicio (`PT8080-VirtualTr
 #### 3.3 Diagrama de Clases del Modelo de Dominio
 
 <div align="center">
-  <img src="docs/uml/DiagramClassTryOnVirtual.png" alt="Diagrama de Clases del Dominio Probador Virtual" width="100%" />
+  <img src="docs/uml/TryOnDomain.png" alt="Diagrama de Clases del Dominio Probador Virtual" width="100%" />
 </div>
 
 Este diagrama presenta el modelo de dominio en Java puro (sin dependencias de frameworks ni infraestructura), siguiendo convenciones de identificadores técnicos en inglés y notas explicativas en español:
@@ -219,7 +219,7 @@ Este diagrama presenta el modelo de dominio en Java puro (sin dependencias de fr
 #### 3.4 Diagrama de Base de Datos (`probador_db` · PostgreSQL 16, Redis 7.2 y Azure Blob Storage)
 
 <div align="center">
-  <img src="docs/uml/DiagramBDTryOnVirtual.png" alt="Diagrama Entidad Relación probador_db" width="100%" />
+  <img src="docs/uml/TryOnVirtualBD.png" alt="Diagrama Entidad Relación probador_db" width="100%" />
 </div>
 
 Representa el diseño físico de persistencia de nuestro microservicio, cumpliendo el principio *Database-per-Service* con tablas y columnas en formato `snake_case`:
