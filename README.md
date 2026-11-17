@@ -193,8 +193,8 @@ Aquí entramos en el detalle interno de nuestro microservicio (`PT8080-VirtualTr
      - `ImageFormatResolutionValidator` (Regla V04): Controla estrictamente los formatos admitidos (**únicamente JPEG o PNG**, rechazando WebP), peso máximo de **hasta 5 MB** (no 10 MB), *magic bytes* y resolución mínima de 300x400 píxeles.
      - `PoseReferenceValidator` (Regla V05): Revisa la pose corporal frontal adecuada para el renderizado.
 * **Adaptadores de Salida (`infrastructure.adapter.out`):** Los puertos de salida aíslan al dominio de la infraestructura tecnológica:
-  - `FashnAiRestClientAdapter`: Cliente WebClient reactivo que delega la inferencia a la API externa de FASHN AI.
-  - `AzureBlobStorageAdapter`: Gestiona el guardado seguro de siluetas y la generación de URLs firmadas SAS temporales en el contenedor de Azure Blob Storage.
+  - `FashnAiRestClientAdapter`: Cliente HTTP síncrono basado en Spring `RestClient` (protegido con Resilience4j Circuit Breaker y timeouts acotados) que delega la inferencia a la API externa de FASHN AI.
+  - `AzureBlobStorageAdapter`: Gestiona el guardado seguro de siluetas en Azure Blob Storage y la generación dinámica de URLs firmadas SAS temporales de corta duración al consultar recursos.
   - `RedisQuotaCacheAdapter`: Consulta y actualiza los contadores de cuota en Redis 7.2 en milisegundos.
   - `TryOnRepositoryAdapter`: Persiste el estado de los jobs y auditorías en PostgreSQL 16 mediante `TryOnPersistenceMapper` (`MapperOut`) y `TryOnJpaRepository`.
 * **Publicación de Eventos Asíncronos:** En la parte inferior, `TryOnEventPublisherAdapter` envía los eventos de dominio (`TryOnJobCreatedEvent` / `TryOnJobCompletedEvent`) al broker RabbitMQ 3.13 (`q.tryon.* + DLQ`), permitiendo que `Catalog & Stores Service`, `Notifications & Email Service` y `Audit & Analytics Service` reaccionen de forma asíncrona sin acoplamiento temporal ni llamadas síncronas bloqueantes.
@@ -211,8 +211,8 @@ Este diagrama presenta el modelo de dominio en Java puro (sin dependencias de fr
 * **Entidades de Soporte y Value Objects:**
   - `UserQuota`: Modela el límite mensual (`monthlyLimit`), el conteo consumido (`usedCount`) y el estado de suscripción Radar+.
   - `BiometricConsent`: Custodia la autorización legal de tratamiento de datos biométricos con su versión de términos, lista de propósitos y fecha de revocación.
-  - `TryOnOutfit`: Asocia un job completado con las prendas probadas y la URL SAS final del render.
-  - *Value Objects inmutables:* `UserId`, `GarmentId`, `BillingPeriod` y `SasSignedUrl`, que encapsulan validaciones y evitan el paso de tipos primitivos o cadenas desnudas.
+  - `TryOnOutfit`: Asocia un job completado con las prendas probadas y la URL canónica permanente del renderizado (firmada dinámicamente con `SasSignedUrl` de corta duración al ser consultada).
+  - *Value Objects inmutables:* `UserId`, `GarmentId`, `BillingPeriod` y `SasSignedUrl` (utilizado para validar y encapsular URLs firmadas de lectura temporales expuestas a los clientes), que encapsulan validaciones y evitan el paso de tipos primitivos o cadenas desnudas.
 * **Jerarquía de Excepciones de Dominio:** Todas las excepciones de negocio (`ConsentRequiredException`, `QuotaExceededException`, `InvalidPhotoException`, `InvalidGarmentException`, `JobNotFoundException`, `AiProviderTimeoutException`) extienden de `DomainException`, portando códigos de error semánticos legibles para ser mapeados directamente al estándar RFC 7807 por el controlador de excepciones.
 * **Patrones de Diseño Implementados:**
   - **Chain of Responsibility:** La interfaz `TryOnValidatorHandler` y la clase abstracta `AbstractTryOnValidatorHandler` estructuran las validaciones en dos cadenas desacopladas: la cadena de creación de jobs (`BiometricConsentValidator`, `MonthlyUserQuotaValidator` y `GarmentCategoryValidator`) y la cadena de ingesta de fotografía biométrica (`BiometricConsentValidator`, `ImageFormatResolutionValidator` y `PoseReferenceValidator`) sobre `TryOnValidationContext`. Esto permite añadir o modificar reglas de negocio sin alterar el flujo de los demás validadores.
@@ -228,10 +228,10 @@ Este diagrama presenta el modelo de dominio en Java puro (sin dependencias de fr
 Representa el diseño físico de persistencia de nuestro microservicio, cumpliendo el principio *Database-per-Service* con tablas y columnas en formato `snake_case`:
 
 * **PostgreSQL 16 (`probador_db`):**
-  - `try_on_jobs`: Tabla principal que registra cada prueba virtual con su estado (`status`), proveedor de IA (`ai_provider`), duración en milisegundos (`execution_time_ms`), URLs (`photo_url`, `result_image_url`), expiración SAS y bandera de eliminación (`photo_purged`). Los campos `user_id` y `garment_id` son llaves foráneas lógicas (UUID) que preservan el desacoplamiento con `ms-usuarios` y `ms-item-catalogo` sin dependencias físicas de base de datos.
+  - `try_on_jobs`: Tabla principal que registra cada prueba virtual con su estado (`status`), proveedor de IA (`ai_provider`), duración en milisegundos (`execution_time_ms`), URLs canónicas permanentes (`photo_url`, `result_image_url`, almacenadas limpias y sin parámetros ni credenciales SAS tras las migraciones V6/V7) y bandera de eliminación (`photo_purged`). No almacena tokens ni expiración SAS en base de datos. Los campos `user_id` y `garment_id` son llaves foráneas lógicas (UUID) que preservan el desacoplamiento con `ms-usuarios` y `ms-item-catalogo` sin dependencias físicas de base de datos.
   - `user_quotas`: Lleva el control de consumo mensual por usuario con restricción de unicidad compuesta `UNIQUE (user_id, billing_period)`.
   - `biometric_consents`: Almacena la trazabilidad de consentimiento legal exigida por la Ley 1581 (versión de términos, finalidades en JSON, dirección IP y estampas de tiempo de otorgamiento o revocación).
-  - `try_on_outfits`: Vincula looks guardados con prendas asociadas y URL del resultado generado.
+  - `try_on_outfits`: Vincula looks guardados con prendas asociadas y la URL canónica permanente del resultado generado (`final_render_url`, sin parámetros SAS en base de datos tras la migración V7).
   - `job_audit_logs`: Bitácora inmutable de transiciones de estado (`previous_status` a `new_status` con motivo), crucial para trazabilidad y depuración de incidentes.
 * **Redis 7.2 (`probador-redis`):** Caché en memoria para consulta ultrarrápida del estado de cuotas de usuario, semáforo de jobs concurrentes y claves de idempotencia, evitando saturar la base relacional con lecturas redundantes en picos de tráfico.
 * **Azure Blob Storage:** Almacén seguro de objetos binarios organizado en contenedores privados (`biometric-silhouettes` y `tryon-renders`). La base de datos relacional nunca almacena binarios de imágenes ni credenciales SAS: las migraciones `V6` y `V7` eliminan estrictamente cualquier parámetro query de las URLs guardadas en PostgreSQL (`photo_url`, `result_image_url`, `final_render_url`), persistiendo exclusivamente la ruta canónica limpia del blob. Cuando el cliente consulta un recurso, el servicio genera dinámicamente un token Service SAS de solo lectura (`sp=r`) con firma criptográfica HMAC-SHA256 y una duración máxima estrictamente limitada a **15 minutos** (`PT15M`, no 24 horas), garantizando el cumplimiento de la Ley 1581 y minimizando la exposición de datos biométricos.
@@ -299,7 +299,7 @@ src/main/java/edu/dosw/styleradar/virtualtryon/
     │   │   └── event/                               <-- Consumidores AMQP RabbitMQ (TryOnEventListenerAdapter)
     │   └── out/
     │       ├── persistence/                         <-- Adaptadores Spring Data JPA (TryOnRepositoryAdapter, TryOnPersistenceMapper, TryOnJpaRepository)
-    │       ├── client/                              <-- Clientes WebClient hacia motor externo FASHN AI (FashnAiRestClientAdapter)
+    │       ├── client/                              <-- Clientes Spring RestClient hacia motor externo FASHN AI (FashnAiRestClientAdapter)
     │       └── event/                               <-- Productores de eventos RabbitMQ (TryOnEventPublisherAdapter)
     ├── config/                                      <-- Beans de configuración (OpenApiConfig, RabbitConfig, RedisConfig)
     └── exception/                                   <-- Manejo global de excepciones RFC 7807 (GlobalExceptionHandler)
@@ -477,7 +477,7 @@ El stack tecnológico de `PT8080-VirtualTryOn-Service` cumple con el estándar u
 | **Control de Esquema**      | Flyway                     | `10.10.0` | Migraciones versionadas reproducibles de base de datos (`V1__init.sql`).                          |
 | **Caché & Cuotas**         | Redis                      | `7.2`    | Gestión atómica en memoria de cuotas mensuales/diarias por usuario e idempotencia.                 |
 | **Broker de Eventos**       | RabbitMQ                   | `3.13`   | Protocolo AMQP 0-9-1 para comunicación asíncrona desacoplada mediante Topic Exchanges.            |
-| **Cliente HTTP IA**         | Spring WebFlux             | `3.2.5`  | `WebClient` reactivo para consumo no bloqueante de la API externa de inferencia VTON (FASHN AI).  |
+| **Cliente HTTP IA**         | Spring Framework (Web)     | `3.2.5`  | `RestClient` síncrono y fluido (con Resilience4j Circuit Breaker y timeouts acotados) para consumo de la API externa de inferencia VTON (FASHN AI).  |
 | **Documentación API**      | SpringDoc OpenAPI          | `2.5.0`  | Generación automática de especificación OpenAPI 3.0 y Swagger UI con esquema JWT Bearer.         |
 | **Pruebas Unitarias**       | JUnit 5 + Mockito          | `5.10.2` | Verificación del núcleo de dominio y lógica de aplicación sin inicializar contexto Spring.      |
 | **Pruebas de Integración** | Spring Boot Test + MockMvc | `3.2.5`  | Pruebas de controladores REST, contratos HTTP y validación de esquemas RFC 7807.                   |
