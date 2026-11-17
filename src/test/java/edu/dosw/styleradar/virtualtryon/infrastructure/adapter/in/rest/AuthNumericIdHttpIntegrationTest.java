@@ -379,4 +379,67 @@ class AuthNumericIdHttpIntegrationTest {
                         .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    @DisplayName("8. Validación de prendas: GET /garments/{id}/validate con selectedGarmentIds y numeric Auth ID")
+    void shouldValidateGarmentWithSelectedGarmentsAndNumericUserId() throws Exception {
+        edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment mockGarment =
+                new edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment(
+                        GarmentId.of(SAMPLE_GARMENT_UUID),
+                        "Camisa Denim Clásica",
+                        GarmentCategory.TOP,
+                        "https://styleradar.blob.core.windows.net/catalog/denim.png",
+                        true,
+                        Instant.now()
+                );
+        edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult mockResult =
+                new edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult(
+                        mockGarment,
+                        true,
+                        true,
+                        edu.dosw.styleradar.virtualtryon.domain.model.BodyZone.UPPER_BODY,
+                        true,
+                        "Prenda compatible y disponible para prueba virtual en zona UPPER_BODY.",
+                        List.of()
+                );
+        when(queryTryOnJobsService.validateGarmentEligibility(any(), any(), any()))
+                .thenReturn(mockResult);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", SAMPLE_GARMENT_UUID)
+                        .param("userId", AUTH_NUMERIC_ID)
+                        .param("selectedGarmentIds", "1001", "1002")
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.eligibleForTryOn").value(true));
+    }
+
+    @Test
+    @DisplayName("9. Titularidad y Formato: Identificadores malformados o no numéricos son rechazados con 403")
+    void shouldRejectMalformedUserIdsWithForbidden() throws Exception {
+        // En /consents/{userId}
+        mockMvc.perform(get("/api/v1/try-on/consents/{userId}", "invalid-string-id")
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
+                .andExpect(status().isForbidden());
+
+        // En /photos/{userId}
+        mockMvc.perform(get("/api/v1/try-on/photos/{userId}", "invalid-string-id")
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
+                .andExpect(status().isForbidden());
+
+        // En /jobs con userId malformado
+        String jsonPayload = """
+                {
+                    "userId": "invalid-string-id",
+                    "garmentId": "%s",
+                    "photoUrl": "%s",
+                    "biometricConsent": true
+                }
+                """.formatted(SAMPLE_GARMENT_UUID, SAMPLE_PHOTO_URL);
+
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonPayload))
+                .andExpect(status().isForbidden());
+    }
 }
