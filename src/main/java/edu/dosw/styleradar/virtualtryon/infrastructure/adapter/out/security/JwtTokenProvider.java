@@ -135,11 +135,7 @@ public class JwtTokenProvider {
         if (subject == null || subject.isBlank()) {
             throw new JwtException("Subject del token JWT ausente");
         }
-        UUID parsed = UserId.parseToUuid(subject);
-        if (parsed == null) {
-            throw new JwtException("Identificador de usuario en subject JWT inválido");
-        }
-        return parsed;
+        return parseUserId(subject.trim());
     }
 
     private static UUID parseUuidOrNull(String raw) {

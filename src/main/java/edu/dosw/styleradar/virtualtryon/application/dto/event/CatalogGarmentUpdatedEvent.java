@@ -64,7 +64,7 @@ public record CatalogGarmentUpdatedEvent(
         return fromJson(rawGarmentId, name, category, imageUrl, visible, null, null, updatedAt);
     }
 
-    private static boolean resolveVisibility(Boolean visible, Boolean approved, String moderationStatus) {
+    public static boolean resolveVisibility(Boolean visible, Boolean approved, String moderationStatus) {
         if (Boolean.FALSE.equals(visible) || Boolean.FALSE.equals(approved)) {
             return false;
         }

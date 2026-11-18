@@ -442,4 +442,94 @@ class AuthNumericIdHttpIntegrationTest {
                         .content(jsonPayload))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    @DisplayName("10. Validación de entrada: Rechaza garmentId en blanco o inválido con 400")
+    void shouldRejectInvalidGarmentIdWithBadRequest() throws Exception {
+        // En /jobs con garmentId en blanco
+        String blankGarmentJson = """
+                {
+                    "garmentId": "   ",
+                    "photoUrl": "%s",
+                    "biometricConsent": true
+                }
+                """.formatted(SAMPLE_PHOTO_URL);
+
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(blankGarmentJson))
+                .andExpect(status().isBadRequest());
+
+        // En /garments/{garmentId}/validate con garmentId en blanco
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", "   ")
+                        .param("userId", AUTH_NUMERIC_ID)
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("11. Permisos Administrativos: ADMIN y ADMIN_STYLERADAR pueden consultar historial, cuotas y purgar fotos de otros usuarios")
+    void shouldAllowAdminRolesToOperateOnOtherUsers() throws Exception {
+        UUID otherUuid = OTHER_CANONICAL_UUID;
+        when(queryTryOnJobsService.getJobHistory(UserId.of(otherUuid))).thenReturn(List.of());
+
+        UserQuota mockQuota = new UserQuota(
+                UUID.randomUUID(),
+                UserId.of(otherUuid),
+                5,
+                1,
+                BillingPeriod.current(),
+                true,
+                Instant.now()
+        );
+        when(queryTryOnJobsService.getUserQuota(UserId.of(otherUuid))).thenReturn(mockQuota);
+
+        // Historial de otro usuario como ADMIN_STYLERADAR
+        mockMvc.perform(get("/api/v1/try-on/jobs")
+                        .param("userId", OTHER_NUMERIC_ID)
+                        .header("Authorization", tokenFor("9999", "ADMIN_STYLERADAR")))
+                .andExpect(status().isOk());
+
+        // Cuota de otro usuario como ADMIN
+        mockMvc.perform(get("/api/v1/try-on/quotas")
+                        .param("userId", OTHER_NUMERIC_ID)
+                        .header("Authorization", tokenFor("9999", "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.monthlyLimit").value(5));
+
+        // Purgado de fotografía biométrica como ADMIN
+        UUID sampleJobId = UUID.randomUUID();
+        mockMvc.perform(delete("/api/v1/try-on/personal-photos/{jobId}", sampleJobId)
+                        .header("Authorization", tokenFor("9999", "ADMIN")))
+                .andExpect(status().isNoContent());
+
+        verify(deleteBiometricDataService).deleteBiometricPhoto(eq(sampleJobId), any(), eq(true));
+    }
+
+    @Test
+    @DisplayName("12. Validación de titularidad: Rechaza parámetros userId vacíos o con solo espacios con 403")
+    void shouldRejectBlankUserIdsAcrossEndpoints() throws Exception {
+        // Historial con userId solo espacios
+        mockMvc.perform(get("/api/v1/try-on/jobs")
+                        .param("userId", "   ")
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
+                .andExpect(status().isForbidden());
+
+        // Cuotas con userId solo espacios
+        mockMvc.perform(get("/api/v1/try-on/quotas")
+                        .param("userId", "   ")
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
+                .andExpect(status().isForbidden());
+
+        // Consentimiento con userId solo espacios
+        mockMvc.perform(get("/api/v1/try-on/consents/{userId}", "   ")
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
+                .andExpect(status().isForbidden());
+
+        // Foto con userId solo espacios
+        mockMvc.perform(get("/api/v1/try-on/photos/{userId}", "   ")
+                        .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
+                .andExpect(status().isForbidden());
+    }
 }

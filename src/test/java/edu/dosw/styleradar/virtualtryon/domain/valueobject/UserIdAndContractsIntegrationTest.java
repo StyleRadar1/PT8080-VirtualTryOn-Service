@@ -220,6 +220,71 @@ class UserIdAndContractsIntegrationTest {
         assertEquals("https://storage.styleradar.co/garments/polo-1001.png", event.imageUrl());
         assertTrue(event.visible(), "Una prenda publicada sin flags restrictivos debe ser visible por defecto");
         assertNotNull(event.updatedAt());
+
+        // Variaciones de visibilidad y moderación
+        assertFalse(CatalogGarmentUpdatedEvent.resolveVisibility(true, false, "APROBADO"), "Aprobado false debe forzar visibilidad false");
+        assertFalse(CatalogGarmentUpdatedEvent.resolveVisibility(true, true, "RECHAZADO"), "Estado RECHAZADO debe forzar false");
+        assertFalse(CatalogGarmentUpdatedEvent.resolveVisibility(true, true, "rechazado"), "Estado rechazado en minusculas debe forzar false");
+        assertFalse(CatalogGarmentUpdatedEvent.resolveVisibility(false, true, "APROBADO"), "Visible false debe respetarse");
+        assertTrue(CatalogGarmentUpdatedEvent.resolveVisibility(null, true, "APROBADO"), "Visible null sin rechazos es true por defecto");
+        assertTrue(CatalogGarmentUpdatedEvent.resolveVisibility(true, null, null), "Sin aprobacion ni moderacion explicita con visible true es true");
+
+        // Evento con aprobacion false y alias en español
+        String rejectedPayload = """
+                {
+                  "prendaId": null,
+                  "nombre": "Prenda Desaprobada",
+                  "categoria": "PANTS",
+                  "imagenUrl": "https://storage.styleradar.co/garments/pants.png",
+                  "aprobado": false,
+                  "estadoModeracion": "rechazado",
+                  "timestamp": "2026-11-17T15:30:00Z"
+                }
+                """;
+        CatalogGarmentUpdatedEvent rejectedEvent = objectMapper.readValue(rejectedPayload, CatalogGarmentUpdatedEvent.class);
+        assertNull(rejectedEvent.garmentId());
+        assertFalse(rejectedEvent.visible());
+
+        // UserAccountDeletedEvent con campos nulos o alias
+        String deletedNullPayload = """
+                {
+                  "usuarioId": null,
+                  "fechaEliminacion": null
+                }
+                """;
+        UserAccountDeletedEvent deletedEvent = objectMapper.readValue(deletedNullPayload, UserAccountDeletedEvent.class);
+        assertNull(deletedEvent.userId());
+        assertNotNull(deletedEvent.deletedAt());
+    }
+
+    @Test
+    @DisplayName("JwtTokenProvider: Manejo de tokens con subject inválido o claims enriquecidos")
+    void shouldHandleInvalidSubjectAndRichClaims() {
+        Clock fixedClock = Clock.fixed(Instant.parse("2026-11-17T12:00:00Z"), ZoneOffset.UTC);
+        JwtTokenProvider jwtProvider = new JwtTokenProvider(TEST_SECRET, Duration.ofHours(2), fixedClock);
+
+        // Subject vacío o inválido en JWT
+        String emptySubjectJwt = io.jsonwebtoken.Jwts.builder()
+                .subject("   ")
+                .claim("role", "COMPRADOR")
+                .issuedAt(java.util.Date.from(fixedClock.instant()))
+                .expiration(java.util.Date.from(fixedClock.instant().plus(Duration.ofHours(1))))
+                .signWith(new javax.crypto.spec.SecretKeySpec(Base64.getDecoder().decode(TEST_SECRET), "HmacSHA256"))
+                .compact();
+        assertThrows(io.jsonwebtoken.JwtException.class, () -> jwtProvider.validateAndExtractUser(emptySubjectJwt));
+
+        // Token con roles en formato String con coma ("ROLE_USER, ROLE_ADMIN")
+        String commaRolesJwt = io.jsonwebtoken.Jwts.builder()
+                .subject("12345")
+                .claim("role", "ROLE_USER, ROLE_ADMIN_STYLERADAR")
+                .issuedAt(java.util.Date.from(fixedClock.instant()))
+                .expiration(java.util.Date.from(fixedClock.instant().plus(Duration.ofHours(1))))
+                .signWith(new javax.crypto.spec.SecretKeySpec(Base64.getDecoder().decode(TEST_SECRET), "HmacSHA256"))
+                .compact();
+        AuthenticatedUser commaUser = jwtProvider.validateAndExtractUser(commaRolesJwt);
+        assertEquals(UserId.parseToUuid("12345"), commaUser.userId());
+        assertTrue(commaUser.roles().contains("USER"));
+        assertTrue(commaUser.roles().contains("ADMIN_STYLERADAR"));
     }
 
     @Test

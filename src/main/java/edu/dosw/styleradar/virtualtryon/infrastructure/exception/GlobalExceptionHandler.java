@@ -149,6 +149,20 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Captura argumentos inválidos o no parseables -> HTTP 400 Bad Request
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ProblemDetail handleIllegalArgumentException(IllegalArgumentException ex) {
+        log.warn("Argumento de solicitud inválido: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        problem.setTitle("Argumento Inválido");
+        problem.setType(URI.create(BASE_TYPE_URL + "invalid-argument"));
+        problem.setProperty("errorCode", "INVALID_ARGUMENT");
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    /**
      * Captura errores de validación de Bean Validation (@Valid, @NotNull, etc.) -> HTTP 400 Bad Request
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -178,11 +178,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     public ResponseEntity<Void> deleteBiometricPhoto(@PathVariable UUID jobId) {
         UUID callerUserId = resolveAndVerifyCallerUserId(null);
         boolean isAdmin = isAdminCaller();
-        if (deleteBiometricDataService != null) {
-            deleteBiometricDataService.deleteBiometricPhoto(jobId, UserId.of(callerUserId), isAdmin);
-        } else {
-            queryTryOnJobsService.purgeJobBiometricPhoto(jobId, UserId.of(callerUserId), isAdmin);
-        }
+        deleteBiometricDataService.deleteBiometricPhoto(jobId, UserId.of(callerUserId), isAdmin);
         return ResponseEntity.noContent().build();
     }
 
