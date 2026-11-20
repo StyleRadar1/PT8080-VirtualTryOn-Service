@@ -45,6 +45,7 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleBiometricPhotoNotFoundException(BiometricPhotoNotFoundException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
         problem.setTitle("Fotografía Biométrica No Encontrada");
+        problem.setProperty("code", ex.getErrorCode());
         problem.setProperty("errorCode", ex.getErrorCode());
         problem.setProperty("timestamp", Instant.now().toString());
         return problem;
@@ -59,6 +60,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
         problem.setTitle("Trabajo de Probador Virtual No Encontrado");
         problem.setType(URI.create(BASE_TYPE_URL + "job-not-found"));
+        problem.setProperty("code", ex.getErrorCode());
         problem.setProperty("errorCode", ex.getErrorCode());
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -73,6 +75,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage());
         problem.setTitle("Cuota Mensual Excedida");
         problem.setType(URI.create(BASE_TYPE_URL + "quota-exceeded"));
+        problem.setProperty("code", ex.getErrorCode());
         problem.setProperty("errorCode", ex.getErrorCode());
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -87,6 +90,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
         problem.setTitle("Fotografía No Procesable");
         problem.setType(URI.create(BASE_TYPE_URL + "invalid-photo"));
+        problem.setProperty("code", ex.getErrorCode());
         problem.setProperty("errorCode", ex.getErrorCode());
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -101,6 +105,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
         problem.setTitle("Consentimiento Legal Requerido");
         problem.setType(URI.create(BASE_TYPE_URL + "consent-required"));
+        problem.setProperty("code", ex.getErrorCode());
         problem.setProperty("errorCode", ex.getErrorCode());
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -115,6 +120,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
         problem.setTitle("Prenda Incompatible para Prueba Virtual");
         problem.setType(URI.create(BASE_TYPE_URL + "invalid-garment"));
+        problem.setProperty("code", ex.getErrorCode());
         problem.setProperty("errorCode", ex.getErrorCode());
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -129,6 +135,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.GATEWAY_TIMEOUT, ex.getMessage());
         problem.setTitle("Tiempo de Espera de IA Agotado");
         problem.setType(URI.create(BASE_TYPE_URL + "ai-timeout"));
+        problem.setProperty("code", ex.getErrorCode());
         problem.setProperty("errorCode", ex.getErrorCode());
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -143,6 +150,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
         problem.setTitle("Regla de Negocio Incumplida");
         problem.setType(URI.create(BASE_TYPE_URL + "domain-violation"));
+        problem.setProperty("code", ex.getErrorCode());
         problem.setProperty("errorCode", ex.getErrorCode());
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -165,6 +173,7 @@ public class GlobalExceptionHandler {
         );
         problem.setTitle("Error de Validación de Entrada");
         problem.setType(URI.create(BASE_TYPE_URL + "validation-error"));
+        problem.setProperty("code", "VALIDATION_FAILED");
         problem.setProperty("errorCode", "VALIDATION_FAILED");
         problem.setProperty("errors", fieldErrors);
         problem.setProperty("timestamp", Instant.now());
@@ -180,6 +189,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
         problem.setTitle("Parámetro o Archivo Multipart Faltante");
         problem.setType(URI.create(BASE_TYPE_URL + "missing-request-part"));
+        problem.setProperty("code", "MISSING_REQUEST_PART");
         problem.setProperty("errorCode", "MISSING_REQUEST_PART");
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -197,6 +207,7 @@ public class GlobalExceptionHandler {
         );
         problem.setTitle("Archivo Demasiado Grande");
         problem.setType(URI.create(BASE_TYPE_URL + "payload-too-large"));
+        problem.setProperty("code", "PAYLOAD_TOO_LARGE");
         problem.setProperty("errorCode", "PAYLOAD_TOO_LARGE");
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -211,6 +222,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());
         problem.setTitle("Autenticación Requerida o Inválida");
         problem.setType(URI.create(BASE_TYPE_URL + "unauthorized"));
+        problem.setProperty("code", "UNAUTHORIZED");
         problem.setProperty("errorCode", "UNAUTHORIZED");
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -225,6 +237,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
         problem.setTitle("Acceso Denegado");
         problem.setType(URI.create(BASE_TYPE_URL + "forbidden"));
+        problem.setProperty("code", "FORBIDDEN");
         problem.setProperty("errorCode", "FORBIDDEN");
         problem.setProperty("timestamp", Instant.now());
         return problem;
@@ -242,6 +255,7 @@ public class GlobalExceptionHandler {
         );
         problem.setTitle("Error Interno del Servidor");
         problem.setType(URI.create(BASE_TYPE_URL + "internal-server-error"));
+        problem.setProperty("code", "INTERNAL_SERVER_ERROR");
         problem.setProperty("errorCode", "INTERNAL_SERVER_ERROR");
         problem.setProperty("timestamp", Instant.now());
         return problem;

@@ -143,6 +143,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
     @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
     public ResponseEntity<GarmentValidationResponse> validateGarmentForTryOn(
             @PathVariable("garmentId") Object garmentId,
+            @RequestParam(value = "selectedSize", required = false) String selectedSize,
             @RequestParam(value = "userId", required = false) Object userId,
             @RequestParam(value = "selectedGarmentIds", required = false) List<?> selectedGarmentIds
     ) {
@@ -159,16 +160,26 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
                         .map(GarmentId::of)
                         .toList();
 
-        GarmentValidationResult result = selectedGarments.isEmpty()
-                ? queryTryOnJobsService.validateGarmentEligibility(
-                        UserId.of(targetUserId),
-                        GarmentId.of(garmentUuid)
-                )
-                : queryTryOnJobsService.validateGarmentEligibility(
-                        UserId.of(targetUserId),
-                        GarmentId.of(garmentUuid),
-                        selectedGarments
-                );
+        GarmentValidationResult result;
+        if (selectedSize != null) {
+            result = queryTryOnJobsService.validateGarmentEligibility(
+                    UserId.of(targetUserId),
+                    GarmentId.of(garmentUuid),
+                    selectedSize,
+                    selectedGarments
+            );
+        } else if (selectedGarments.isEmpty()) {
+            result = queryTryOnJobsService.validateGarmentEligibility(
+                    UserId.of(targetUserId),
+                    GarmentId.of(garmentUuid)
+            );
+        } else {
+            result = queryTryOnJobsService.validateGarmentEligibility(
+                    UserId.of(targetUserId),
+                    GarmentId.of(garmentUuid),
+                    selectedGarments
+            );
+        }
         return ResponseEntity.ok(dtoMapper.toGarmentValidationResponse(result));
     }
 
