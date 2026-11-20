@@ -15,8 +15,12 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
+import edu.dosw.styleradar.virtualtryon.domain.model.UserBodyMeasurements;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.UserMeasurementPort;
+import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSelectionPolicy;
+import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSizeFitPolicy;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
@@ -54,6 +58,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -62,6 +67,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -253,6 +259,93 @@ class QueryTryOnJobsServiceImplTest {
         assertEquals(GarmentCategory.TOP, result.garment().getCategory());
         assertEquals("Camisa Oxford Azul", result.garment().getName());
         assertTrue(result.replacedGarmentIds().isEmpty());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Con medidas antropométricas y talla 'M', evalúa ajuste orientativo exitoso (sizeEligible=true, fitMessage)")
+    void shouldValidateGarmentEligibilityWithSizeFitAndAvailableMeasurements() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        CatalogGarmentJpaEntity garmentEntity = new CatalogGarmentJpaEntity(
+                garmentId.value(),
+                "Camisa Oxford Azul",
+                "TOP",
+                "https://styleradar.blob.core.windows.net/catalog/oxford.png",
+                true,
+                Instant.now()
+        );
+        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(garmentEntity));
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
+                new BiometricConsent(
+                        UUID.randomUUID(), userId, "v1.0-LEY1581", true,
+                        List.of("VIRTUAL_TRY_ON"), Instant.now(), null, "127.0.0.1"
+                )
+        ));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+
+        UserMeasurementPort userMeasurementPort = mock(UserMeasurementPort.class);
+        when(userMeasurementPort.findMeasurementsByUserId(userId))
+                .thenReturn(Optional.of(new UserBodyMeasurements(175.0, 98.0, 82.0, 96.0)));
+
+        QueryTryOnJobsServiceImpl serviceWithMeasurements = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                repositoryAdapter,
+                blobStoragePort,
+                userMeasurementPort
+        );
+
+        // Caso talla M -> compatible
+        GarmentValidationResult resultM = serviceWithMeasurements.validateGarmentEligibility(
+                userId, garmentId, "M", List.of());
+
+        assertTrue(resultM.eligibleForTryOn());
+        assertEquals("M", resultM.selectedSize());
+        assertEquals(Boolean.TRUE, resultM.sizeEligible());
+        assertEquals(GarmentSizeFitPolicy.MSG_SIZE_FIT_SUCCESS, resultM.fitMessage());
+        assertTrue(resultM.quotaAvailable());
+
+        // Caso talla XS -> no recomendada para 98 cm de pecho
+        GarmentValidationResult resultXS = serviceWithMeasurements.validateGarmentEligibility(
+                userId, garmentId, "XS", List.of());
+
+        assertTrue(resultXS.eligibleForTryOn());
+        assertEquals("XS", resultXS.selectedSize());
+        assertEquals(Boolean.FALSE, resultXS.sizeEligible());
+        assertEquals(GarmentSizeFitPolicy.MSG_SIZE_FIT_WARNING, resultXS.fitMessage());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Sin medidas registradas del usuario, retorna caso nulo controlado (sizeEligible=null, fitMessage no concluyente)")
+    void shouldValidateGarmentEligibilityWithSizeFitWhenNoMeasurementsAreAvailable() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        CatalogGarmentJpaEntity garmentEntity = new CatalogGarmentJpaEntity(
+                garmentId.value(),
+                "Camisa Oxford Azul",
+                "TOP",
+                "https://styleradar.blob.core.windows.net/catalog/oxford.png",
+                true,
+                Instant.now()
+        );
+        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(garmentEntity));
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
+                new BiometricConsent(
+                        UUID.randomUUID(), userId, "v1.0-LEY1581", true,
+                        List.of("VIRTUAL_TRY_ON"), Instant.now(), null, "127.0.0.1"
+                )
+        ));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+
+        GarmentValidationResult result = queryTryOnJobsService.validateGarmentEligibility(
+                userId, garmentId, "M", List.of());
+
+        assertTrue(result.eligibleForTryOn());
+        assertEquals("M", result.selectedSize());
+        assertNull(result.sizeEligible(), "sizeEligible debe ser null cuando no hay registro antropométrico");
+        assertEquals(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE, result.fitMessage());
+        assertTrue(result.quotaAvailable());
     }
 
     @Test
