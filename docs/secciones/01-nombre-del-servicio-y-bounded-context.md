@@ -17,11 +17,27 @@ Este microservicio encapsula exclusivamente la lógica de negocio correspondient
 
 | Qué HACE este Microservicio (Alcance) | Qué NO HACE este Microservicio (Límites) |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
-| • Orquesta la solicitud y ejecución asíncrona de pruebas virtuales de prendas sobre fotografías de usuarios (`SR-RF-23`, `SR-RF-24`, `SR-RF-25`). | • NO autentica usuarios ni emite tokens JWT (delegado a `ms-auth` en `:8081`). |
-| • Valida el consentimiento explícito y la autorización de tratamiento de datos biométricos según Ley 1581 de 2012 / Habeas Data antes de procesar cualquier imagen (`SR-RNF-02`). | • NO gestiona el catálogo maestro de prendas ni administra tiendas (delegado a `ms-catalogo` en `:8084` e `ms-tiendas` en `:8082`). |
-| • Gestiona y hace cumplir la cuota mensual y diaria de pruebas virtuales por usuario (`monthly_limit`, plan estándar vs. Radar+) con control en Redis y PostgreSQL. | • NO gestiona transacciones monetarias ni pasarelas de cobro (delegado a `ms-pagos` en `:8090`). |
-| • Consulta y entrega los resultados de inferencia generados (URLs firmadas seguras de imagen renderizada con caducidad) (`SR-RF-26`). | • NO envía correos, SMS ni notificaciones push directas al usuario final (delegado a `ms-notificaciones` en `:8091`). |
-| • Garantiza el derecho al olvido y la eliminación definitiva de fotografías de silueta y resultados renderizados a solicitud del usuario (`SR-RF-27`). | • NO accede directamente a bases de datos de otros microservicios bajo el principio *Database-per-Service*. |
+| • Carga y valida fotografías frontales para el probador virtual (`SR-RF-23`). | • NO autentica usuarios ni emite tokens JWT (delegado a `ms-auth` en `:8081`). |
+| • Gestiona y audita el consentimiento biométrico informado según Ley 1581 de 2012 / Habeas Data (`SR-RF-107`, `SR-RNF-02`). | • NO gestiona el catálogo maestro de prendas ni administra tiendas (delegado a `ms-catalogo` en `:8084` e `ms-tiendas` en `:8082`). |
+| • Selecciona prendas del catálogo y valida compatibilidad por zona corporal y ajuste orientativo de talla (`SR-RF-24`). | • NO gestiona transacciones monetarias ni pasarelas de cobro (delegado a `ms-pagos` en `:8090`). |
+| • Consulta y administra cuotas mensuales y disponibles de pruebas virtuales en PostgreSQL y Redis (`SR-RF-108`). | • NO envía correos, SMS ni notificaciones push directas al usuario final (delegado a `ms-notificaciones` en `:8091`). |
+| • Genera visualizaciones aproximadas de prueba virtual orquestando inferencia asíncrona (`202 Accepted` + `jobId`) (`SR-RF-25`). | • NO calcula recomendaciones de estilo ni feeds sociales (delegado a `ms-recomendaciones` en `:8087`). |
+| • Consulta y entrega resultados renderizados con URLs firmadas SAS seguras de caducidad controlada (`SR-RF-26`). | • NO almacena datos maestros de usuarios ni credenciales (delegado a `ms-usuarios` / `ms-auth`). |
+| • Consulta el historial cronológico paginado de pruebas virtuales del usuario (`SR-RF-109`). | • NO realiza inferencia de IA en el hilo HTTP sincrónico (delegado a worker asíncrono / proveedor FASHN AI). |
+| • Elimina fotografías biométricas y trabajos renderizados garantizando Derecho al Olvido (`SR-RF-27`). | • NO accede directamente a bases de datos de otros microservicios bajo el principio *Database-per-Service*. |
+
+### Catálogo de Requerimientos Funcionales Oficiales (Versión 5.0)
+
+El microservicio `ms-probador-virtual` implementa estrictamente los 8 requerimientos funcionales oficiales formalizados en la especificación v5.0:
+
+1. **`SR-RF-23`**: *Cargar fotografía frontal para el probador virtual* (`POST /api/v1/try-on/photos`).
+2. **`SR-RF-107`**: *Gestionar consentimiento biométrico del usuario* (`POST`, `GET`, `DELETE /api/v1/try-on/consents/{userId}`).
+3. **`SR-RF-24`**: *Seleccionar prenda y validar compatibilidad de talla para el probador virtual* (`GET /api/v1/try-on/garments/{garmentId}/validate`).
+4. **`SR-RF-108`**: *Consultar cuotas disponibles del probador virtual* (`GET /api/v1/try-on/quotas`).
+5. **`SR-RF-25`**: *Generar visualización aproximada de la prenda* (`POST /api/v1/try-on/jobs` $\rightarrow$ `202 Accepted`).
+6. **`SR-RF-26`**: *Mostrar resultado del probador virtual* (`GET /api/v1/try-on/jobs/{jobId}`).
+7. **`SR-RF-109`**: *Consultar historial de pruebas virtuales del usuario* (`GET /api/v1/try-on/jobs`).
+8. **`SR-RF-27`**: *Eliminar imagen del probador virtual* (`DELETE /api/v1/try-on/personal-photos/{jobId}` $\rightarrow$ `204 No Content`).
 
 ### Arquetipos de Moda y Personajes de StyleRadar
 
