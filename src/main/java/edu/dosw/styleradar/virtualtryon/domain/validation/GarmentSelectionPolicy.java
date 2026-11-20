@@ -27,6 +27,20 @@ public final class GarmentSelectionPolicy {
             CatalogGarment candidate,
             List<CatalogGarment> selectedGarments
     ) {
+        return evaluate(candidate, selectedGarments, null, null, null, true);
+    }
+
+    /**
+     * Evalúa una prenda candidata, conflictos de zona, ajuste orientativo de talla y saldo de cuota (SR-RF-24).
+     */
+    public static GarmentValidationResult evaluate(
+            CatalogGarment candidate,
+            List<CatalogGarment> selectedGarments,
+            String selectedSize,
+            Boolean sizeEligible,
+            String fitMessage,
+            boolean quotaAvailable
+    ) {
         Objects.requireNonNull(candidate, "La prenda candidata no puede ser nula");
 
         GarmentCategory category = candidate.getCategory();
@@ -54,7 +68,11 @@ public final class GarmentSelectionPolicy {
                 zone,
                 eligibleForTryOn,
                 validationMessage,
-                replacedGarmentIds
+                replacedGarmentIds,
+                selectedSize,
+                sizeEligible,
+                fitMessage,
+                quotaAvailable
         );
     }
 

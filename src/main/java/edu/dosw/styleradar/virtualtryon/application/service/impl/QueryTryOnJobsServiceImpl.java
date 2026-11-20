@@ -11,14 +11,17 @@ import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
+import edu.dosw.styleradar.virtualtryon.domain.model.UserBodyMeasurements;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.UserMeasurementPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.validation.BiometricConsentValidator;
 import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSelectionPolicy;
+import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSizeFitPolicy;
 import edu.dosw.styleradar.virtualtryon.domain.validation.MonthlyUserQuotaValidator;
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidationContext;
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidatorHandler;
@@ -52,6 +55,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     private final BiometricDataRepositoryPort biometricDataRepositoryPort;
     private final TryOnJobRepositoryPort jobRepositoryPort;
     private final BlobStoragePort blobStoragePort;
+    private final UserMeasurementPort userMeasurementPort;
     private final TryOnValidatorHandler eligibilityValidationChain;
 
     @Autowired
@@ -60,13 +64,15 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             UserQuotaCachePort quotaCachePort,
             BiometricDataRepositoryPort biometricDataRepositoryPort,
             TryOnJobRepositoryPort jobRepositoryPort,
-            @Autowired(required = false) BlobStoragePort blobStoragePort
+            @Autowired(required = false) BlobStoragePort blobStoragePort,
+            @Autowired(required = false) UserMeasurementPort userMeasurementPort
     ) {
         this.quotaRepositoryPort = quotaRepositoryPort;
         this.quotaCachePort = quotaCachePort;
         this.biometricDataRepositoryPort = biometricDataRepositoryPort;
         this.jobRepositoryPort = jobRepositoryPort;
         this.blobStoragePort = blobStoragePort;
+        this.userMeasurementPort = userMeasurementPort != null ? userMeasurementPort : u -> Optional.empty();
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
@@ -78,9 +84,19 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             UserQuotaRepositoryPort quotaRepositoryPort,
             UserQuotaCachePort quotaCachePort,
             BiometricDataRepositoryPort biometricDataRepositoryPort,
+            TryOnJobRepositoryPort jobRepositoryPort,
+            BlobStoragePort blobStoragePort
+    ) {
+        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, jobRepositoryPort, blobStoragePort, null);
+    }
+
+    public QueryTryOnJobsServiceImpl(
+            UserQuotaRepositoryPort quotaRepositoryPort,
+            UserQuotaCachePort quotaCachePort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
             TryOnJobRepositoryPort jobRepositoryPort
     ) {
-        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, jobRepositoryPort, null);
+        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, jobRepositoryPort, null, null);
     }
 
     public QueryTryOnJobsServiceImpl(
@@ -88,7 +104,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             UserQuotaCachePort quotaCachePort,
             BiometricDataRepositoryPort biometricDataRepositoryPort
     ) {
-        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, null, null);
+        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, null, null, null);
     }
 
     @Override
@@ -109,6 +125,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     public GarmentValidationResult validateGarmentEligibility(
             UserId userId,
             GarmentId garmentId,
+            String selectedSize,
             List<GarmentId> selectedGarmentIds
     ) {
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
@@ -140,7 +157,36 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         List<CatalogGarment> selectedGarments = (selectedGarmentIds == null || selectedGarmentIds.isEmpty())
                 ? List.of()
                 : quotaRepositoryPort.findCatalogGarmentsByIds(selectedGarmentIds);
-        return GarmentSelectionPolicy.evaluate(garment, selectedGarments);
+
+        UserBodyMeasurements measurements = (userMeasurementPort != null)
+                ? userMeasurementPort.findMeasurementsByUserId(userId).orElse(null)
+                : null;
+        GarmentSizeFitPolicy.SizeFitEvaluation sizeEvaluation = GarmentSizeFitPolicy.evaluate(
+                selectedSize,
+                garment.getCategory(),
+                measurements
+        );
+
+        boolean quotaAvailable = quota.hasAvailableQuota();
+
+        return GarmentSelectionPolicy.evaluate(
+                garment,
+                selectedGarments,
+                sizeEvaluation.normalizedSize(),
+                sizeEvaluation.sizeEligible(),
+                sizeEvaluation.fitMessage(),
+                quotaAvailable
+        );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public GarmentValidationResult validateGarmentEligibility(
+            UserId userId,
+            GarmentId garmentId,
+            List<GarmentId> selectedGarmentIds
+    ) {
+        return validateGarmentEligibility(userId, garmentId, null, selectedGarmentIds);
     }
 
     private void resyncCacheFromAuthoritativeQuota(UserId userId, BillingPeriod period, int authoritativeUsedCount) {
