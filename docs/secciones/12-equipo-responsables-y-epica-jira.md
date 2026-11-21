@@ -35,18 +35,21 @@ El seguimiento de requerimientos, historias de usuario del Sprint y artefactos d
 
 <div align="center">
   <img src="../images/JiraEvidence.png" alt="Evidencia 05 - Épica PT8080-1 en Jira" width="100%" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
-  <p><sub><b>Figura 12.1:</b> Épica oficial <code>PT8080-1</code> en Atlassian Jira para <code>ms-probador-virtual</code> (puerto 8500), detallando los requerimientos funcionales SR-RF-23 al 27, RNF asociados y el desglose de historias de usuario y tareas técnicas del Sprint para el probador virtual asistido por IA.</sub></p>
+  <p><sub><b>Figura 12.1:</b> Épica oficial <code>PT8080-1</code> en Atlassian Jira para <code>ms-probador-virtual</code> (puerto 8500), detallando los 8 requerimientos funcionales oficiales (SR-RF-23 al 27 y SR-RF-107 al 109), RNF asociados y el desglose de historias de usuario y tareas técnicas del Sprint para el probador virtual asistido por IA.</sub></p>
 </div>
 
 ### Requerimientos Funcionales Asignados
 
 | Código RF | Nombre del Requerimiento | Actor Principal | Criterio de Aceptación Clave |
 | :----------: | :---------------------------------------------------------------------- | :----------------- | :---------------------------------------------------------------------------------------------------------------- |
-| `SR-RF-23` | Carga de silueta de usuario con consentimiento biométrico | Usuario Registrado | La imagen debe cargarse en formato JPG/PNG con autorización explícita de Habeas Data (Ley 1581 de 2012). |
-| `SR-RF-24` | Selección de prenda de vestir para prueba virtual | Usuario Registrado | Permite vincular una prenda activa del catálogo de StyleRadar indicando su identificador y categoría. |
-| `SR-RF-25` | Generación y procesamiento asíncrono de prueba virtual | Usuario Registrado | Encola la solicitud de inferencia retornando HTTP 202 con cabecera `Location` y valida la cuota máxima diaria. |
-| `SR-RF-26` | Visualización del resultado renderizado con control de caducidad | Usuario Registrado | Entrega la URL segura del renderizado generado por el motor de IA una vez el job alcanza el estado completado. |
-| `SR-RF-27` | Eliminación irreversible de fotografía de silueta (Derecho al Olvido) | Usuario Registrado | Garantiza el borrado físico de la fotografía y del resultado renderizado respondiendo HTTP 204 No Content. |
+| `SR-RF-23` | Carga y validación de fotografía de silueta de usuario | Usuario Registrado | La imagen debe cargarse en formato JPG/PNG con dimensiones mínimas $300\times 400\text{ px}$ y tamaño $\le 5\text{ MB}$. |
+| `SR-RF-24` | Selección de prenda de vestir y validación de compatibilidad de talla | Usuario Registrado | Valida categoría compatible (tops/bottoms/one-pieces), medidas corporales y disponibilidad de stock en el catálogo. |
+| `SR-RF-25` | Generación y procesamiento asíncrono de prueba virtual con IA | Usuario Registrado | Encola la inferencia neuronal retornando HTTP 202 con cabecera `Location` y descontando cuota del periodo activo. |
+| `SR-RF-26` | Consulta y visualización del resultado individual renderizado | Usuario Registrado | Entrega la URL firmada SAS renovada de solo lectura (`sp=r`) del render generado una vez el trabajo se completa. |
+| `SR-RF-27` | Eliminación irreversible de fotografía de silueta (Derecho al Olvido) | Usuario Registrado | Garantiza el borrado físico del blob en Azure y marca `photo_purged = true` respondiendo HTTP 204 No Content. |
+| `SR-RF-107` | Gestión de consentimiento biométrico para tratamiento de datos (Ley 1581) | Usuario Registrado | Permite otorgar, consultar y revocar la autorización explícita de tratamiento biométrico conforme a la Ley 1581. |
+| `SR-RF-108` | Consulta de cuotas mensuales disponibles y consumidas | Usuario Registrado | Retorna el límite mensual (`FREE` = 10, `RADAR_PLUS` = 50), pruebas consumidas y saldo restante desde PostgreSQL + Redis. |
+| `SR-RF-109` | Consulta del historial de pruebas virtuales del usuario | Usuario Registrado | Lista cronológicamente todos los trabajos de prueba virtual ejecutados por el usuario autenticado con su estado y fecha. |
 
 ---
 
