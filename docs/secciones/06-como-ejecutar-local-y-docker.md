@@ -12,21 +12,29 @@
 
 ### Ejecución Local con Maven (Perfil Dev)
 
+Cuando Spring Boot se ejecuta desde la máquina host con `./mvnw`, consume la infraestructura auxiliar expuesta en los puertos mapeados del host (`localhost:5442` para PostgreSQL y `localhost:6389` para Redis):
+
 ```bash
 # 1. Clonar el repositorio
 git clone https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service.git
 cd PT8080-VirtualTryOn-Service
 
 # 2. Levantar la infraestructura auxiliar con Docker Compose (PostgreSQL, Redis, RabbitMQ)
-docker compose up -d postgres redis rabbitmq
+docker compose up -d probador-postgres probador-redis probador-rabbitmq
 
 # 3. Ejecutar el microservicio localmente en el puerto 8500
 ./mvnw clean spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
+> [!NOTE]
+> **Parámetros de conexión al ejecutar con `./mvnw` desde el equipo host:**
+> * **PostgreSQL (`probador_db`):** `localhost:5442` &nbsp;·&nbsp; URL JDBC: `jdbc:postgresql://localhost:5442/probador_db`
+> * **Redis Server:** `localhost:6389`
+> * **RabbitMQ Broker:** `localhost:5672` (Management Dashboard en `http://localhost:15672`)
+
 ### Ejecución Contenerizada Completa con Docker Compose
 
-El repositorio incluye un archivo `docker-compose.yml` que orquesta la infraestructura completa junto al microservicio:
+El repositorio incluye un archivo `docker-compose.yml` que orquesta la infraestructura completa junto al microservicio. En este modo, todos los contenedores conviven en la red virtual bridge `styleradar-net` y se resuelven mediante los nombres de servicio DNS internos:
 
 <details>
 <summary><b>Click para ver Instrucciones de Docker y Contenedores Orquestados</b></summary>
@@ -47,13 +55,15 @@ docker compose logs -f virtual-tryon-service
 docker compose down
 ```
 
-#### Puertos Expuestos en la Red Docker:
+#### Resolución de Conexiones según el Entorno de Ejecución:
 
-* **Microservicio Virtual Try-On:** `http://localhost:8500`
-* **PostgreSQL (probador_db):** `localhost:5442` (mapeado a 5432 interno)
-* **Redis Server:** `localhost:6389` (mapeado a 6379 interno)
-* **RabbitMQ AMQP Broker:** `localhost:5672`
-* **RabbitMQ Management Dashboard:** `http://localhost:15672` (usuario: `guest`, clave: `guest`)
+| Componente | Conexión con `./mvnw` (Host Local) | Conexión dentro de Docker Compose (Red Interna) |
+| :--- | :--- | :--- |
+| **PostgreSQL (`probador_db`)** | `localhost:5442` &nbsp;(`jdbc:postgresql://localhost:5442/probador_db`) | `probador-postgres:5432` &nbsp;(`jdbc:postgresql://probador-postgres:5432/probador_db`) |
+| **Redis Server** | `localhost:6389` | `probador-redis:6379` |
+| **RabbitMQ Broker** | `localhost:5672` | `probador-rabbitmq:5672` |
+| **Microservicio Try-On** | `http://localhost:8500` | `http://virtual-tryon-service:8500` *(mapeado a `localhost:8500`)* |
+| **RabbitMQ Dashboard** | `http://localhost:15672` *(guest / guest)* | `http://localhost:15672` *(mapeado al host)* |
 
 </details>
 

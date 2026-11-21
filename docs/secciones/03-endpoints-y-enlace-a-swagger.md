@@ -25,16 +25,16 @@ La documentación interactiva OpenAPI 3.0 y los contratos de ejecución se encue
 
 | Método | Endpoint | Descripción | Rol Requerido | Códigos HTTP |
 | :--------: | :--------------------------- | :----------------------------------------------------------- | :------------ | :--------------------------------: |
-| `POST` | `/api/v1/try-on/consents` | Otorga o actualiza el consentimiento biométrico (Ley 1581) (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `201`, `400`, `401`, `403` |
-| `GET` | `/api/v1/try-on/consents/{userId}` | Consulta el estado del consentimiento biométrico del usuario (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
-| `DELETE` | `/api/v1/try-on/consents/{userId}` | Revoca el consentimiento biométrico y elimina la silueta activa (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
+| `POST` | `/api/v1/try-on/consents` | Otorga o actualiza el consentimiento biométrico (Ley 1581) (`SR-RF-107`) | `COMPRADOR`, `USER`, `ADMIN` | `201`, `400`, `401`, `403` |
+| `GET` | `/api/v1/try-on/consents/{userId}` | Consulta el estado del consentimiento biométrico del usuario (`SR-RF-107`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
+| `DELETE` | `/api/v1/try-on/consents/{userId}` | Revoca el consentimiento biométrico y elimina la silueta activa (`SR-RF-107`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
 | `POST` | `/api/v1/try-on/photos` | Carga y valida la fotografía frontal (`JPEG`/`PNG`, $\le 5\text{ MB}$, $\ge 300\times 400\text{ px}$ vertical) (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `201`, `400`, `401`, `403`, `413`, `422` |
 | `GET` | `/api/v1/try-on/photos/{userId}` | Consulta metadatos y URL firmada de solo lectura (`sp=r`) de la silueta (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
-| `GET` | `/api/v1/try-on/quotas` | Consulta cuotas mensuales consumidas y disponibles en PostgreSQL + Redis (`SR-RF-24`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
+| `GET` | `/api/v1/try-on/quotas` | Consulta cuotas mensuales consumidas y disponibles en PostgreSQL + Redis (`SR-RF-108`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
 | `GET` | `/api/v1/try-on/garments/{garmentId}/validate` | Valida compatibilidad de categoría de prenda y disponibilidad de cuota (`SR-RF-24`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `400`, `401`, `403`, `429` |
 | `POST` | `/api/v1/try-on/jobs` | Inicia y procesa un trabajo de prueba virtual con IA (`FashnAiStrategy` / `MockAiStrategy`) (`SR-RF-25`) | `COMPRADOR`, `USER`, `ADMIN` | `202`, `400`, `401`, `403`, `422`, `429`, `504` |
 | `GET` | `/api/v1/try-on/jobs/{jobId}` | Consulta el estado o resultado renderizado con URL SAS renovada (`SR-RF-26`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
-| `GET` | `/api/v1/try-on/jobs` | Consulta el historial de trabajos de prueba virtual del usuario (`SR-RF-26`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
+| `GET` | `/api/v1/try-on/jobs` | Consulta el historial de trabajos de prueba virtual del usuario (`SR-RF-109`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
 | `DELETE` | `/api/v1/try-on/personal-photos/{jobId}` | Elimina irreversiblemente silueta y resultado por Derecho al Olvido (Ley 1581) (`SR-RF-27`) | `COMPRADOR`, `USER`, `ADMIN` | `204`, `401`, `403`, `404` |
 | `GET` | `/actuator/health` | Health Check y estado operativo de BD, Redis y RabbitMQ | Público | `200` |
 
