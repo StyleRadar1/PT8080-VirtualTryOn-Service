@@ -186,9 +186,13 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                 ? garmentSizeMeasurementPort.findSizeChartByGarmentId(garmentId).orElse(null)
                 : null;
 
-        boolean offeredByGarment = garment.offersSize(normalizedSize);
-        boolean offeredByChart = (sizeChart == null || sizeChart.availableSizes().isEmpty() || sizeChart.offersSize(normalizedSize));
-        if (!offeredByGarment || !offeredByChart) {
+        boolean sizeOffered;
+        if (sizeChart != null && !sizeChart.availableSizes().isEmpty()) {
+            sizeOffered = sizeChart.offersSize(normalizedSize);
+        } else {
+            sizeOffered = garment.offersSize(normalizedSize);
+        }
+        if (!sizeOffered) {
             throw new GarmentSizeUnavailableException(normalizedSize);
         }
 

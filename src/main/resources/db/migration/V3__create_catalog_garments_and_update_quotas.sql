@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS catalog_garments (
     category VARCHAR(32) NOT NULL,
     image_url TEXT,
     visible BOOLEAN NOT NULL DEFAULT TRUE,
-    available_sizes VARCHAR(255),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 

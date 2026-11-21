@@ -58,7 +58,9 @@ import org.springframework.data.redis.core.ValueOperations;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -114,6 +116,12 @@ class QueryTryOnJobsServiceImplTest {
     private BiometricDataRepositoryPort biometricDataRepositoryPort;
 
     @Mock
+    private UserMeasurementPort userMeasurementPort;
+
+    @Mock
+    private GarmentSizeMeasurementPort garmentSizeMeasurementPort;
+
+    @Mock
     private StringRedisTemplate redisTemplate;
 
     @Mock
@@ -149,7 +157,9 @@ class QueryTryOnJobsServiceImplTest {
                 redisQuotaCacheAdapter,
                 biometricDataRepositoryPort,
                 repositoryAdapter,
-                blobStoragePort
+                blobStoragePort,
+                userMeasurementPort,
+                garmentSizeMeasurementPort
         );
         this.eventListenerAdapter = new TryOnEventListenerAdapter(queryTryOnJobsService);
     }
@@ -391,15 +401,15 @@ class QueryTryOnJobsServiceImplTest {
                 Instant.now()
         );
 
-        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(candidateEntity));
-        lenient().when(catalogGarmentJpaRepository.findAllById(any())).thenReturn(List.of(existingEntity));
-        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
+        lenient().when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(candidateEntity));
+        lenient().when(catalogGarmentJpaRepository.findAllById(List.of(existingTopId.value()))).thenReturn(List.of(existingEntity));
+        lenient().when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
                 new BiometricConsent(
                         UUID.randomUUID(), userId, "v1.0-LEY1581", true,
                         List.of("VIRTUAL_TRY_ON"), Instant.now(), null, "127.0.0.1"
                 )
         ));
-        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
 
         // Instanciar usando el constructor de 5 argumentos (sin userMeasurementPort)
         QueryTryOnJobsServiceImpl service5Args = new QueryTryOnJobsServiceImpl(
@@ -559,6 +569,72 @@ class QueryTryOnJobsServiceImplTest {
 
         assertThrows(GarmentSizeUnavailableException.class, () ->
                 queryTryOnJobsService.validateGarmentEligibility(userId, garmentId, "XL", List.of()));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Catálogo ofrece S y M, tiene medidas históricas para XL y prenda local sin tallas -> Seleccionar XL lanza GarmentSizeUnavailableException (400 TRYON_SIZE_UNAVAILABLE)")
+    void shouldRejectWithTryOnSizeUnavailableWhenCatalogOffersSMAndHasHistoricalXLAndLocalGarmentHasNoSizes() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+
+        // Prenda local antigua sin tallas guardadas (available_sizes es null)
+        CatalogGarmentJpaEntity localGarmentWithoutSizes = new CatalogGarmentJpaEntity(
+                garmentId.value(), "Camisa Oxford Vintage", "TOP", "https://cat/oxford.png", true, null, Instant.now()
+        );
+        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(localGarmentWithoutSizes));
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
+                new BiometricConsent(UUID.randomUUID(), userId, "v1.0-LEY1581", true, List.of("VIRTUAL_TRY_ON"), Instant.now(), null, "127.0.0.1")
+        ));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+
+        // Catálogo ofrece S y M explícitamente, pero tiene medidas históricas para XL
+        SizeMeasurementRange rangeXl = new SizeMeasurementRange(108.0, 116.0, 96.0, 104.0, null, null);
+        GarmentSizeChart catalogSizeChart = new GarmentSizeChart(
+                garmentId,
+                Set.of("S", "M"),
+                Map.of("XL", rangeXl)
+        );
+        when(garmentSizeMeasurementPort.findSizeChartByGarmentId(garmentId)).thenReturn(Optional.of(catalogSizeChart));
+
+        GarmentSizeUnavailableException ex = assertThrows(GarmentSizeUnavailableException.class, () ->
+                queryTryOnJobsService.validateGarmentEligibility(userId, garmentId, "XL", List.of()));
+        assertEquals("TRYON_SIZE_UNAVAILABLE", ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("XL"));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Catálogo ofrece M, pero falta su tabla de medidas -> Seleccionar M retorna 200 con sizeEligible = null y mensaje de datos insuficientes")
+    void shouldReturnSizeEligibleNullWhenCatalogOffersMButMeasurementChartIsMissing() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+
+        // Prenda local antigua sin tallas guardadas
+        CatalogGarmentJpaEntity localGarmentWithoutSizes = new CatalogGarmentJpaEntity(
+                garmentId.value(), "Camiseta Básica", "TOP", "https://cat/basica.png", true, null, Instant.now()
+        );
+        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(localGarmentWithoutSizes));
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
+                new BiometricConsent(UUID.randomUUID(), userId, "v1.0-LEY1581", true, List.of("VIRTUAL_TRY_ON"), Instant.now(), null, "127.0.0.1")
+        ));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+
+        // Catálogo ofrece M, pero la tabla de medidas está vacía (falta la tabla de la talla M)
+        GarmentSizeChart catalogSizeChart = new GarmentSizeChart(
+                garmentId,
+                Set.of("M"),
+                Map.of()
+        );
+        when(garmentSizeMeasurementPort.findSizeChartByGarmentId(garmentId)).thenReturn(Optional.of(catalogSizeChart));
+        when(userMeasurementPort.findMeasurementsByUserId(userId)).thenReturn(Optional.of(
+                new UserBodyMeasurements(175.0, 95.0, 80.0, 95.0)
+        ));
+
+        GarmentValidationResult result = queryTryOnJobsService.validateGarmentEligibility(userId, garmentId, "M", List.of());
+        assertNotNull(result);
+        assertTrue(result.eligibleForTryOn());
+        assertEquals("M", result.selectedSize());
+        assertNull(result.sizeEligible());
+        assertEquals(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE, result.fitMessage());
     }
 
     @Test

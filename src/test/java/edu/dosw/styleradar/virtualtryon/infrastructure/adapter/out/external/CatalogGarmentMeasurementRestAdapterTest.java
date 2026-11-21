@@ -98,4 +98,86 @@ class CatalogGarmentMeasurementRestAdapterTest {
                 new CatalogGarmentMeasurementRestAdapter("http://localhost:8220");
         assertTrue(adapter.findSizeChartByGarmentId(null).isEmpty());
     }
+
+    @Test
+    @DisplayName("Cuando Catálogo ofrece S y M pero conserva medidas históricas para XL, GarmentSizeChart solo ofrece S y M")
+    void shouldSeparateOfferedSizesFromHistoricalMeasurementSizes() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8220");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        CatalogGarmentMeasurementRestAdapter adapter =
+                new CatalogGarmentMeasurementRestAdapter(builder.build(), "http://localhost:8220");
+
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        String jsonResponse = """
+                {
+                    "availableSizes": ["S", "M"],
+                    "sizes": [
+                        {
+                            "size": "S",
+                            "minChestCm": 86.0,
+                            "maxChestCm": 94.0
+                        },
+                        {
+                            "size": "M",
+                            "minChestCm": 92.0,
+                            "maxChestCm": 102.0
+                        },
+                        {
+                            "size": "XL",
+                            "minChestCm": 108.0,
+                            "maxChestCm": 116.0
+                        }
+                    ]
+                }
+                """;
+
+        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentId.value() + "/tallas-medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
+
+        Optional<GarmentSizeChart> result = adapter.findSizeChartByGarmentId(garmentId);
+
+        server.verify();
+        assertTrue(result.isPresent());
+        GarmentSizeChart chart = result.get();
+
+        // Tallas ofertadas son exclusivamente S y M
+        assertTrue(chart.offersSize("S"));
+        assertTrue(chart.offersSize("M"));
+        assertFalse(chart.offersSize("XL"), "XL no debe figurar en tallas disponibles porque no está en availableSizes");
+
+        // Sin embargo, las medidas de XL se conservan en la tabla si existen
+        assertNotNull(chart.getMeasurementRange("XL"));
+        assertEquals(108.0, chart.getMeasurementRange("XL").minChestCm());
+    }
+
+    @Test
+    @DisplayName("Cuando Catálogo ofrece M pero sizes está vacío (falta tabla de medidas), GarmentSizeChart ofrece M y getMeasurementRange es null")
+    void shouldHandleOfferedSizeWithMissingMeasurementTable() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8220");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        CatalogGarmentMeasurementRestAdapter adapter =
+                new CatalogGarmentMeasurementRestAdapter(builder.build(), "http://localhost:8220");
+
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        String jsonResponse = """
+                {
+                    "availableSizes": ["M"],
+                    "sizes": []
+                }
+                """;
+
+        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentId.value() + "/tallas-medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
+
+        Optional<GarmentSizeChart> result = adapter.findSizeChartByGarmentId(garmentId);
+
+        server.verify();
+        assertTrue(result.isPresent());
+        GarmentSizeChart chart = result.get();
+
+        assertTrue(chart.offersSize("M"));
+        assertNull(chart.getMeasurementRange("M"), "Al no tener tabla de medidas en sizes, el rango debe ser null");
+    }
 }

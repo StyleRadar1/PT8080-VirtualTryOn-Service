@@ -74,9 +74,13 @@ public class CatalogGarmentMeasurementRestAdapter implements GarmentSizeMeasurem
                 return Optional.empty();
             }
 
-            Set<String> sizes = new HashSet<>();
+            Set<String> offeredSizes = new HashSet<>();
             if (dto.availableSizes() != null) {
-                sizes.addAll(dto.availableSizes());
+                for (String s : dto.availableSizes()) {
+                    if (s != null && !s.isBlank()) {
+                        offeredSizes.add(s.trim().toUpperCase(Locale.ROOT));
+                    }
+                }
             }
 
             Map<String, SizeMeasurementRange> measurements = new HashMap<>();
@@ -84,7 +88,6 @@ public class CatalogGarmentMeasurementRestAdapter implements GarmentSizeMeasurem
                 for (SizeEntryDto entry : dto.sizes()) {
                     if (entry.size() != null && !entry.size().isBlank()) {
                         String normSize = entry.size().trim().toUpperCase(Locale.ROOT);
-                        sizes.add(normSize);
                         measurements.put(normSize, new SizeMeasurementRange(
                                 entry.minChestCm(),
                                 entry.maxChestCm(),
@@ -97,7 +100,7 @@ public class CatalogGarmentMeasurementRestAdapter implements GarmentSizeMeasurem
                 }
             }
 
-            return Optional.of(new GarmentSizeChart(garmentId, sizes, measurements));
+            return Optional.of(new GarmentSizeChart(garmentId, offeredSizes, measurements));
         } catch (Exception ex) {
             log.debug("No se pudo obtener tabla de medidas desde ms-catalogo ({}) para prenda {}: {}",
                     baseUrl, garmentId.value(), ex.getMessage());
