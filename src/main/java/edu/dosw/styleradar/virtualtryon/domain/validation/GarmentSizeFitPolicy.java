@@ -2,6 +2,8 @@ package edu.dosw.styleradar.virtualtryon.domain.validation;
 
 import edu.dosw.styleradar.virtualtryon.domain.model.BodyZone;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentSizeChart;
+import edu.dosw.styleradar.virtualtryon.domain.model.SizeMeasurementRange;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserBodyMeasurements;
 
 import java.util.Locale;
@@ -9,7 +11,8 @@ import java.util.Set;
 
 /**
  * Política de dominio pura para evaluar el ajuste orientativo de la talla de una prenda
- * frente a las medidas antropométricas del usuario (RN-02, RN-03, RN-07, RN-08 · SR-RF-24).
+ * frente a las medidas antropométricas autorizadas del usuario y la tabla de medidas del catálogo
+ * (RN-02, RN-03, RN-07, RN-08 · SR-RF-24 · FA-02, FA-03).
  */
 public final class GarmentSizeFitPolicy {
 
@@ -38,10 +41,16 @@ public final class GarmentSizeFitPolicy {
         return KNOWN_SIZES.contains(size.trim().toUpperCase(Locale.ROOT));
     }
 
+    /**
+     * Evalúa el ajuste orientativo utilizando las medidas corporales del usuario y la tabla de medidas de la prenda.
+     * Solo compara medidas pertinentes para la zona corporal de la prenda; si faltan datos comparables,
+     * retorna sizeEligible = null (FA-02). Si existen datos comparables y no ajustan, retorna false (FA-03).
+     */
     public static SizeFitEvaluation evaluate(
             String size,
             GarmentCategory category,
-            UserBodyMeasurements measurements
+            UserBodyMeasurements measurements,
+            GarmentSizeChart sizeChart
     ) {
         if (size == null || size.isBlank()) {
             return new SizeFitEvaluation(null, null, MSG_SIZE_REQUIRED);
@@ -49,48 +58,98 @@ public final class GarmentSizeFitPolicy {
 
         String normalized = size.trim().toUpperCase(Locale.ROOT);
 
-        // Si no hay medidas registradas para el usuario (caso sin datos controlado según RN-02 y RN-03)
-        if (measurements == null || !measurements.hasSufficientMeasurements()) {
+        // Si faltan medidas corporales de Usuarios o la tabla de medidas de Catálogo -> FA-02
+        if (measurements == null || sizeChart == null || category == null || category.getBodyZone() == null) {
             return new SizeFitEvaluation(normalized, null, MSG_FIT_DATA_UNAVAILABLE);
         }
 
-        boolean fits = checkFit(normalized, category, measurements);
-        if (fits) {
-            return new SizeFitEvaluation(normalized, true, MSG_SIZE_FIT_SUCCESS);
-        } else {
-            return new SizeFitEvaluation(normalized, false, MSG_SIZE_FIT_WARNING);
+        SizeMeasurementRange range = sizeChart.getMeasurementRange(normalized);
+        if (range == null) {
+            return new SizeFitEvaluation(normalized, null, MSG_FIT_DATA_UNAVAILABLE);
         }
+
+        BodyZone zone = category.getBodyZone();
+        return checkFitByPertinentMeasurements(normalized, zone, measurements, range);
     }
 
-    private static boolean checkFit(String size, GarmentCategory category, UserBodyMeasurements m) {
-        if (category == null || category.getBodyZone() == null) {
-            return true;
-        }
-        BodyZone zone = category.getBodyZone();
-        double targetMeasure;
+    /**
+     * Sobrecarga de compatibilidad: sin tabla de medidas específica de Catálogo, retorna datos insuficientes (FA-02).
+     */
+    public static SizeFitEvaluation evaluate(
+            String size,
+            GarmentCategory category,
+            UserBodyMeasurements measurements
+    ) {
+        return evaluate(size, category, measurements, null);
+    }
+
+    private static SizeFitEvaluation checkFitByPertinentMeasurements(
+            String normalizedSize,
+            BodyZone zone,
+            UserBodyMeasurements m,
+            SizeMeasurementRange range
+    ) {
         if (zone == BodyZone.UPPER_BODY) {
-            targetMeasure = m.chestCm() != null ? m.chestCm() : (m.waistCm() != null ? m.waistCm() : 95.0);
-            return switch (size) {
-                case "XS" -> targetMeasure < 88.0;
-                case "S" -> targetMeasure >= 86.0 && targetMeasure <= 94.0;
-                case "M" -> targetMeasure >= 92.0 && targetMeasure <= 102.0;
-                case "L" -> targetMeasure >= 100.0 && targetMeasure <= 110.0;
-                case "XL", "XXL" -> targetMeasure >= 108.0;
-                default -> true;
-            };
-        } else if (zone == BodyZone.LOWER_BODY) {
-            targetMeasure = m.waistCm() != null ? m.waistCm() : (m.hipCm() != null ? m.hipCm() : 80.0);
-            return switch (size) {
-                case "XS", "28" -> targetMeasure < 76.0;
-                case "S", "30" -> targetMeasure >= 74.0 && targetMeasure <= 82.0;
-                case "M", "32" -> targetMeasure >= 80.0 && targetMeasure <= 90.0;
-                case "L", "34" -> targetMeasure >= 88.0 && targetMeasure <= 98.0;
-                case "XL", "XXL", "36", "38" -> targetMeasure >= 96.0;
-                default -> true;
-            };
-        } else {
-            // FULL_BODY
-            return true;
+            // Solo compara medida de pecho/torso contra el rango de pecho de la prenda
+            if (m.chestCm() == null || m.chestCm() <= 0 || !range.hasChestRange()) {
+                return new SizeFitEvaluation(normalizedSize, null, MSG_FIT_DATA_UNAVAILABLE);
+            }
+            boolean fits = range.chestFits(m.chestCm());
+            return fits
+                    ? new SizeFitEvaluation(normalizedSize, true, MSG_SIZE_FIT_SUCCESS)
+                    : new SizeFitEvaluation(normalizedSize, false, MSG_SIZE_FIT_WARNING);
         }
+
+        if (zone == BodyZone.LOWER_BODY) {
+            // Compara cintura y/o cadera pertinentes contra el rango de la prenda
+            boolean evaluatedAtLeastOne = false;
+            if (range.hasWaistRange()) {
+                if (m.waistCm() == null || m.waistCm() <= 0) {
+                    return new SizeFitEvaluation(normalizedSize, null, MSG_FIT_DATA_UNAVAILABLE);
+                }
+                if (!range.waistFits(m.waistCm())) {
+                    return new SizeFitEvaluation(normalizedSize, false, MSG_SIZE_FIT_WARNING);
+                }
+                evaluatedAtLeastOne = true;
+            }
+            if (range.hasHipRange()) {
+                if (m.hipCm() == null || m.hipCm() <= 0) {
+                    return new SizeFitEvaluation(normalizedSize, null, MSG_FIT_DATA_UNAVAILABLE);
+                }
+                if (!range.hipFits(m.hipCm())) {
+                    return new SizeFitEvaluation(normalizedSize, false, MSG_SIZE_FIT_WARNING);
+                }
+                evaluatedAtLeastOne = true;
+            }
+            if (!evaluatedAtLeastOne) {
+                return new SizeFitEvaluation(normalizedSize, null, MSG_FIT_DATA_UNAVAILABLE);
+            }
+            return new SizeFitEvaluation(normalizedSize, true, MSG_SIZE_FIT_SUCCESS);
+        }
+
+        // FULL_BODY: Requiere comparar medidas pertinentes (pecho y/o cintura); no aprueba a ciegas
+        boolean evaluatedAtLeastOne = false;
+        if (range.hasChestRange()) {
+            if (m.chestCm() == null || m.chestCm() <= 0) {
+                return new SizeFitEvaluation(normalizedSize, null, MSG_FIT_DATA_UNAVAILABLE);
+            }
+            if (!range.chestFits(m.chestCm())) {
+                return new SizeFitEvaluation(normalizedSize, false, MSG_SIZE_FIT_WARNING);
+            }
+            evaluatedAtLeastOne = true;
+        }
+        if (range.hasWaistRange()) {
+            if (m.waistCm() == null || m.waistCm() <= 0) {
+                return new SizeFitEvaluation(normalizedSize, null, MSG_FIT_DATA_UNAVAILABLE);
+            }
+            if (!range.waistFits(m.waistCm())) {
+                return new SizeFitEvaluation(normalizedSize, false, MSG_SIZE_FIT_WARNING);
+            }
+            evaluatedAtLeastOne = true;
+        }
+        if (!evaluatedAtLeastOne) {
+            return new SizeFitEvaluation(normalizedSize, null, MSG_FIT_DATA_UNAVAILABLE);
+        }
+        return new SizeFitEvaluation(normalizedSize, true, MSG_SIZE_FIT_SUCCESS);
     }
 }

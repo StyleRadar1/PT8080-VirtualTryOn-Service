@@ -1,5 +1,6 @@
 package edu.dosw.styleradar.virtualtryon.domain.validation;
 
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BodyZone;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
@@ -83,7 +84,7 @@ public final class GarmentSelectionPolicy {
     public static void assertEligible(CatalogGarment candidate) {
         GarmentValidationResult result = evaluate(candidate, List.of());
         if (!result.eligibleForTryOn()) {
-            throw new InvalidGarmentException(candidate.getGarmentId().value(), result.validationMessage());
+            throw new GarmentNotEligibleException("La prenda no está disponible o no admite prueba virtual.");
         }
     }
 

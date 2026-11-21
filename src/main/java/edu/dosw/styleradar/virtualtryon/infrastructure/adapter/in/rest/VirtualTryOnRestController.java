@@ -8,6 +8,7 @@ import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMap
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
+import edu.dosw.styleradar.virtualtryon.domain.exception.TryOnSelectionIncompleteException;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
@@ -160,26 +161,16 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
                         .map(GarmentId::of)
                         .toList();
 
-        GarmentValidationResult result;
-        if (selectedSize != null) {
-            result = queryTryOnJobsService.validateGarmentEligibility(
-                    UserId.of(targetUserId),
-                    GarmentId.of(garmentUuid),
-                    selectedSize,
-                    selectedGarments
-            );
-        } else if (selectedGarments.isEmpty()) {
-            result = queryTryOnJobsService.validateGarmentEligibility(
-                    UserId.of(targetUserId),
-                    GarmentId.of(garmentUuid)
-            );
-        } else {
-            result = queryTryOnJobsService.validateGarmentEligibility(
-                    UserId.of(targetUserId),
-                    GarmentId.of(garmentUuid),
-                    selectedGarments
-            );
+        if (selectedSize == null || selectedSize.isBlank()) {
+            throw new TryOnSelectionIncompleteException("Selecciona una prenda, una talla y una fotografía válida.");
         }
+
+        GarmentValidationResult result = queryTryOnJobsService.validateGarmentEligibility(
+                UserId.of(targetUserId),
+                GarmentId.of(garmentUuid),
+                selectedSize,
+                selectedGarments
+        );
         return ResponseEntity.ok(dtoMapper.toGarmentValidationResponse(result));
     }
 

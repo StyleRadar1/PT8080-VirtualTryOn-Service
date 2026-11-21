@@ -1,22 +1,75 @@
 package edu.dosw.styleradar.virtualtryon.domain.validation;
 
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentSizeChart;
+import edu.dosw.styleradar.virtualtryon.domain.model.SizeMeasurementRange;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserBodyMeasurements;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("Pruebas Unitarias Exhaustivas - GarmentSizeFitPolicy (SR-RF-24)")
 class GarmentSizeFitPolicyTest {
 
+    private GarmentId garmentId;
+    private GarmentSizeChart upperBodyChart;
+    private GarmentSizeChart lowerBodyChart;
+    private GarmentSizeChart fullBodyChart;
+
+    @BeforeEach
+    void setUp() {
+        garmentId = GarmentId.of(UUID.randomUUID());
+
+        // Tabla para prenda superior (TOP): XS (<88), S (86-94), M (92-102), L (100-110), XL (108-120)
+        upperBodyChart = new GarmentSizeChart(
+                garmentId,
+                Set.of("XS", "S", "M", "L", "XL"),
+                Map.of(
+                        "XS", SizeMeasurementRange.ofChest(70.0, 87.9),
+                        "S", SizeMeasurementRange.ofChest(86.0, 94.0),
+                        "M", SizeMeasurementRange.ofChest(92.0, 102.0),
+                        "L", SizeMeasurementRange.ofChest(100.0, 110.0),
+                        "XL", SizeMeasurementRange.ofChest(108.0, 120.0)
+                )
+        );
+
+        // Tabla para prenda inferior (BOTTOM): 28/XS, 30/S, 32/M (cintura 80-90, cadera 95-105)
+        lowerBodyChart = new GarmentSizeChart(
+                garmentId,
+                Set.of("28", "30", "32", "34", "S", "M", "L"),
+                Map.of(
+                        "28", SizeMeasurementRange.ofWaist(70.0, 75.9),
+                        "30", SizeMeasurementRange.ofWaist(74.0, 82.0),
+                        "32", SizeMeasurementRange.ofWaistAndHip(80.0, 90.0, 95.0, 105.0),
+                        "M", SizeMeasurementRange.ofWaistAndHip(80.0, 90.0, 95.0, 105.0)
+                )
+        );
+
+        // Tabla para cuerpo completo (ONE_PIECE): S (pecho 86-94, cintura 68-76)
+        fullBodyChart = new GarmentSizeChart(
+                garmentId,
+                Set.of("S", "M"),
+                Map.of(
+                        "S", SizeMeasurementRange.ofFullBody(86.0, 94.0, 68.0, 76.0),
+                        "M", SizeMeasurementRange.ofFullBody(92.0, 100.0, 74.0, 82.0)
+                )
+        );
+    }
+
     @Test
-    @DisplayName("Cuando no hay medidas corporales (null), retorna sizeEligible=null y mensaje orientativo")
+    @DisplayName("Cuando no hay medidas corporales (null), retorna sizeEligible=null y mensaje orientativo (FA-02)")
     void shouldReturnNullWhenMeasurementsAreNull() {
         GarmentSizeFitPolicy.SizeFitEvaluation result =
-                GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, null);
+                GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, null, upperBodyChart);
 
         assertNotNull(result);
         assertEquals("M", result.normalizedSize());
@@ -25,15 +78,27 @@ class GarmentSizeFitPolicyTest {
     }
 
     @Test
-    @DisplayName("Cuando las medidas corporales son vacías o insuficientes, retorna sizeEligible=null")
-    void shouldReturnNullWhenMeasurementsAreEmpty() {
-        UserBodyMeasurements empty = UserBodyMeasurements.empty();
+    @DisplayName("Cuando no hay tabla de medidas en Catálogo (null), retorna sizeEligible=null (FA-02)")
+    void shouldReturnNullWhenSizeChartIsNull() {
+        UserBodyMeasurements measurements = new UserBodyMeasurements(175.0, 96.0, 80.0, 95.0);
         GarmentSizeFitPolicy.SizeFitEvaluation result =
-                GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, empty);
+                GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, measurements, null);
 
         assertNotNull(result);
         assertEquals("M", result.normalizedSize());
-        assertNull(result.sizeEligible(), "sizeEligible debe ser null cuando las medidas no son suficientes");
+        assertNull(result.sizeEligible(), "sizeEligible debe ser null cuando no hay tabla de catálogo");
+        assertEquals(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE, result.fitMessage());
+    }
+
+    @Test
+    @DisplayName("Sobrecarga de 3 argumentos sin sizeChart delega a sizeChart=null y retorna FA-02")
+    void shouldReturnNullWithThreeArgOverload() {
+        UserBodyMeasurements measurements = new UserBodyMeasurements(175.0, 96.0, 80.0, 95.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation result =
+                GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, measurements);
+
+        assertNotNull(result);
+        assertNull(result.sizeEligible());
         assertEquals(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE, result.fitMessage());
     }
 
@@ -43,7 +108,7 @@ class GarmentSizeFitPolicyTest {
     void shouldReturnSizeRequiredWhenSelectedSizeIsBlank(String blankSize) {
         UserBodyMeasurements measurements = new UserBodyMeasurements(175.0, 98.0, 82.0, 96.0);
         GarmentSizeFitPolicy.SizeFitEvaluation result =
-                GarmentSizeFitPolicy.evaluate(blankSize, GarmentCategory.TOP, measurements);
+                GarmentSizeFitPolicy.evaluate(blankSize, GarmentCategory.TOP, measurements, upperBodyChart);
 
         assertNotNull(result);
         assertNull(result.normalizedSize());
@@ -56,7 +121,7 @@ class GarmentSizeFitPolicyTest {
     void shouldReturnSizeRequiredWhenSelectedSizeIsNull() {
         UserBodyMeasurements measurements = new UserBodyMeasurements(175.0, 98.0, 82.0, 96.0);
         GarmentSizeFitPolicy.SizeFitEvaluation result =
-                GarmentSizeFitPolicy.evaluate(null, GarmentCategory.TOP, measurements);
+                GarmentSizeFitPolicy.evaluate(null, GarmentCategory.TOP, measurements, upperBodyChart);
 
         assertNotNull(result);
         assertNull(result.normalizedSize());
@@ -65,164 +130,123 @@ class GarmentSizeFitPolicyTest {
     }
 
     @Test
-    @DisplayName("UPPER_BODY: Cobertura completa de todas las tallas XS, S, M, L, XL, XXL y fallback")
-    void shouldCoverAllUpperBodySizesAndBranches() {
-        // XS (< 88.0)
-        UserBodyMeasurements xsFit = new UserBodyMeasurements(160.0, 84.0, 70.0, 88.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("XS", GarmentCategory.TOP, xsFit).sizeEligible());
-        UserBodyMeasurements xsNoFit = new UserBodyMeasurements(160.0, 90.0, 70.0, 88.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("XS", GarmentCategory.TOP, xsNoFit).sizeEligible());
+    @DisplayName("UPPER_BODY: Compara estrictamente medida de pecho; si falta pecho, retorna null (sin falsos positivos)")
+    void shouldEvaluateUpperBodyWithPertinentChestMeasurementOnly() {
+        // Usuario solo con cadera y cintura (pecho null): NO debe inferir 95cm; debe retornar null
+        UserBodyMeasurements onlyWaistAndHip = new UserBodyMeasurements(170.0, null, 75.0, 95.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation noChestResult =
+                GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, onlyWaistAndHip, upperBodyChart);
+        assertNull(noChestResult.sizeEligible(), "Sin medida de pecho debe retornar null para prenda superior");
+        assertEquals(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE, noChestResult.fitMessage());
 
-        // S (86.0 .. 94.0)
-        UserBodyMeasurements sFit = new UserBodyMeasurements(165.0, 90.0, 72.0, 90.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("S", GarmentCategory.TOP, sFit).sizeEligible());
-        UserBodyMeasurements sTooSmall = new UserBodyMeasurements(165.0, 82.0, 72.0, 90.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("S", GarmentCategory.TOP, sTooSmall).sizeEligible());
-        UserBodyMeasurements sTooLarge = new UserBodyMeasurements(165.0, 98.0, 72.0, 90.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("S", GarmentCategory.TOP, sTooLarge).sizeEligible());
+        // Pecho compatible (95cm en rango M: 92-102) -> true
+        UserBodyMeasurements fitM = new UserBodyMeasurements(175.0, 95.0, 80.0, 95.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation fitResult =
+                GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, fitM, upperBodyChart);
+        assertTrue(fitResult.sizeEligible());
+        assertEquals(GarmentSizeFitPolicy.MSG_SIZE_FIT_SUCCESS, fitResult.fitMessage());
 
-        // M (92.0 .. 102.0)
-        UserBodyMeasurements mFit = new UserBodyMeasurements(175.0, 98.0, 80.0, 95.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, mFit).sizeEligible());
-        UserBodyMeasurements mTooSmall = new UserBodyMeasurements(175.0, 88.0, 80.0, 95.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, mTooSmall).sizeEligible());
-        UserBodyMeasurements mTooLarge = new UserBodyMeasurements(175.0, 105.0, 80.0, 95.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, mTooLarge).sizeEligible());
-
-        // L (100.0 .. 110.0)
-        UserBodyMeasurements lFit = new UserBodyMeasurements(180.0, 105.0, 88.0, 102.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("L", GarmentCategory.TOP, lFit).sizeEligible());
-        UserBodyMeasurements lTooSmall = new UserBodyMeasurements(180.0, 95.0, 88.0, 102.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("L", GarmentCategory.TOP, lTooSmall).sizeEligible());
-        UserBodyMeasurements lTooLarge = new UserBodyMeasurements(180.0, 115.0, 88.0, 102.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("L", GarmentCategory.TOP, lTooLarge).sizeEligible());
-
-        // XL (>= 108.0)
-        UserBodyMeasurements xlFit = new UserBodyMeasurements(185.0, 112.0, 94.0, 108.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("XL", GarmentCategory.TOP, xlFit).sizeEligible());
-        UserBodyMeasurements xlNoFit = new UserBodyMeasurements(185.0, 102.0, 94.0, 108.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("XL", GarmentCategory.TOP, xlNoFit).sizeEligible());
-
-        // XXL (>= 108.0)
-        UserBodyMeasurements xxlFit = new UserBodyMeasurements(185.0, 120.0, 100.0, 115.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("XXL", GarmentCategory.TOP, xxlFit).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("XXL", GarmentCategory.TOP, xlNoFit).sizeEligible());
-
-        // Default branch para talla fuera de switch (ej. 32 en UPPER_BODY) -> retorna true
-        assertTrue(GarmentSizeFitPolicy.evaluate("32", GarmentCategory.TOP, mFit).sizeEligible());
+        // Pecho incompatible (108cm en talla M: 92-102) -> false (FA-03)
+        UserBodyMeasurements unfitM = new UserBodyMeasurements(175.0, 108.0, 80.0, 95.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation unfitResult =
+                GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, unfitM, upperBodyChart);
+        assertFalse(unfitResult.sizeEligible());
+        assertEquals(GarmentSizeFitPolicy.MSG_SIZE_FIT_WARNING, unfitResult.fitMessage());
     }
 
     @Test
-    @DisplayName("UPPER_BODY: Fallback de targetMeasure cuando chestCm es null")
-    void shouldFallBackToWaistOrConstantInUpperBody() {
-        // chestCm == null, usa waistCm
-        UserBodyMeasurements waistOnly = new UserBodyMeasurements(175.0, null, 98.0, 95.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, waistOnly).sizeEligible());
+    @DisplayName("LOWER_BODY: Compara cintura y/o cadera pertinentes; si faltan datos comparables retorna null")
+    void shouldEvaluateLowerBodyWithPertinentWaistOrHipMeasurements() {
+        // Talla 30 solo restringe cintura (74-82cm)
+        UserBodyMeasurements fitWaist = new UserBodyMeasurements(170.0, null, 78.0, null);
+        GarmentSizeFitPolicy.SizeFitEvaluation fit30 =
+                GarmentSizeFitPolicy.evaluate("30", GarmentCategory.BOTTOM, fitWaist, lowerBodyChart);
+        assertTrue(fit30.sizeEligible());
 
-        // chestCm == null y waistCm == null, usa default 95.0
-        UserBodyMeasurements hipOnly = new UserBodyMeasurements(175.0, null, null, 95.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("M", GarmentCategory.TOP, hipOnly).sizeEligible());
+        UserBodyMeasurements unfitWaist = new UserBodyMeasurements(170.0, null, 90.0, null);
+        GarmentSizeFitPolicy.SizeFitEvaluation unfit30 =
+                GarmentSizeFitPolicy.evaluate("30", GarmentCategory.BOTTOM, unfitWaist, lowerBodyChart);
+        assertFalse(unfit30.sizeEligible());
+        assertEquals(GarmentSizeFitPolicy.MSG_SIZE_FIT_WARNING, unfit30.fitMessage());
+
+        // Talla 32 restringe cintura (80-90) y cadera (95-105). Si cadera no cumple -> false
+        UserBodyMeasurements waistOkHipBad = new UserBodyMeasurements(170.0, 90.0, 85.0, 115.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation hipBadResult =
+                GarmentSizeFitPolicy.evaluate("32", GarmentCategory.BOTTOM, waistOkHipBad, lowerBodyChart);
+        assertFalse(hipBadResult.sizeEligible());
+
+        // Si falta cintura en talla que la requiere -> null
+        UserBodyMeasurements missingWaist = new UserBodyMeasurements(170.0, 90.0, null, 100.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation missingWaistResult =
+                GarmentSizeFitPolicy.evaluate("32", GarmentCategory.BOTTOM, missingWaist, lowerBodyChart);
+        assertNull(missingWaistResult.sizeEligible());
+
+        // Si falta cadera en talla que la requiere -> null
+        UserBodyMeasurements missingHip = new UserBodyMeasurements(170.0, 90.0, 85.0, null);
+        GarmentSizeFitPolicy.SizeFitEvaluation missingHipResult =
+                GarmentSizeFitPolicy.evaluate("32", GarmentCategory.BOTTOM, missingHip, lowerBodyChart);
+        assertNull(missingHipResult.sizeEligible());
     }
 
     @Test
-    @DisplayName("LOWER_BODY: Cobertura completa de todas las tallas XS/28, S/30, M/32, L/34, XL/XXL/36/38")
-    void shouldCoverAllLowerBodySizesAndBranches() {
-        // XS y 28 (< 76.0)
-        UserBodyMeasurements xsFit = new UserBodyMeasurements(160.0, 85.0, 72.0, 85.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("XS", GarmentCategory.BOTTOM, xsFit).sizeEligible());
-        assertTrue(GarmentSizeFitPolicy.evaluate("28", GarmentCategory.BOTTOM, xsFit).sizeEligible());
-        UserBodyMeasurements xsNoFit = new UserBodyMeasurements(160.0, 85.0, 80.0, 85.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("XS", GarmentCategory.BOTTOM, xsNoFit).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("28", GarmentCategory.BOTTOM, xsNoFit).sizeEligible());
+    @DisplayName("FULL_BODY: Compara pecho y cintura del vestido; nunca retorna true a ciegas")
+    void shouldEvaluateFullBodyWithoutBlindApproval() {
+        // Vestido S requiere pecho 86-94 y cintura 68-76
+        UserBodyMeasurements fitDress = new UserBodyMeasurements(165.0, 90.0, 72.0, 92.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation fitResult =
+                GarmentSizeFitPolicy.evaluate("S", GarmentCategory.ONE_PIECE, fitDress, fullBodyChart);
+        assertTrue(fitResult.sizeEligible());
 
-        // S y 30 (74.0 .. 82.0)
-        UserBodyMeasurements sFit = new UserBodyMeasurements(168.0, 88.0, 78.0, 88.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("S", GarmentCategory.BOTTOM, sFit).sizeEligible());
-        assertTrue(GarmentSizeFitPolicy.evaluate("30", GarmentCategory.BOTTOM, sFit).sizeEligible());
-        UserBodyMeasurements sTooSmall = new UserBodyMeasurements(168.0, 88.0, 70.0, 88.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("S", GarmentCategory.BOTTOM, sTooSmall).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("30", GarmentCategory.BOTTOM, sTooSmall).sizeEligible());
-        UserBodyMeasurements sTooLarge = new UserBodyMeasurements(168.0, 88.0, 86.0, 88.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("S", GarmentCategory.BOTTOM, sTooLarge).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("30", GarmentCategory.BOTTOM, sTooLarge).sizeEligible());
+        // Pecho bueno pero cintura excede (82cm en rango 68-76) -> false
+        UserBodyMeasurements waistTooLarge = new UserBodyMeasurements(165.0, 90.0, 82.0, 92.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation badWaistResult =
+                GarmentSizeFitPolicy.evaluate("S", GarmentCategory.ONE_PIECE, waistTooLarge, fullBodyChart);
+        assertFalse(badWaistResult.sizeEligible());
 
-        // M y 32 (80.0 .. 90.0)
-        UserBodyMeasurements mFit = new UserBodyMeasurements(175.0, 92.0, 85.0, 95.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("M", GarmentCategory.BOTTOM, mFit).sizeEligible());
-        assertTrue(GarmentSizeFitPolicy.evaluate("32", GarmentCategory.BOTTOM, mFit).sizeEligible());
-        UserBodyMeasurements mTooSmall = new UserBodyMeasurements(175.0, 92.0, 75.0, 95.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("M", GarmentCategory.BOTTOM, mTooSmall).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("32", GarmentCategory.BOTTOM, mTooSmall).sizeEligible());
-        UserBodyMeasurements mTooLarge = new UserBodyMeasurements(175.0, 92.0, 95.0, 95.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("M", GarmentCategory.BOTTOM, mTooLarge).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("32", GarmentCategory.BOTTOM, mTooLarge).sizeEligible());
+        // Pecho excede (102cm en rango 86-94) -> false
+        UserBodyMeasurements chestTooLarge = new UserBodyMeasurements(165.0, 102.0, 72.0, 92.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation badChestResult =
+                GarmentSizeFitPolicy.evaluate("S", GarmentCategory.ONE_PIECE, chestTooLarge, fullBodyChart);
+        assertFalse(badChestResult.sizeEligible());
 
-        // L y 34 (88.0 .. 98.0)
-        UserBodyMeasurements lFit = new UserBodyMeasurements(180.0, 98.0, 92.0, 102.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("L", GarmentCategory.BOTTOM, lFit).sizeEligible());
-        assertTrue(GarmentSizeFitPolicy.evaluate("34", GarmentCategory.BOTTOM, lFit).sizeEligible());
-        UserBodyMeasurements lTooSmall = new UserBodyMeasurements(180.0, 98.0, 82.0, 102.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("L", GarmentCategory.BOTTOM, lTooSmall).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("34", GarmentCategory.BOTTOM, lTooSmall).sizeEligible());
-        UserBodyMeasurements lTooLarge = new UserBodyMeasurements(180.0, 98.0, 102.0, 102.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("L", GarmentCategory.BOTTOM, lTooLarge).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("34", GarmentCategory.BOTTOM, lTooLarge).sizeEligible());
+        // Si falta pecho o cintura -> null (datos insuficientes)
+        UserBodyMeasurements missingChest = new UserBodyMeasurements(165.0, null, 72.0, 92.0);
+        assertNull(GarmentSizeFitPolicy.evaluate("S", GarmentCategory.ONE_PIECE, missingChest, fullBodyChart).sizeEligible());
 
-        // XL, XXL, 36, 38 (>= 96.0)
-        UserBodyMeasurements xlFit = new UserBodyMeasurements(185.0, 105.0, 100.0, 110.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("XL", GarmentCategory.BOTTOM, xlFit).sizeEligible());
-        assertTrue(GarmentSizeFitPolicy.evaluate("XXL", GarmentCategory.BOTTOM, xlFit).sizeEligible());
-        assertTrue(GarmentSizeFitPolicy.evaluate("36", GarmentCategory.BOTTOM, xlFit).sizeEligible());
-        assertTrue(GarmentSizeFitPolicy.evaluate("38", GarmentCategory.BOTTOM, xlFit).sizeEligible());
-
-        UserBodyMeasurements xlNoFit = new UserBodyMeasurements(185.0, 105.0, 90.0, 110.0);
-        assertFalse(GarmentSizeFitPolicy.evaluate("XL", GarmentCategory.BOTTOM, xlNoFit).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("XXL", GarmentCategory.BOTTOM, xlNoFit).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("36", GarmentCategory.BOTTOM, xlNoFit).sizeEligible());
-        assertFalse(GarmentSizeFitPolicy.evaluate("38", GarmentCategory.BOTTOM, xlNoFit).sizeEligible());
-
-        // Default branch en LOWER_BODY
-        assertTrue(GarmentSizeFitPolicy.evaluate("CUSTOM", GarmentCategory.BOTTOM, mFit).sizeEligible());
+        UserBodyMeasurements missingWaist = new UserBodyMeasurements(165.0, 90.0, null, 92.0);
+        assertNull(GarmentSizeFitPolicy.evaluate("S", GarmentCategory.ONE_PIECE, missingWaist, fullBodyChart).sizeEligible());
     }
 
     @Test
-    @DisplayName("LOWER_BODY: Fallback de targetMeasure cuando waistCm es null")
-    void shouldFallBackToHipOrConstantInLowerBody() {
-        // waistCm == null, usa hipCm
-        UserBodyMeasurements hipOnly = new UserBodyMeasurements(175.0, 90.0, null, 85.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("32", GarmentCategory.BOTTOM, hipOnly).sizeEligible());
+    @DisplayName("Talla no configurada en la tabla de medidas del catálogo -> retorna sizeEligible=null")
+    void shouldReturnNullWhenSizeNotFoundInChart() {
+        UserBodyMeasurements measurements = new UserBodyMeasurements(175.0, 95.0, 80.0, 95.0);
+        GarmentSizeFitPolicy.SizeFitEvaluation result =
+                GarmentSizeFitPolicy.evaluate("XXL", GarmentCategory.TOP, measurements, upperBodyChart);
 
-        // waistCm == null y hipCm == null, usa default 80.0
-        UserBodyMeasurements chestOnly = new UserBodyMeasurements(175.0, 90.0, null, null);
-        assertTrue(GarmentSizeFitPolicy.evaluate("30", GarmentCategory.BOTTOM, chestOnly).sizeEligible());
+        assertNotNull(result);
+        assertNull(result.sizeEligible());
+        assertEquals(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE, result.fitMessage());
     }
 
     @Test
-    @DisplayName("Cuando la categoría es null o no tiene BodyZone, retorna true por omisión")
-    void shouldReturnTrueWhenCategoryOrZoneIsNull() {
-        UserBodyMeasurements m = new UserBodyMeasurements(175.0, 90.0, 80.0, 90.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("M", null, m).sizeEligible());
+    @DisplayName("Categoría nula o sin zona anatómica -> retorna sizeEligible=null")
+    void shouldReturnNullWhenCategoryOrZoneIsNull() {
+        UserBodyMeasurements measurements = new UserBodyMeasurements(175.0, 95.0, 80.0, 95.0);
+        assertNull(GarmentSizeFitPolicy.evaluate("M", null, measurements, upperBodyChart).sizeEligible());
     }
 
     @Test
-    @DisplayName("FULL_BODY: Prenda ONE_PIECE (vestido/enterizo) retorna siempre sizeEligible=true")
-    void shouldCoverFullBodyOnePiece() {
-        UserBodyMeasurements m = new UserBodyMeasurements(170.0, 90.0, 75.0, 95.0);
-        assertTrue(GarmentSizeFitPolicy.evaluate("M", GarmentCategory.ONE_PIECE, m).sizeEligible());
-    }
+    @DisplayName("isValidSize: Verifica correctamente tallas válidas, inválidas, vacías y nulas")
+    void shouldValidateKnownSizes() {
+        assertTrue(GarmentSizeFitPolicy.isValidSize("S"));
+        assertTrue(GarmentSizeFitPolicy.isValidSize("m"));
+        assertTrue(GarmentSizeFitPolicy.isValidSize("XL"));
+        assertTrue(GarmentSizeFitPolicy.isValidSize("32"));
 
-    @Test
-    @DisplayName("Validación estática de todas las tallas conocidas y casos inválidos")
-    void shouldValidateAllKnownSizes() {
-        String[] validSizes = {"XS", "S", "M", "L", "XL", "XXL", "28", "30", "32", "34", "36", "38"};
-        for (String s : validSizes) {
-            assertTrue(GarmentSizeFitPolicy.isValidSize(s));
-            assertTrue(GarmentSizeFitPolicy.isValidSize(s.toLowerCase()));
-        }
+        assertFalse(GarmentSizeFitPolicy.isValidSize("INVALID"));
         assertFalse(GarmentSizeFitPolicy.isValidSize(""));
         assertFalse(GarmentSizeFitPolicy.isValidSize("   "));
         assertFalse(GarmentSizeFitPolicy.isValidSize(null));
-        assertFalse(GarmentSizeFitPolicy.isValidSize("44"));
-        assertFalse(GarmentSizeFitPolicy.isValidSize("XYZ"));
     }
 }
