@@ -6,10 +6,13 @@ import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMap
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentSizeUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.TryOnSelectionIncompleteException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BodyZone;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
@@ -19,6 +22,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
+import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSizeFitPolicy;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
@@ -46,9 +50,7 @@ import java.util.UUID;
 
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -356,12 +358,14 @@ class VirtualTryOnRestControllerTest {
                 "Prenda compatible y disponible para prueba virtual en zona UPPER_BODY.",
                 List.of()
         );
-        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(garmentId)))
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)), eq(GarmentId.of(garmentId)), eq("M"), any()))
                 .thenReturn(validResult);
 
         mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
                         .param("userId", userId.toString())
+                        .param("selectedSize", "M")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.garmentId", is(garmentId.toString())))
@@ -383,41 +387,17 @@ class VirtualTryOnRestControllerTest {
                 List.of(GarmentId.of(previousTopId))
         );
         when(queryTryOnJobsService.validateGarmentEligibility(
-                UserId.of(userId), GarmentId.of(garmentId), List.of(GarmentId.of(previousTopId))))
+                eq(UserId.of(userId)), eq(GarmentId.of(garmentId)), eq("M"), eq(List.of(GarmentId.of(previousTopId)))))
                 .thenReturn(conflictResult);
 
         mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
                         .param("userId", userId.toString())
+                        .param("selectedSize", "M")
                         .param("selectedGarmentIds", previousTopId.toString())
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.replacedGarmentIds[0]", is(previousTopId.toString())));
-
-        // Prenda incompatible existente (OUTERWEAR) -> 200 OK con compatible=false, eligibleForTryOn=false
-        UUID jacketId = UUID.randomUUID();
-        CatalogGarment jacket = new CatalogGarment(
-                GarmentId.of(jacketId),
-                "Chaqueta Invierno",
-                GarmentCategory.OUTERWEAR,
-                "https://styleradar.blob.core.windows.net/catalog/jacket.png",
-                true,
-                Instant.now()
-        );
-        GarmentValidationResult outerwearResult = new GarmentValidationResult(
-                jacket, false, true, null, false,
-                "La prenda no es compatible con el probador virtual: OUTERWEAR", List.of()
-        );
-        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(jacketId)))
-                .thenReturn(outerwearResult);
-
-        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", jacketId)
-                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
-                        .param("userId", userId.toString()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.compatible", is(false)))
-                .andExpect(jsonPath("$.visible", is(true)))
-                .andExpect(jsonPath("$.eligibleForTryOn", is(false)));
     }
 
     @Test
@@ -427,22 +407,357 @@ class VirtualTryOnRestControllerTest {
         UUID missingGarmentId = UUID.randomUUID();
         UUID quotaExhaustedGarmentId = UUID.randomUUID();
 
-        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(missingGarmentId)))
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)), eq(GarmentId.of(missingGarmentId)), eq("M"), any()))
                 .thenThrow(new InvalidGarmentException(missingGarmentId, "La prenda no existe en el catálogo"));
-        when(queryTryOnJobsService.validateGarmentEligibility(UserId.of(userId), GarmentId.of(quotaExhaustedGarmentId)))
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)), eq(GarmentId.of(quotaExhaustedGarmentId)), eq("M"), any()))
                 .thenThrow(new QuotaExceededException(userId, 10, 10));
 
         mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", missingGarmentId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
-                        .param("userId", userId.toString()))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "M"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errorCode", is("INVALID_GARMENT")));
+                .andExpect(jsonPath("$.errorCode", is("INVALID_GARMENT")))
+                .andExpect(jsonPath("$.code", is("INVALID_GARMENT")));
 
         mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", quotaExhaustedGarmentId)
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
-                        .param("userId", userId.toString()))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "M"))
                 .andExpect(status().isTooManyRequests())
-                .andExpect(jsonPath("$.errorCode", is("QUOTA_EXCEEDED")));
+                .andExpect(jsonPath("$.errorCode", is("QUOTA_EXCEEDED")))
+                .andExpect(jsonPath("$.code", is("QUOTA_EXCEEDED")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Dado selectedSize, evalúa compatibilidad antropométrica orientativa retornando sizeEligible y fitMessage")
+    void testValidateGarmentWithSelectedSizeAndFitEvaluation() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+        CatalogGarment garment = new CatalogGarment(
+                GarmentId.of(garmentId),
+                "Camisa Oxford Azul",
+                GarmentCategory.TOP,
+                "https://styleradar.blob.core.windows.net/catalog/oxford.png",
+                true,
+                Instant.now()
+        );
+
+        // Caso 1: Talla 'M' con medidas y ajuste óptimo
+        GarmentValidationResult fitSuccessResult = new GarmentValidationResult(
+                garment,
+                true,
+                true,
+                BodyZone.UPPER_BODY,
+                true,
+                "Prenda compatible en zona UPPER_BODY.",
+                List.of(),
+                "M",
+                true,
+                GarmentSizeFitPolicy.MSG_SIZE_FIT_SUCCESS,
+                true
+        );
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                org.mockito.ArgumentMatchers.eq(UserId.of(userId)),
+                org.mockito.ArgumentMatchers.eq(GarmentId.of(garmentId)),
+                org.mockito.ArgumentMatchers.eq("M"),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(fitSuccessResult);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "M")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selectedSize", is("M")))
+                .andExpect(jsonPath("$.sizeEligible", is(true)))
+                .andExpect(jsonPath("$.fitMessage", is(GarmentSizeFitPolicy.MSG_SIZE_FIT_SUCCESS)))
+                .andExpect(jsonPath("$.quotaAvailable", is(true)))
+                .andExpect(jsonPath("$.eligibleForTryOn", is(true)));
+
+        // Caso 2: Talla 'S' sin medidas corporales registradas (caso nulo controlado)
+        GarmentValidationResult noDataResult = new GarmentValidationResult(
+                garment,
+                true,
+                true,
+                BodyZone.UPPER_BODY,
+                true,
+                "Prenda compatible en zona UPPER_BODY.",
+                List.of(),
+                "S",
+                null,
+                GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE,
+                true
+        );
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                org.mockito.ArgumentMatchers.eq(UserId.of(userId)),
+                org.mockito.ArgumentMatchers.eq(GarmentId.of(garmentId)),
+                org.mockito.ArgumentMatchers.eq("S"),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(noDataResult);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "S")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selectedSize", is("S")))
+                .andExpect(jsonPath("$.sizeEligible").doesNotExist())
+                .andExpect(jsonPath("$.fitMessage", is(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE)))
+                .andExpect(jsonPath("$.quotaAvailable", is(true)));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 Regresión: Catálogo responde availableSizes: [], copia local ofrece M y usuario selecciona M -> 400 TRYON_SIZE_UNAVAILABLE")
+    void testValidateGarmentWhenCatalogReturnsEmptyAvailableSizesReturns400() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)),
+                eq(GarmentId.of(garmentId)),
+                eq("M"),
+                any()))
+                .thenThrow(new GarmentSizeUnavailableException("M"));
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "M")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code", is("TRYON_SIZE_UNAVAILABLE")))
+                .andExpect(jsonPath("$.errorCode", is("TRYON_SIZE_UNAVAILABLE")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Cuando se envía selectedSize Y selectedGarmentIds simultáneamente, valida ambos parámetros correctamente")
+    void testValidateGarmentWithSelectedSizeAndSelectedGarments() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+        UUID otherGarmentId = UUID.randomUUID();
+        CatalogGarment garment = new CatalogGarment(
+                GarmentId.of(garmentId),
+                "Chaqueta Denim",
+                GarmentCategory.TOP,
+                "https://storage/chaqueta.png",
+                true,
+                Instant.now()
+        );
+        GarmentValidationResult result = new GarmentValidationResult(
+                garment,
+                true,
+                true,
+                BodyZone.UPPER_BODY,
+                true,
+                "Prenda compatible en zona UPPER_BODY.",
+                List.of(GarmentId.of(otherGarmentId)),
+                "L",
+                true,
+                GarmentSizeFitPolicy.MSG_SIZE_FIT_SUCCESS,
+                true
+        );
+
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)),
+                eq(GarmentId.of(garmentId)),
+                eq("L"),
+                eq(List.of(GarmentId.of(otherGarmentId)))))
+                .thenReturn(result);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "L")
+                        .param("selectedGarmentIds", otherGarmentId.toString())
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selectedSize", is("L")))
+                .andExpect(jsonPath("$.sizeEligible", is(true)))
+                .andExpect(jsonPath("$.replacedGarmentIds[0]", is(otherGarmentId.toString())));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 - Test 1: Talla omitida o en blanco -> 400 Bad Request con TRYON_SELECTION_INCOMPLETE")
+    void test1_TallaOmitida_Retorna400TryonSelectionIncomplete() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+
+        // Sin parámetro selectedSize
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code", is("TRYON_SELECTION_INCOMPLETE")))
+                .andExpect(jsonPath("$.errorCode", is("TRYON_SELECTION_INCOMPLETE")))
+                .andExpect(jsonPath("$.detail", is("Selecciona una prenda, una talla y una fotografía válida.")));
+
+        // Con selectedSize vacío o solo espacios
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "   ")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code", is("TRYON_SELECTION_INCOMPLETE")))
+                .andExpect(jsonPath("$.errorCode", is("TRYON_SELECTION_INCOMPLETE")))
+                .andExpect(jsonPath("$.detail", is("Selecciona una prenda, una talla y una fotografía válida.")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 - Test 2: Talla conocida que la prenda no ofrece -> 400 Bad Request con TRYON_SIZE_UNAVAILABLE")
+    void test2_TallaConocidaQuePrendaNoOfrece_Retorna400TryonSizeUnavailable() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)), eq(GarmentId.of(garmentId)), eq("XL"), any()))
+                .thenThrow(new GarmentSizeUnavailableException("XL"));
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "XL")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code", is("TRYON_SIZE_UNAVAILABLE")))
+                .andExpect(jsonPath("$.errorCode", is("TRYON_SIZE_UNAVAILABLE")))
+                .andExpect(jsonPath("$.detail", is("La talla 'XL' no está disponible para la prenda seleccionada.")));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 - Test 3: Falta de una medida corporal relevante -> 200 OK con sizeEligible = null")
+    void test3_FaltaMedidaRelevante_Retorna200ConSizeEligibleNull() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+        CatalogGarment garment = new CatalogGarment(
+                GarmentId.of(garmentId), "Camisa Formal", GarmentCategory.TOP,
+                "https://storage/shirt.png", true, Instant.now()
+        );
+        GarmentValidationResult result = new GarmentValidationResult(
+                garment, true, true, BodyZone.UPPER_BODY, true,
+                "Prenda compatible en zona UPPER_BODY.", List.of(),
+                "M", null, GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE, true
+        );
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)), eq(GarmentId.of(garmentId)), eq("M"), any()))
+                .thenReturn(result);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "M")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selectedSize", is("M")))
+                .andExpect(jsonPath("$.sizeEligible").doesNotExist())
+                .andExpect(jsonPath("$.fitMessage", is(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE)));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 - Test 4: Ausencia de tabla de medidas en Catálogo -> 200 OK con sizeEligible = null")
+    void test4_AusenciaTablaMedidasEnCatalogo_Retorna200ConSizeEligibleNull() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+        CatalogGarment garment = new CatalogGarment(
+                GarmentId.of(garmentId), "Pantalón Chino", GarmentCategory.BOTTOM,
+                "https://storage/pants.png", true, Instant.now()
+        );
+        GarmentValidationResult result = new GarmentValidationResult(
+                garment, true, true, BodyZone.LOWER_BODY, true,
+                "Prenda compatible en zona LOWER_BODY.", List.of(),
+                "32", null, GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE, true
+        );
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)), eq(GarmentId.of(garmentId)), eq("32"), any()))
+                .thenReturn(result);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "32")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selectedSize", is("32")))
+                .andExpect(jsonPath("$.sizeEligible").doesNotExist())
+                .andExpect(jsonPath("$.fitMessage", is(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE)));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 - Test 5: Ajuste compatible e incompatible con datos comparables (true / false)")
+    void test5_AjusteCompatibleEIncompatibleConDatosComparables() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+        CatalogGarment garment = new CatalogGarment(
+                GarmentId.of(garmentId), "Vestido Verano", GarmentCategory.ONE_PIECE,
+                "https://storage/dress.png", true, Instant.now()
+        );
+
+        // Subcaso 5a: Compatible (sizeEligible = true)
+        GarmentValidationResult fitTrueResult = new GarmentValidationResult(
+                garment, true, true, BodyZone.FULL_BODY, true,
+                "Prenda compatible en zona FULL_BODY.", List.of(),
+                "S", true, GarmentSizeFitPolicy.MSG_SIZE_FIT_SUCCESS, true
+        );
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)), eq(GarmentId.of(garmentId)), eq("S"), any()))
+                .thenReturn(fitTrueResult);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "S")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selectedSize", is("S")))
+                .andExpect(jsonPath("$.sizeEligible", is(true)))
+                .andExpect(jsonPath("$.fitMessage", is(GarmentSizeFitPolicy.MSG_SIZE_FIT_SUCCESS)));
+
+        // Subcaso 5b: Incompatible (sizeEligible = false)
+        GarmentValidationResult fitFalseResult = new GarmentValidationResult(
+                garment, true, true, BodyZone.FULL_BODY, true,
+                "Prenda compatible en zona FULL_BODY.", List.of(),
+                "XS", false, GarmentSizeFitPolicy.MSG_SIZE_FIT_WARNING, true
+        );
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)), eq(GarmentId.of(garmentId)), eq("XS"), any()))
+                .thenReturn(fitFalseResult);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "XS")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selectedSize", is("XS")))
+                .andExpect(jsonPath("$.sizeEligible", is(false)))
+                .andExpect(jsonPath("$.fitMessage", is(GarmentSizeFitPolicy.MSG_SIZE_FIT_WARNING)));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 - Test 6: Prenda no disponible o no elegible -> 422 Unprocessable Entity con GARMENT_NOT_ELIGIBLE")
+    void test6_PrendaNoElegible_Retorna422GarmentNotEligible() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID invisibleGarmentId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)), eq(GarmentId.of(invisibleGarmentId)), eq("M"), any()))
+                .thenThrow(new GarmentNotEligibleException("La prenda no está disponible o no admite prueba virtual."));
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", invisibleGarmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "M")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code", is("GARMENT_NOT_ELIGIBLE")))
+                .andExpect(jsonPath("$.errorCode", is("GARMENT_NOT_ELIGIBLE")))
+                .andExpect(jsonPath("$.detail", is("La prenda no está disponible o no admite prueba virtual.")));
     }
 
     @Test

@@ -402,11 +402,12 @@ class AuthNumericIdHttpIntegrationTest {
                         "Prenda compatible y disponible para prueba virtual en zona UPPER_BODY.",
                         List.of()
                 );
-        when(queryTryOnJobsService.validateGarmentEligibility(any(), any(), any()))
+        when(queryTryOnJobsService.validateGarmentEligibility(any(), any(), any(), any()))
                 .thenReturn(mockResult);
 
         mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", SAMPLE_GARMENT_UUID)
                         .param("userId", AUTH_NUMERIC_ID)
+                        .param("selectedSize", "M")
                         .param("selectedGarmentIds", "1001", "1002")
                         .header("Authorization", tokenFor(AUTH_NUMERIC_ID, "COMPRADOR")))
                 .andExpect(status().isOk())

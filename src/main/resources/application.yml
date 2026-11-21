@@ -97,6 +97,8 @@ styleradar:
     fashn-api-url: ${FASHN_API_URL:https://api.fashn.ai/v1}
     fashn-api-key: ${FASHN_API_KEY:}
     fashn-total-timeout: ${FASHN_TOTAL_TIMEOUT:PT25S}
+    usuarios-service-url: ${USUARIOS_SERVICE_URL:http://localhost:8120}
+    catalogo-service-url: ${CATALOGO_SERVICE_URL:http://localhost:8220}
     blob-base-url: ${AZURE_STORAGE_BASE_URL:https://styleradarpt8080blob.blob.core.windows.net}
     blob-container: ${AZURE_STORAGE_CONTAINER:biometric-silhouettes}
     blob-account-key: ${AZURE_STORAGE_ACCOUNT_KEY}

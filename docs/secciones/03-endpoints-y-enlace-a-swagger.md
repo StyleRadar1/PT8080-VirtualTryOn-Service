@@ -25,18 +25,23 @@ La documentación interactiva OpenAPI 3.0 y los contratos de ejecución se encue
 
 | Método | Endpoint | Descripción | Rol Requerido | Códigos HTTP |
 | :--------: | :--------------------------- | :----------------------------------------------------------- | :------------ | :--------------------------------: |
-| `POST` | `/api/v1/try-on/consents` | Otorga o actualiza el consentimiento biométrico (Ley 1581) (`SR-RF-107`) | `COMPRADOR`, `USER`, `ADMIN` | `201`, `400`, `401`, `403` |
+| `POST` | `/api/v1/try-on/consents` | Otorga o actualiza el consentimiento biométrico informado (Ley 1581) (`SR-RF-107`) | `COMPRADOR`, `USER`, `ADMIN` | `201`, `400`, `401`, `403` |
 | `GET` | `/api/v1/try-on/consents/{userId}` | Consulta el estado del consentimiento biométrico del usuario (`SR-RF-107`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
 | `DELETE` | `/api/v1/try-on/consents/{userId}` | Revoca el consentimiento biométrico y elimina la silueta activa (`SR-RF-107`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
 | `POST` | `/api/v1/try-on/photos` | Carga y valida la fotografía frontal (`JPEG`/`PNG`, $\le 5\text{ MB}$, $\ge 300\times 400\text{ px}$ vertical) (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `201`, `400`, `401`, `403`, `413`, `422` |
 | `GET` | `/api/v1/try-on/photos/{userId}` | Consulta metadatos y URL firmada de solo lectura (`sp=r`) de la silueta (`SR-RF-23`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
 | `GET` | `/api/v1/try-on/quotas` | Consulta cuotas mensuales consumidas y disponibles en PostgreSQL + Redis (`SR-RF-108`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
-| `GET` | `/api/v1/try-on/garments/{garmentId}/validate` | Valida compatibilidad de categoría de prenda y disponibilidad de cuota (`SR-RF-24`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `400`, `401`, `403`, `429` |
+| `GET` | `/api/v1/try-on/garments/{garmentId}/validate` | Valida compatibilidad de categoría, superposición y ajuste orientativo de talla (`selectedSize` obligatoria) (`SR-RF-24`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `400`, `401`, `403`, `422`, `429` |
 | `POST` | `/api/v1/try-on/jobs` | Inicia y procesa un trabajo de prueba virtual con IA (`FashnAiStrategy` / `MockAiStrategy`) (`SR-RF-25`) | `COMPRADOR`, `USER`, `ADMIN` | `202`, `400`, `401`, `403`, `422`, `429`, `504` |
 | `GET` | `/api/v1/try-on/jobs/{jobId}` | Consulta el estado o resultado renderizado con URL SAS renovada (`SR-RF-26`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
 | `GET` | `/api/v1/try-on/jobs` | Consulta el historial de trabajos de prueba virtual del usuario (`SR-RF-109`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
 | `DELETE` | `/api/v1/try-on/personal-photos/{jobId}` | Elimina irreversiblemente silueta y resultado por Derecho al Olvido (Ley 1581) (`SR-RF-27`) | `COMPRADOR`, `USER`, `ADMIN` | `204`, `401`, `403`, `404` |
 | `GET` | `/actuator/health` | Health Check y estado operativo de BD, Redis y RabbitMQ | Público | `200` |
+
+> [!NOTE]
+> **Dependencias Externas de SR-RF-24 (Contratos Abiertos con otros Squads):**
+> * **`ms-usuarios` (`UserMeasurementPort` / `UserMeasurementRestAdapter`):** Consulta `GET /api/v1/usuarios/{userId}/medidas` para obtener medidas antropométricas autorizadas (estatura, pecho/torso, cintura, cadera). Si el servicio no está disponible o el perfil carece de datos, el flujo degrada de forma segura retornando `sizeEligible = null` y mensaje de medidas insuficientes (FA-02).
+> * **`ms-catalogo` (`GarmentSizeMeasurementPort` / `CatalogGarmentMeasurementRestAdapter`):** Consulta `GET /api/v1/catalogo/items/{garmentId}/tallas-medidas` para obtener tallas ofertadas y rangos de medidas por talla. Si la prenda no ofrece la talla solicitada se rechaza con HTTP 400 (`TRYON_SIZE_UNAVAILABLE`, RN-07); si la prenda no cuenta con tabla de medidas en Catálogo, el servicio responde HTTP 200 con `sizeEligible = null` (FA-02).
 
 <details>
 <summary><b>Click para ver Ejemplos Interactivos de Request y Response JSON (Payloads)</b></summary>

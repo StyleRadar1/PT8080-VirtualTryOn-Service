@@ -24,6 +24,15 @@ public interface GetUserQuotaUseCase {
             List<GarmentId> selectedGarmentIds
     );
 
+    default GarmentValidationResult validateGarmentEligibility(
+            UserId userId,
+            GarmentId garmentId,
+            String selectedSize,
+            List<GarmentId> selectedGarmentIds
+    ) {
+        return validateGarmentEligibility(userId, garmentId, selectedGarmentIds);
+    }
+
     default GarmentValidationResult validateGarmentEligibility(UserId userId, GarmentId garmentId) {
         return validateGarmentEligibility(userId, garmentId, List.of());
     }

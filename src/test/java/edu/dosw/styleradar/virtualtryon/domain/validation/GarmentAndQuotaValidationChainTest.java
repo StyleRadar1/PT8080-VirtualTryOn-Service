@@ -1,6 +1,7 @@
 package edu.dosw.styleradar.virtualtryon.domain.validation;
 
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BodyZone;
@@ -158,13 +159,13 @@ class GarmentAndQuotaValidationChainTest {
                 quota
         );
 
-        assertThrows(InvalidGarmentException.class, () -> validationChain.validate(footwearContext));
-        assertThrows(InvalidGarmentException.class, () -> validationChain.validate(accessoriesContext));
-        assertThrows(InvalidGarmentException.class, () -> validationChain.validate(outerwearContext));
+        assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(footwearContext));
+        assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(accessoriesContext));
+        assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(outerwearContext));
     }
 
     @Test
-    @DisplayName("HU SR-RF-24: Dada prenda oculta por moderación o sin imagen o sin categoría, Cuando se ejecuta GarmentCategoryValidator, Entonces lanza InvalidGarmentException")
+    @DisplayName("HU SR-RF-24: Dada prenda oculta por moderación o sin imagen o sin categoría, Cuando se ejecuta GarmentCategoryValidator, Entonces lanza GarmentNotEligibleException o InvalidGarmentException")
     void shouldRejectHiddenOrImageLessOrUncategorizedGarment() {
         UserQuota quota = UserQuota.createDefault(userId, BillingPeriod.of("2026-11"));
 
@@ -182,9 +183,9 @@ class GarmentAndQuotaValidationChainTest {
         );
 
         assertThrows(InvalidGarmentException.class, () -> validationChain.validate(missingIdContext));
-        assertThrows(InvalidGarmentException.class, () -> validationChain.validate(hiddenContext));
-        assertThrows(InvalidGarmentException.class, () -> validationChain.validate(missingCategoryContext));
-        assertThrows(InvalidGarmentException.class, () -> validationChain.validate(missingImageContext));
+        assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(hiddenContext));
+        assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(missingCategoryContext));
+        assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(missingImageContext));
     }
 
     @Test

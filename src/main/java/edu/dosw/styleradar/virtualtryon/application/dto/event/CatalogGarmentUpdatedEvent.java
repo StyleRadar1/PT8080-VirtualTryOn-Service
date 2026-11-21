@@ -24,7 +24,8 @@ public record CatalogGarmentUpdatedEvent(
         String category,
         String imageUrl,
         boolean visible,
-        Instant updatedAt
+        Instant updatedAt,
+        Set<String> availableSizes
 ) {
 
     private static final Set<String> HIDDEN_MODERATION_STATES = Set.of(
@@ -36,6 +37,17 @@ public record CatalogGarmentUpdatedEvent(
             "PENDING", "PENDIENTE"
     );
 
+    public CatalogGarmentUpdatedEvent(
+            UUID garmentId,
+            String name,
+            String category,
+            String imageUrl,
+            boolean visible,
+            Instant updatedAt
+    ) {
+        this(garmentId, name, category, imageUrl, visible, updatedAt, Set.of());
+    }
+
     @JsonCreator
     public static CatalogGarmentUpdatedEvent fromJson(
             @JsonProperty("garmentId") @JsonAlias({"itemId", "id", "prendaId"}) Object rawGarmentId,
@@ -45,12 +57,14 @@ public record CatalogGarmentUpdatedEvent(
             @JsonProperty("visible") @JsonAlias({"activo", "activa", "disponible"}) Boolean visible,
             @JsonProperty("approved") @JsonAlias({"aprobada", "aprobado"}) Boolean approved,
             @JsonProperty("moderationStatus") @JsonAlias({"estadoModeracion", "estado", "moderationState"}) String moderationStatus,
-            @JsonProperty("updatedAt") @JsonAlias({"fechaPublicacion", "fechaActualizacion", "fechaEvento", "timestamp"}) Instant updatedAt
+            @JsonProperty("updatedAt") @JsonAlias({"fechaPublicacion", "fechaActualizacion", "fechaEvento", "timestamp"}) Instant updatedAt,
+            @JsonProperty("availableSizes") @JsonAlias({"tallas", "sizes", "tallasDisponibles"}) Set<String> availableSizes
     ) {
         UUID parsedGarmentId = GarmentId.parseToUuid(rawGarmentId);
         boolean isVisible = resolveVisibility(visible, approved, moderationStatus);
         Instant parsedUpdatedAt = updatedAt != null ? updatedAt : Instant.now();
-        return new CatalogGarmentUpdatedEvent(parsedGarmentId, name, category, imageUrl, isVisible, parsedUpdatedAt);
+        Set<String> sizes = availableSizes != null ? availableSizes : Set.of();
+        return new CatalogGarmentUpdatedEvent(parsedGarmentId, name, category, imageUrl, isVisible, parsedUpdatedAt, sizes);
     }
 
     public static CatalogGarmentUpdatedEvent fromJson(
@@ -61,7 +75,7 @@ public record CatalogGarmentUpdatedEvent(
             Boolean visible,
             Instant updatedAt
     ) {
-        return fromJson(rawGarmentId, name, category, imageUrl, visible, null, null, updatedAt);
+        return fromJson(rawGarmentId, name, category, imageUrl, visible, null, null, updatedAt, Set.of());
     }
 
     private static boolean resolveVisibility(Boolean visible, Boolean approved, String moderationStatus) {
@@ -77,5 +91,3 @@ public record CatalogGarmentUpdatedEvent(
         return visible == null || visible;
     }
 }
-
-

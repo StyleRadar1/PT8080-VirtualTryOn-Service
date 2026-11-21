@@ -98,27 +98,32 @@ public interface VirtualTryOnOpenApiDoc {
     );
 
     @Operation(
-            summary = "Validar elegibilidad de prenda del catálogo y cuota mensual del usuario (SR-RF-24)",
+            summary = "Validar elegibilidad de prenda, talla y cuota mensual del usuario (SR-RF-24)",
             description = "Verifica que el usuario tenga consentimiento biométrico activo y cuota mensual disponible, " +
-                    "consulta la prenda en el catálogo y evalúa compatibilidad (TOP, BOTTOM, ONE_PIECE), visibilidad " +
-                    "y posibles reemplazos por zona corporal respecto a selectedGarmentIds. Admite UUID o IDs numéricos/texto de Auth y Catálogo."
+                    "consulta la prenda en el catálogo, comprueba que la talla obligatoria selectedSize sea ofrecida por la prenda (RN-07), " +
+                    "evalúa compatibilidad de categoría y disponibilidad (FA-04 -> 422 si no es elegible), y calcula el ajuste " +
+                    "orientativo comparando únicamente medidas pertinentes del usuario y de la tabla de catálogo (RN-02, RN-03, RN-04, FA-01 a FA-04)."
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Evaluación completada (incluye incompatible/oculta con eligibleForTryOn=false)",
+            @ApiResponse(responseCode = "200", description = "Evaluación completada (incluye compatibilidad, ajuste orientativo sizeEligible y cuota)",
                     content = @Content(schema = @Schema(implementation = GarmentValidationResponse.class))),
-            @ApiResponse(responseCode = "400", description = "Prenda inexistente en catálogo o falta consentimiento biométrico",
+            @ApiResponse(responseCode = "400", description = "Selección incompleta (TRYON_SELECTION_INCOMPLETE), talla no disponible (TRYON_SIZE_UNAVAILABLE) o identificador inválido",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
             @ApiResponse(responseCode = "401", description = "Usuario no autenticado (token JWT requerido)",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
             @ApiResponse(responseCode = "403", description = "Acceso denegado para validar en nombre de otro usuario",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
-            @ApiResponse(responseCode = "429", description = "Cuota mensual de pruebas virtuales excedida",
+            @ApiResponse(responseCode = "422", description = "Prenda no visible o categoría no compatible para prueba virtual (GARMENT_NOT_ELIGIBLE, FA-04)",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "429", description = "Cuota mensual de pruebas virtuales excedida (TRYON_QUOTA_EXHAUSTED)",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
     @org.springframework.web.bind.annotation.GetMapping("/garments/{garmentId}/validate")
     ResponseEntity<GarmentValidationResponse> validateGarmentForTryOn(
             @Parameter(description = "Identificador único de la prenda del catálogo (acepta UUID o ID numérico/texto)", schema = @Schema(type = "string", example = "f8e7d6c5-b4a3-2109-8765-43210fedcba9"))
             @org.springframework.web.bind.annotation.PathVariable("garmentId") Object garmentId,
+            @Parameter(description = "Talla obligatoria seleccionada para la prenda (ej. XS, S, M, L, XL; RN-07; 400 si se omite)", required = true, schema = @Schema(type = "string", example = "M"))
+            @org.springframework.web.bind.annotation.RequestParam(value = "selectedSize", required = false) String selectedSize,
             @Parameter(description = "Identificador del usuario comprador (acepta UUID o ID numérico de Auth)", schema = @Schema(type = "string", example = "12345"))
             @org.springframework.web.bind.annotation.RequestParam(value = "userId", required = false) Object userId,
             @Parameter(description = "Lista opcional de identificadores de prendas ya seleccionadas para detectar reemplazos por zona")

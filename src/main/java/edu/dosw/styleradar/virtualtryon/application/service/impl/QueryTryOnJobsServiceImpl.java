@@ -1,24 +1,32 @@
 package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentSizeUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.TryOnSelectionIncompleteException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentSizeChart;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
+import edu.dosw.styleradar.virtualtryon.domain.model.UserBodyMeasurements;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.GarmentSizeMeasurementPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.UserMeasurementPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.validation.BiometricConsentValidator;
 import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSelectionPolicy;
+import edu.dosw.styleradar.virtualtryon.domain.validation.GarmentSizeFitPolicy;
 import edu.dosw.styleradar.virtualtryon.domain.validation.MonthlyUserQuotaValidator;
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidationContext;
 import edu.dosw.styleradar.virtualtryon.domain.validation.TryOnValidatorHandler;
@@ -52,6 +60,8 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     private final BiometricDataRepositoryPort biometricDataRepositoryPort;
     private final TryOnJobRepositoryPort jobRepositoryPort;
     private final BlobStoragePort blobStoragePort;
+    private final UserMeasurementPort userMeasurementPort;
+    private final GarmentSizeMeasurementPort garmentSizeMeasurementPort;
     private final TryOnValidatorHandler eligibilityValidationChain;
 
     @Autowired
@@ -60,13 +70,17 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             UserQuotaCachePort quotaCachePort,
             BiometricDataRepositoryPort biometricDataRepositoryPort,
             TryOnJobRepositoryPort jobRepositoryPort,
-            @Autowired(required = false) BlobStoragePort blobStoragePort
+            @Autowired(required = false) BlobStoragePort blobStoragePort,
+            @Autowired(required = false) UserMeasurementPort userMeasurementPort,
+            @Autowired(required = false) GarmentSizeMeasurementPort garmentSizeMeasurementPort
     ) {
         this.quotaRepositoryPort = quotaRepositoryPort;
         this.quotaCachePort = quotaCachePort;
         this.biometricDataRepositoryPort = biometricDataRepositoryPort;
         this.jobRepositoryPort = jobRepositoryPort;
         this.blobStoragePort = blobStoragePort;
+        this.userMeasurementPort = userMeasurementPort != null ? userMeasurementPort : u -> Optional.empty();
+        this.garmentSizeMeasurementPort = garmentSizeMeasurementPort != null ? garmentSizeMeasurementPort : g -> Optional.empty();
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
@@ -78,9 +92,30 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             UserQuotaRepositoryPort quotaRepositoryPort,
             UserQuotaCachePort quotaCachePort,
             BiometricDataRepositoryPort biometricDataRepositoryPort,
+            TryOnJobRepositoryPort jobRepositoryPort,
+            BlobStoragePort blobStoragePort,
+            UserMeasurementPort userMeasurementPort
+    ) {
+        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, jobRepositoryPort, blobStoragePort, userMeasurementPort, null);
+    }
+
+    public QueryTryOnJobsServiceImpl(
+            UserQuotaRepositoryPort quotaRepositoryPort,
+            UserQuotaCachePort quotaCachePort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            TryOnJobRepositoryPort jobRepositoryPort,
+            BlobStoragePort blobStoragePort
+    ) {
+        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, jobRepositoryPort, blobStoragePort, null, null);
+    }
+
+    public QueryTryOnJobsServiceImpl(
+            UserQuotaRepositoryPort quotaRepositoryPort,
+            UserQuotaCachePort quotaCachePort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
             TryOnJobRepositoryPort jobRepositoryPort
     ) {
-        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, jobRepositoryPort, null);
+        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, jobRepositoryPort, null, null, null);
     }
 
     public QueryTryOnJobsServiceImpl(
@@ -88,7 +123,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             UserQuotaCachePort quotaCachePort,
             BiometricDataRepositoryPort biometricDataRepositoryPort
     ) {
-        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, null, null);
+        this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, null, null, null);
     }
 
     @Override
@@ -109,12 +144,22 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     public GarmentValidationResult validateGarmentEligibility(
             UserId userId,
             GarmentId garmentId,
+            String selectedSize,
             List<GarmentId> selectedGarmentIds
     ) {
+        if (selectedSize == null || selectedSize.isBlank()) {
+            throw new TryOnSelectionIncompleteException("Selecciona una prenda, una talla y una fotografía válida.");
+        }
+        String normalizedSize = selectedSize.trim().toUpperCase(java.util.Locale.ROOT);
+
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
                 .orElseThrow(() -> new InvalidGarmentException(
                         "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"
                 ));
+
+        if (!garment.isVisible() || garment.getCategory() == null || !garment.getCategory().isCompatibleWithTryOn()) {
+            throw new GarmentNotEligibleException("La prenda no está disponible o no admite prueba virtual.");
+        }
 
         boolean hasActiveConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
                 .map(BiometricConsent::isValidForInference)
@@ -137,10 +182,55 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         );
         eligibilityValidationChain.validate(context);
 
+        GarmentSizeChart sizeChart = (garmentSizeMeasurementPort != null)
+                ? garmentSizeMeasurementPort.findSizeChartByGarmentId(garmentId).orElse(null)
+                : null;
+
+        boolean sizeOffered;
+        if (sizeChart != null && sizeChart.hasExplicitAvailableSizes()) {
+            sizeOffered = sizeChart.offersSize(normalizedSize);
+        } else {
+            sizeOffered = garment.offersSize(normalizedSize);
+        }
+        if (!sizeOffered) {
+            throw new GarmentSizeUnavailableException(normalizedSize);
+        }
+
+        UserBodyMeasurements measurements = (userMeasurementPort != null)
+                ? userMeasurementPort.findMeasurementsByUserId(userId).orElse(null)
+                : null;
+
+        GarmentSizeFitPolicy.SizeFitEvaluation sizeEvaluation = GarmentSizeFitPolicy.evaluate(
+                normalizedSize,
+                garment.getCategory(),
+                measurements,
+                sizeChart
+        );
+
         List<CatalogGarment> selectedGarments = (selectedGarmentIds == null || selectedGarmentIds.isEmpty())
                 ? List.of()
                 : quotaRepositoryPort.findCatalogGarmentsByIds(selectedGarmentIds);
-        return GarmentSelectionPolicy.evaluate(garment, selectedGarments);
+
+        boolean quotaAvailable = quota.hasAvailableQuota();
+
+        return GarmentSelectionPolicy.evaluate(
+                garment,
+                selectedGarments,
+                sizeEvaluation.normalizedSize(),
+                sizeEvaluation.sizeEligible(),
+                sizeEvaluation.fitMessage(),
+                quotaAvailable
+        );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public GarmentValidationResult validateGarmentEligibility(
+            UserId userId,
+            GarmentId garmentId,
+            List<GarmentId> selectedGarmentIds
+    ) {
+        throw new TryOnSelectionIncompleteException("Selecciona una prenda, una talla y una fotografía válida.");
     }
 
     private void resyncCacheFromAuthoritativeQuota(UserId userId, BillingPeriod period, int authoritativeUsedCount) {
