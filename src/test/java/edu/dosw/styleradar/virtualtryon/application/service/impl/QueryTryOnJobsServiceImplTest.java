@@ -58,6 +58,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -346,6 +347,68 @@ class QueryTryOnJobsServiceImplTest {
         assertNull(result.sizeEligible(), "sizeEligible debe ser null cuando no hay registro antropométrico");
         assertEquals(GarmentSizeFitPolicy.MSG_FIT_DATA_UNAVAILABLE, result.fitMessage());
         assertTrue(result.quotaAvailable());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Cobertura de sobrecarga de 3 argumentos y constructor de 5 argumentos en QueryTryOnJobsServiceImpl")
+    void shouldCoverThreeArgOverloadAndFiveArgConstructor() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        GarmentId existingTopId = GarmentId.of(UUID.randomUUID());
+
+        CatalogGarmentJpaEntity candidateEntity = new CatalogGarmentJpaEntity(
+                garmentId.value(),
+                "Polo Blanco",
+                "TOP",
+                "https://storage/polo.png",
+                true,
+                Instant.now()
+        );
+        CatalogGarmentJpaEntity existingEntity = new CatalogGarmentJpaEntity(
+                existingTopId.value(),
+                "Camisa Roja",
+                "TOP",
+                "https://storage/roja.png",
+                true,
+                Instant.now()
+        );
+
+        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(candidateEntity));
+        when(catalogGarmentJpaRepository.findAllById(List.of(existingTopId.value()))).thenReturn(List.of(existingEntity));
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
+                new BiometricConsent(
+                        UUID.randomUUID(), userId, "v1.0-LEY1581", true,
+                        List.of("VIRTUAL_TRY_ON"), Instant.now(), null, "127.0.0.1"
+                )
+        ));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+
+        // Instanciar usando el constructor de 5 argumentos (sin userMeasurementPort)
+        QueryTryOnJobsServiceImpl service5Args = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                repositoryAdapter,
+                blobStoragePort
+        );
+
+        // Invocar la sobrecarga de 3 argumentos (userId, garmentId, selectedGarmentIds)
+        GarmentValidationResult result3Args = service5Args.validateGarmentEligibility(
+                userId, garmentId, List.of(existingTopId)
+        );
+
+        assertNotNull(result3Args);
+        assertTrue(result3Args.eligibleForTryOn());
+        assertNull(result3Args.selectedSize());
+        assertEquals(List.of(existingTopId), result3Args.replacedGarmentIds());
+
+        // Invocar pasando null como selectedGarmentIds
+        GarmentValidationResult resultNullSelected = service5Args.validateGarmentEligibility(
+                userId, garmentId, "L", null
+        );
+        assertNotNull(resultNullSelected);
+        assertEquals("L", resultNullSelected.selectedSize());
+        assertTrue(resultNullSelected.replacedGarmentIds().isEmpty());
     }
 
     @Test

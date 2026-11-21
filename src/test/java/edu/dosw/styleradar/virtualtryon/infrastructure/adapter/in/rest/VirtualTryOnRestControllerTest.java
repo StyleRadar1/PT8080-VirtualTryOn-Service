@@ -529,6 +529,53 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-24: Cuando se envía selectedSize Y selectedGarmentIds simultáneamente, valida ambos parámetros correctamente")
+    void testValidateGarmentWithSelectedSizeAndSelectedGarments() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+        UUID otherGarmentId = UUID.randomUUID();
+        CatalogGarment garment = new CatalogGarment(
+                GarmentId.of(garmentId),
+                "Chaqueta Denim",
+                GarmentCategory.TOP,
+                "https://storage/chaqueta.png",
+                true,
+                Instant.now()
+        );
+        GarmentValidationResult result = new GarmentValidationResult(
+                garment,
+                true,
+                true,
+                BodyZone.UPPER_BODY,
+                true,
+                "Prenda compatible en zona UPPER_BODY.",
+                List.of(GarmentId.of(otherGarmentId)),
+                "L",
+                true,
+                GarmentSizeFitPolicy.MSG_SIZE_FIT_SUCCESS,
+                true
+        );
+
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)),
+                eq(GarmentId.of(garmentId)),
+                eq("L"),
+                eq(List.of(GarmentId.of(otherGarmentId)))))
+                .thenReturn(result);
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "L")
+                        .param("selectedGarmentIds", otherGarmentId.toString())
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selectedSize", is("L")))
+                .andExpect(jsonPath("$.sizeEligible", is(true)))
+                .andExpect(jsonPath("$.replacedGarmentIds[0]", is(otherGarmentId.toString())));
+    }
+
+    @Test
     @DisplayName("HU SR-RF-24: Dado usuario no autenticado o intentando consultar cuota de otro usuario sin ser ADMIN, Cuando invoca /quotas o /garments/{id}/validate, Entonces responde 401 o 403")
     void testQuotasAndGarmentValidationSecurityAndOwnership() throws Exception {
         UUID authenticatedUserId = UUID.randomUUID();
