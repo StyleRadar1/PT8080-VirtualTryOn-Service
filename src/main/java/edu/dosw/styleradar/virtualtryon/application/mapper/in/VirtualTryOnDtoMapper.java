@@ -110,7 +110,11 @@ public class VirtualTryOnDtoMapper {
                 result.eligibleForTryOn(),
                 result.validationMessage(),
                 result.replacedGarmentIds().stream().map(GarmentId::value).toList(),
-                garment.getUpdatedAt()
+                garment.getUpdatedAt(),
+                result.selectedSize(),
+                result.sizeEligible(),
+                result.fitMessage(),
+                result.quotaAvailable()
         );
     }
 

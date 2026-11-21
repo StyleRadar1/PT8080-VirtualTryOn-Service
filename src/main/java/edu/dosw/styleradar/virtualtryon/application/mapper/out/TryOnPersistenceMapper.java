@@ -121,24 +121,35 @@ public class TryOnPersistenceMapper {
     }
 
     public CatalogGarmentJpaEntity toCatalogGarmentJpaEntity(CatalogGarment domain) {
+        String sizesCsv = (domain.getAvailableSizes() == null || domain.getAvailableSizes().isEmpty())
+                ? null
+                : String.join(",", domain.getAvailableSizes());
         return new CatalogGarmentJpaEntity(
                 domain.getGarmentId().value(),
                 domain.getName(),
                 domain.getCategory().name(),
                 domain.getImageUrl(),
                 domain.isVisible(),
+                sizesCsv,
                 domain.getUpdatedAt()
         );
     }
 
     public CatalogGarment toCatalogGarmentDomain(CatalogGarmentJpaEntity entity) {
+        java.util.Set<String> sizes = (entity.getAvailableSizes() == null || entity.getAvailableSizes().isBlank())
+                ? java.util.Set.of()
+                : java.util.Arrays.stream(entity.getAvailableSizes().split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(java.util.stream.Collectors.toSet());
         return new CatalogGarment(
                 GarmentId.of(entity.getGarmentId()),
                 entity.getName(),
                 GarmentCategory.fromRawValue(entity.getCategory()),
                 entity.getImageUrl(),
                 entity.isVisible(),
-                entity.getUpdatedAt()
+                entity.getUpdatedAt(),
+                sizes
         );
     }
 

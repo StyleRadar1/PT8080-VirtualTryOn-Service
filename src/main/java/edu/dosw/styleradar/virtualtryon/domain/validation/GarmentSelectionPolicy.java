@@ -1,5 +1,6 @@
 package edu.dosw.styleradar.virtualtryon.domain.validation;
 
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BodyZone;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
@@ -26,6 +27,20 @@ public final class GarmentSelectionPolicy {
     public static GarmentValidationResult evaluate(
             CatalogGarment candidate,
             List<CatalogGarment> selectedGarments
+    ) {
+        return evaluate(candidate, selectedGarments, null, null, null, true);
+    }
+
+    /**
+     * Evalúa una prenda candidata, conflictos de zona, ajuste orientativo de talla y saldo de cuota (SR-RF-24).
+     */
+    public static GarmentValidationResult evaluate(
+            CatalogGarment candidate,
+            List<CatalogGarment> selectedGarments,
+            String selectedSize,
+            Boolean sizeEligible,
+            String fitMessage,
+            boolean quotaAvailable
     ) {
         Objects.requireNonNull(candidate, "La prenda candidata no puede ser nula");
 
@@ -54,7 +69,11 @@ public final class GarmentSelectionPolicy {
                 zone,
                 eligibleForTryOn,
                 validationMessage,
-                replacedGarmentIds
+                replacedGarmentIds,
+                selectedSize,
+                sizeEligible,
+                fitMessage,
+                quotaAvailable
         );
     }
 
@@ -65,7 +84,7 @@ public final class GarmentSelectionPolicy {
     public static void assertEligible(CatalogGarment candidate) {
         GarmentValidationResult result = evaluate(candidate, List.of());
         if (!result.eligibleForTryOn()) {
-            throw new InvalidGarmentException(candidate.getGarmentId().value(), result.validationMessage());
+            throw new GarmentNotEligibleException("La prenda no está disponible o no admite prueba virtual.");
         }
     }
 

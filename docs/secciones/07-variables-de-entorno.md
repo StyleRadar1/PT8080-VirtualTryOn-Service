@@ -38,6 +38,8 @@ Todas las configuraciones dependientes de entorno se gestionan mediante variable
 | `FASHN_API_URL` | Endpoint base API de inferencia FASHN AI | `https://api.fashn.ai/v1` | `https://api.fashn.ai/v1` | Sí |
 | `FASHN_API_KEY` | Llave de autenticación API FASHN AI | *(Inyectada por `.env` / Secret)* | *(Inyectada por `.env` / Secret)* | Sí |
 | `MAX_DAILY_QUOTA` | Cuota máxima de pruebas diarias por usuario (24h TTL) | `10` | `10` | Sí |
+| `USUARIOS_SERVICE_URL` | URL base del microservicio `ms-usuarios` para consultar medidas autorizadas (`SR-RF-24`) | `http://localhost:8120` | `http://ms-usuarios:8120` | No |
+| `CATALOGO_SERVICE_URL` | URL base del microservicio `ms-catalogo` para consultar tabla de medidas por talla (`SR-RF-24`) | `http://localhost:8220` | `http://ms-catalogo:8084` | No |
 
 <details>
 <summary><b>Click para ver la Plantilla de Archivo .env.example Completa</b></summary>
@@ -86,6 +88,10 @@ RABBITMQ_EXCHANGE=styleradar.exchange
 # Proveedor Externo de IA Generativa (FASHN AI)
 FASHN_API_URL=https://api.fashn.ai/v1
 FASHN_API_KEY=mock-dev-key
+
+# Integración con otros Microservicios (SR-RF-24)
+USUARIOS_SERVICE_URL=http://localhost:8120
+CATALOGO_SERVICE_URL=http://localhost:8220
 
 # Reglas de Negocio
 MAX_DAILY_QUOTA=10

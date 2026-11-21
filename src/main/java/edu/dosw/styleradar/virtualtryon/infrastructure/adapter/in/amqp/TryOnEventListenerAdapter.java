@@ -162,7 +162,8 @@ public class TryOnEventListenerAdapter {
                 category,
                 event.imageUrl(),
                 visible,
-                updatedAt
+                updatedAt,
+                event.availableSizes()
         );
         queryTryOnJobsService.syncCatalogGarment(garment);
         log.info("Prenda del catálogo {} sincronizada con categoría {} (compatible={}, visible={})",

@@ -7,8 +7,8 @@ import java.util.Objects;
 
 /**
  * Resultado inmutable de evaluar la elegibilidad, visibilidad, categoría compatible,
- * zona corporal y conflictos de reemplazo de una prenda frente a las prendas actualmente
- * seleccionadas para la prueba virtual (RN-01, RN-02, FA-01, FA-02, FA-04 · SR-RF-24).
+ * zona corporal, conflictos de reemplazo, ajuste orientativo de talla y saldo de cuota
+ * para el Probador Virtual (RN-01 a RN-04, FA-01 a FA-05 · SR-RF-24).
  */
 public record GarmentValidationResult(
         CatalogGarment garment,
@@ -17,12 +17,27 @@ public record GarmentValidationResult(
         BodyZone zone,
         boolean eligibleForTryOn,
         String validationMessage,
-        List<GarmentId> replacedGarmentIds
+        List<GarmentId> replacedGarmentIds,
+        String selectedSize,
+        Boolean sizeEligible,
+        String fitMessage,
+        boolean quotaAvailable
 ) {
 
     public GarmentValidationResult {
         Objects.requireNonNull(garment, "La prenda evaluada no puede ser nula");
         replacedGarmentIds = replacedGarmentIds == null ? List.of() : List.copyOf(replacedGarmentIds);
     }
-}
 
+    public GarmentValidationResult(
+            CatalogGarment garment,
+            boolean compatible,
+            boolean visible,
+            BodyZone zone,
+            boolean eligibleForTryOn,
+            String validationMessage,
+            List<GarmentId> replacedGarmentIds
+    ) {
+        this(garment, compatible, visible, zone, eligibleForTryOn, validationMessage, replacedGarmentIds, null, null, null, true);
+    }
+}
