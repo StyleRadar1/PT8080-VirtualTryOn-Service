@@ -15,7 +15,7 @@ El microservicio `PT8080-VirtualTryOn-Service` (`ms-probador-virtual`) implement
 #### 2.1 Diagrama de Componentes General (Ecosistema StyleRadar)
 
 <div align="center">
-  <img src="../uml/DiagramaComponentesGenerales.png" alt="Diagrama de Componentes General StyleRadar" width="100%" />
+  <img src="../uml/DiagramaComponentesGeneral.png" alt="Diagrama de Componentes General StyleRadar" width="100%" />
 </div>
 
 ##### Justificación y Explicación Técnica de la Arquitectura del Ecosistema
@@ -23,11 +23,16 @@ El microservicio `PT8080-VirtualTryOn-Service` (`ms-probador-virtual`) implement
 Este diagrama modela la vista general de la arquitectura del backend de **StyleRadar**, posicionando a nuestro microservicio (`ms-VirtualTryOn`) dentro de la red global de 13 microservicios y delimitando con precisión las fronteras de comunicación:
 
 * **Puerta de Entrada Perimetral (API Gateway):**
-  * Todas las solicitudes originadas desde la aplicación cliente (`StyleRadar Client Web App`) ingresan a través del **API Gateway** perimetral (componente en rosa).
+  * Todas las solicitudes originadas desde la aplicación cliente (`StyleRadar Client Web App`) ingresan a través del **API Gateway** perimetral (puerto `8080`).
   * El Gateway actúa como proxy inverso y fachada perimetral única, centralizando la terminación TLS, el enrutamiento inteligente hacia la red privada de microservicios y la inyección de cabeceras de contexto (`X-User-Id`), aislando por completo la red interna de accesos no autorizados.
 
 * **Ecosistema de 13 Microservicios Autónomos:**
-  * La plataforma distribuye sus dominios de negocio en 13 servicios independientes: `ms-Auth`, `ms-Users`, `ms-Stores`, `ms-Notifications`, `ms-Inventory`, `ms-ItemCatalog`, `ms-Donations`, `ms-Chat`, `ms-Playlist`, `ms-Payment`, `ms-Geolocation`, `ms-VirtualTryOn` y `ms-Statistics`.
+  * La plataforma distribuye sus dominios de negocio en 13 servicios independientes bajo nomenclatura unificada:
+    - **Paquete 1 (Identidad):** `ms-Auth` (:8100), `ms-Users` (:8120) y `ms-Stores` (:8140).
+    - **Paquete 2 (Catálogo):** `ms-Inventory` (:8200), `ms-ItemCatalog` (:8220), `ms-Playlist` (:8260) y `ms-Geolocation` (:8240).
+    - **Paquete 3 (Mensajería y Notificaciones):** `ms-Notifications` (:8300) y `ms-Chat` (:8320).
+    - **Paquete 4 (Financiero y Analítica):** `ms-Payment` (:8400) y `ms-Statistics` (:8420).
+    - **Paquete 5 (Experiencia y Moda Sostenible):** `ms-VirtualTryOn` (:8500) y `ms-Donations` (:8520).
   * Dentro de esta malla, nuestro servicio `ms-VirtualTryOn` encapsula de forma exclusiva la orquestación asíncrona de pruebas virtuales con inteligencia artificial generativa, el control de cuotas mensuales de uso y la custodia legal de consentimientos biométricos bajo la Ley 1581 de Habeas Data.
 
 * **Ensambles Síncronos Ball-and-Socket (`---) (O---`) de `ms-VirtualTryOn`:**
@@ -38,12 +43,12 @@ Este diagrama modela la vista general de la arquitectura del backend de **StyleR
   4. **Consumo hacia `ms-Payment` (`ms-VirtualTryOn ---) (O--- ms-Payment`):** Consume mediante socket la interfaz de suscripciones para verificar el plan activo del usuario (`FREE` con cuota básica vs. `RADAR_PLUS` con cuota ampliada) antes de autorizar el trabajo (`P5-N02`).
 
 * **Aislamiento Estricto de Persistencia (*Database-per-Service*):**
-  * Cada microservicio administra su propio esquema de base de datos PostgreSQL de forma 100% aislada (`virtual_try_on_db` / `probador_db`, `users_db`, `stores_db`, `notifications_db`, `inventory_db`, `catalog_db`, `donations_db`, `chat_db`, `playlist_db`, `payments_db`, `geo_db` y `statistics_db`).
+  * Cada microservicio administra su propio esquema de base de datos PostgreSQL de forma 100% aislada en 12 bases relacionales (`virtual_try_on_db`, `users_db`, `stores_db`, `notifications_db`, `inventory_db`, `catalog_db`, `donations_db`, `chat_db`, `playlist_db`, `payments_db`, `geo_db` y `statistics_db`; `ms-Auth` no requiere base relacional).
   * No existen consultas cruzadas ni llaves foráneas físicas inter-servicio; las referencias se mantienen mediante identificadores lógicos inmutables (UUID), garantizando alta disponibilidad y escalabilidad horizontal independiente.
 
 * **Capa de Aceleración en Memoria con Redis:**
-  * Un clúster de **Redis** proporciona almacenamiento volátil de lectura ultrarrápida en memoria (< 3 ms).
-  * Es aprovechado principalmente por `ms-Auth` para gestión de sesiones, por `ms-Payment` para bloqueos de concurrencia contra cobros dobles, y por `ms-VirtualTryOn` para consultar cuotas de usuario en milisegundos y evitar saturar la base relacional con lecturas concurrentes redundantes.
+  * Un clúster de **Redis** proporciona almacenamiento volátil de lectura ultrarrápida en memoria (< 3 ms) organizado en 5 particiones lógicas (`Auth`, `Payment`, `Chat`, `Statistics` y `Virtual Try-on`).
+  * `ms-VirtualTryOn` consume la partición `Virtual Try-on` para consultar cuotas de usuario en milisegundos y evitar saturar la base relacional con lecturas concurrentes redundantes.
 
 * **Comunicación Asíncrona Orientada a Eventos (RabbitMQ):**
   * La mensajería asíncrona desacopla flujos de alta latencia o dependencias multidireccionales mediante brokers y colas dedicadas (`RabbitMQ Usuarios`, `RabbitMQ Notificaciones`, `RabbitMQ ItemCatalogo`, `RabbitMQ Pagos`, `RabbitMQ Geolocalizacion`, `RabbitMQ Estadisticas`).
@@ -53,8 +58,8 @@ Este diagrama modela la vista general de la arquitectura del backend de **StyleR
   * En el lateral derecho se delimitan claramente los servicios externos fuera del perímetro de StyleRadar:
     * **Google OAuth:** Autenticación federada hacia `ms-Auth`.
     * **MercadoPago API:** Pasarela transaccional de pagos hacia `ms-Payment`.
-    * **Azure Blob Storage:** Almacén seguro de objetos binarios en la nube para fotos de prendas (`ms-ItemCatalog`), fotos de prendas donadas (`ms-Donations`) y siluetas/renders efímeros (`ms-VirtualTryOn`).
-    * **FASHN AI API:** Motor neuronal generativo en la nube que procesa la inferencia del modelo Virtual Try-On en GPUs especializadas.
+    * **Azure Blob Storage:** Almacén seguro de objetos binarios en la nube para fotos de tiendas y prendas (`ms-Stores`), prendas donadas (`ms-Donations`) y siluetas/renders biométricos efímeros (`ms-VirtualTryOn`).
+    * **FASHN AI API:** Motor neuronal generativo en la nube que procesa la inferencia del modelo Virtual Try-On en GPUs especializadas consumido exclusivamente por `ms-VirtualTryOn`.
 
 ---
 
@@ -212,38 +217,55 @@ Este diagrama modela el esquema relacional físico de persistencia en **PostgreS
 
 ##### Justificación y Explicación Técnica de la Infraestructura de Despliegue
 
-Este diagrama describe la topología de despliegue en contenedores OCI/Docker y dispositivos de hardware/servicios gestionados para toda la plataforma StyleRadar:
+Este diagrama describe la topología física, el confinamiento de red y la arquitectura de infraestructura en la nube para toda la plataforma **StyleRadar** (Microsoft Azure PaaS / Contenedores OCI):
 
-* **Capa de Cliente y Entrada:**
-  * La aplicación cliente web (`«Artifact» Web Application`) se conecta de forma segura vía HTTPS hacia el contenedor perimetral **`«Container App» API Gateway`** en el puerto público estándar `8080`.
-  * El Gateway es el único punto de ingreso expuesto al exterior, centralizando la terminación SSL/TLS y redirigiendo el tráfico hacia la red interna de microservicios.
+* **1. Capa de Cliente y Acceso Seguro (`«Device» Client / User Device`):**
+  * La aplicación cliente web (`«Artifact» Web Application (React / Vite)`) se ejecuta dentro del navegador del usuario (`«Execution Environment» Web Browser`).
+  * Se conecta de forma segura a través de **`HTTPS :443`** (para peticiones REST) y **`WSS :8080`** (WebSockets) hacia el contenedor perimetral **`«Container App» API Gateway :8080`**.
+  * El Gateway es el único punto de ingreso con Ingress público expuesto al exterior, centralizando la terminación TLS y enrutando hacia la red privada interna.
 
-* **Malla de 13 Contenedores de Microservicios (`«Container App»`):**
-  Cada servicio se ejecuta de forma aislada en su propio contenedor, con asignación de puertos internos no colisionantes:
-  * `Auth` (:8100) — Autenticación federada y emisión de tokens JWT.
-  * `User` (:8120) — Gestión de perfiles y medidas corporales.
-  * `Store` (:8140) — Gestión de tiendas y comercios de moda.
-  * `ItemCatalog` (:8220) — Catálogo de prendas y fichas técnicas.
-  * `Inventory` (:8200) — Control de existencias de inventario en tiempo real.
-  * `Payments` (:8400) — Integración de checkout y planes de suscripción.
-  * `Donations` (:8520) — Módulo de economía circular y donaciones de prendas.
-  * `Chat` (:8320) — Mensajería interactiva entre usuarios y tiendas.
-  * `Playlist` (:8260) — Colecciones de moda y recomendaciones personalizadas.
-  * `Geolocation` (:8240) — Búsqueda geográfica y cálculo de proximidad de sedes.
-  * `Virtual Try-on` (:8500) — **Nuestro microservicio**, desplegado en un contenedor dedicado para aislar el consumo computacional de la orquestación con IA y proteger la resiliencia del resto del sistema.
-  * `Notification` (:8300) — Despacho de correos electrónicos y notificaciones push.
-  * `Statistics` (:8420) — Consolidación de métricas de negocio y telemetría analítica.
+* **2. Entorno de Microservicios (`«Execution Environment» Azure Container Apps Environment`):**
+  Cada microservicio se ejecuta de manera independiente como una `«Container App»` en una red virtual privada sin exposición pública, comunicándose con el API Gateway mediante enlaces HTTP síncronos en puertos dedicados:
+  * `ms-Auth` (:8100 · `HTTP :8100`) — Autenticación federada y emisión de tokens.
+  * `ms-Users` (:8120 · `HTTP :8120`) — Gestión de perfiles y medidas corporales.
+  * `ms-Stores` (:8140 · `HTTP :8140`) — Gestión de comercios aliados y sedes.
+  * `ms-Inventory` (:8200 · `HTTP :8200`) — Control de inventario y stock físico en tiempo real.
+  * `ms-Playlist` (:8260 · `HTTP :8260`) — Playlists de moda y recomendaciones personalizadas.
+  * `ms-Geolocation` (:8240 · `HTTP :8240`) — Búsqueda geográfica y proximidad de tiendas.
+  * `ms-Chat` (:8320 · `HTTP :8320`) — Mensajería interactiva cliente-comercio.
+  * `ms-Statistics` (:8420 · `HTTP :8420`) — Métricas de interacción y telemetría analítica.
+  * `ms-ItemCatalog` (:8220 · `HTTP :8220`) — Fichas técnicas de prendas y prendas disponibles.
+  * `ms-VirtualTryOn` (:8500 · `HTTP :8500`) — **Nuestro microservicio**, desplegado en un contenedor dedicado para aislar el cómputo de orquestación con IA y garantizar alta resiliencia.
+  * `ms-Payment` (:8400 · `HTTP :8400`) — Pasarela transaccional de pagos y suscripciones.
+  * `ms-Donations` (:8520 · `HTTP :8520`) — Gestión de donaciones de ropa y economía circular *(puerto diferenciado, resolviendo colisión previa)*.
+  * `ms-Notifications` (:8300 · `HTTP :8300`) — Despacho de notificaciones push y correos transaccionales.
 
-* **Dispositivo de Base de Datos Relacional (`«Device» Postgres Database`):**
-  * Un servidor PostgreSQL dedicado hospeda las 13 bases de datos lógicas independientes (`Auth`, `User`, `Item Catalog`, `Store`, `Inventory`, `Payments`, `Donations`, `Chat`, `Geolocation`, `Playlist`, `Virtual Try-on` / `probador_db`, `Notification`, `Statistics`).
-  * Esta separación asegura que cada servicio opere con total independencia de esquema, copias de seguridad aisladas y cero impacto transaccional cruzado.
+* **3. Persistencia Relacional Gestionada (`«Execution Environment» Azure Database for PostgreSQL` · `:5432`):**
+  * Servidor PostgreSQL Flexible Server que aloja **12 bases de datos lógicas independientes** conectadas mediante **`TCP :5432`**:
+    `virtual_try_on_db`, `users_db`, `stores_db`, `notifications_db`, `inventory_db`, `catalog_db`, `donations_db`, `chat_db`, `playlist_db`, `payments_db`, `geo_db` y `statistics_db`.
+  * `ms-Auth` no posee base de datos relacional (gestiona sesiones y tokens en caché).
+  * Nuestro servicio `ms-VirtualTryOn` persiste jobs, cuotas e historiales exclusivamente en `virtual_try_on_db`.
 
-* **Dispositivo de Caché Distribuida (`«Device» Redis`):**
-  * Un servidor Redis centraliza las particiones de almacenamiento volátil en memoria para los servicios con alta exigencia de baja latencia (`Auth`, `Payments`, `Virtual Try-on`, `Chat`, `Analytics`).
-  * `Virtual Try-on` aprovecha Redis para consultar cuotas en milisegundos y gestionar bloqueos de idempotencia durante la creación de trabajos.
+* **4. Aceleración en Memoria (`«Execution Environment» Azure Cache for Redis` · `:6379`):**
+  * Clúster en memoria conectado mediante protocolo **`RESP :6379`** con 5 particiones lógicas dedicadas: `Auth`, `Payment`, `Chat`, `Statistics` y `Virtual Try-on`.
+  * `ms-VirtualTryOn` consume la partición `Virtual Try-on` para validación de cuotas mensuales en milisegundos (< 3 ms) y candados de concurrencia e idempotencia.
 
-* **Dispositivo Broker de Mensajería (`«Device» RabbitMQAdapter`):**
-  * Servidor broker que gestiona los exchanges, colas persistentes y Dead-Letter Queues (DLQ) para la comunicación asíncrona entre microservicios, desacoplando los flujos de larga duración y aumentando la tolerancia a fallos global.
+* **5. Broker de Mensajería Asíncrona (`«Execution Environment» RabbitMQ Message Broker` · `:5672`):**
+  * Broker de eventos conectado mediante protocolo estándar **`AMQP :5672`** con los **13 microservicios**, asegurando el desacoplamiento de procesos asíncronos y tolerancia a fallos.
+
+* **6. Proveedores y Servicios Externos en la Nube (SaaS · `HTTPS :443`):**
+  * **`Google OAuth 2.0` (`«External System»`):** Conectado a `ms-Auth`.
+  * **`Mercado Pago API` (`«External System»`):** Conectado a `ms-Payment`.
+  * **`Azure Blob Storage` (`«Cloud Service»`):** Conectado a `ms-Stores`, `ms-Donations` y `ms-VirtualTryOn` para almacenamiento seguro de imágenes.
+  * **`FASHN AI` (`«External AI API»`):** Conectado exclusivamente a `ms-VirtualTryOn` para la inferencia generativa neuronal de prendas de vestir.
+
+* **7. Topología Específica de Conectividad de `ms-VirtualTryOn`:**
+  * **Ingress:** `HTTP :8500` proveniente del API Gateway.
+  * **Base de Datos:** `TCP :5432` hacia `virtual_try_on_db` en PostgreSQL.
+  * **Caché:** `RESP :6379` hacia la partición `Virtual Try-on` en Redis.
+  * **Eventos:** `AMQP :5672` hacia RabbitMQ (publica `TryOnJobCompletedEvent`, `PhotoPurgedEvent`; consume eventos de usuario).
+  * **SaaS Storage:** `HTTPS :443` hacia Azure Blob Storage para siluetas y renders.
+  * **SaaS Inferencia IA:** `HTTPS :443` hacia FASHN AI API para generación visual.
 
 ---
 
