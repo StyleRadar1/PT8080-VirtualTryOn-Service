@@ -12,7 +12,9 @@
 
 ### Ejecución Local con Maven (Perfil Dev)
 
-Cuando Spring Boot se ejecuta desde la máquina host con `./mvnw`, consume la infraestructura auxiliar expuesta en los puertos mapeados del host (`localhost:5442` para PostgreSQL y `localhost:6389` para Redis):
+Cuando Spring Boot se ejecuta desde la máquina host con `./mvnw`, consume la infraestructura auxiliar expuesta en los puertos mapeados del host (`localhost:5442` para PostgreSQL y `localhost:6389` para Redis).
+
+Para que Spring apunte a los puertos mapeados en una terminal limpia (donde por defecto `application-dev.yml` usaría 5432 y 6379 si no estuvieran definidas), se configuran `DB_URL` y `REDIS_PORT` antes del arranque:
 
 ```bash
 # 1. Clonar el repositorio
@@ -22,15 +24,22 @@ cd PT8080-VirtualTryOn-Service
 # 2. Levantar la infraestructura auxiliar con Docker Compose (PostgreSQL, Redis, RabbitMQ)
 docker compose up -d probador-postgres probador-redis probador-rabbitmq
 
-# 3. Ejecutar el microservicio localmente en el puerto 8500
+# 3. Exportar variables de conexión a los puertos publicados en el host
+export DB_URL=jdbc:postgresql://localhost:5442/probador_db
+export REDIS_PORT=6389
+
+# 4. Ejecutar el microservicio localmente en el puerto 8500
 ./mvnw clean spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
 > [!NOTE]
 > **Parámetros de conexión al ejecutar con `./mvnw` desde el equipo host:**
 > * **PostgreSQL (`probador_db`):** `localhost:5442` &nbsp;·&nbsp; URL JDBC: `jdbc:postgresql://localhost:5442/probador_db`
-> * **Redis Server:** `localhost:6389`
+> * **Redis Server:** `localhost:6389` &nbsp;·&nbsp; Puerto: `6389`
 > * **RabbitMQ Broker:** `localhost:5672` (Management Dashboard en `http://localhost:15672`)
+> * *Para usuarios en Windows (PowerShell):*  
+>   `$env:DB_URL="jdbc:postgresql://localhost:5442/probador_db"`  
+>   `$env:REDIS_PORT="6389"`
 
 ### Ejecución Contenerizada Completa con Docker Compose
 
