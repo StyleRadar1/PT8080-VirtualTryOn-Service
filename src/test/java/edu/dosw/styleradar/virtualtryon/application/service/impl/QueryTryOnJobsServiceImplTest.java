@@ -392,7 +392,7 @@ class QueryTryOnJobsServiceImplTest {
         );
 
         when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(candidateEntity));
-        when(catalogGarmentJpaRepository.findAllById(List.of(existingTopId.value()))).thenReturn(List.of(existingEntity));
+        lenient().when(catalogGarmentJpaRepository.findAllById(any())).thenReturn(List.of(existingEntity));
         when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
                 new BiometricConsent(
                         UUID.randomUUID(), userId, "v1.0-LEY1581", true,
