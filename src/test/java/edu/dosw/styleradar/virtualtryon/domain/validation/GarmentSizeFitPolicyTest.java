@@ -272,15 +272,13 @@ class GarmentSizeFitPolicyTest {
 
         // GarmentSizeUnavailableException
         GarmentSizeUnavailableException unavailableEx1 = new GarmentSizeUnavailableException("XL");
-        assertEquals("XL", unavailableEx1.getUnavailableSize());
         assertEquals("TRYON_SIZE_UNAVAILABLE", unavailableEx1.getErrorCode());
         assertTrue(unavailableEx1.getMessage().contains("XL"));
 
-        GarmentSizeUnavailableException unavailableEx2 = new GarmentSizeUnavailableException("Talla no disponible", "XXL");
+        GarmentSizeUnavailableException unavailableEx2 = new GarmentSizeUnavailableException("XXL", "Talla no disponible");
         assertEquals("Talla no disponible", unavailableEx2.getMessage());
-        assertEquals("XXL", unavailableEx2.getUnavailableSize());
 
-        GarmentSizeUnavailableException unavailableEx3 = new GarmentSizeUnavailableException("   ", "S");
+        GarmentSizeUnavailableException unavailableEx3 = new GarmentSizeUnavailableException("S", "   ");
         assertTrue(unavailableEx3.getMessage().contains("S"));
 
         // TryOnSelectionIncompleteException
@@ -296,28 +294,46 @@ class GarmentSizeFitPolicyTest {
 
         // SizeMeasurementRange y GarmentSizeChart
         SizeMeasurementRange range = new SizeMeasurementRange(90.0, 96.0, 75.0, 80.0, 95.0, 100.0);
-        assertTrue(range.containsChest(93.0));
-        assertFalse(range.containsChest(88.0));
-        assertFalse(range.containsChest(98.0));
-        assertFalse(range.containsChest(null));
+        assertTrue(range.hasChestRange());
+        assertTrue(range.hasWaistRange());
+        assertTrue(range.hasHipRange());
 
-        assertTrue(range.containsWaist(78.0));
-        assertFalse(range.containsWaist(70.0));
-        assertFalse(range.containsWaist(85.0));
-        assertFalse(range.containsWaist(null));
+        assertTrue(range.chestFits(93.0));
+        assertFalse(range.chestFits(88.0));
+        assertFalse(range.chestFits(98.0));
+        assertFalse(range.chestFits(null));
 
-        assertTrue(range.containsHip(97.0));
-        assertFalse(range.containsHip(90.0));
-        assertFalse(range.containsHip(105.0));
-        assertFalse(range.containsHip(null));
+        assertTrue(range.waistFits(78.0));
+        assertFalse(range.waistFits(70.0));
+        assertFalse(range.waistFits(85.0));
+        assertFalse(range.waistFits(null));
+
+        assertTrue(range.hipFits(97.0));
+        assertFalse(range.hipFits(90.0));
+        assertFalse(range.hipFits(105.0));
+        assertFalse(range.hipFits(null));
 
         SizeMeasurementRange rangeChestOnly = SizeMeasurementRange.ofChest(90.0, 95.0);
         assertNotNull(rangeChestOnly);
-        assertNull(rangeChestOnly.waistMin());
+        assertNull(rangeChestOnly.minWaistCm());
+        assertFalse(rangeChestOnly.hasWaistRange());
+        assertFalse(rangeChestOnly.waistFits(70.0));
+
+        SizeMeasurementRange rangeWaistOnly = SizeMeasurementRange.ofWaist(70.0, 75.0);
+        assertNotNull(rangeWaistOnly);
+        assertNull(rangeWaistOnly.minChestCm());
+        assertFalse(rangeWaistOnly.hasChestRange());
+        assertFalse(rangeWaistOnly.chestFits(90.0));
 
         SizeMeasurementRange rangeWaistHip = SizeMeasurementRange.ofWaistAndHip(70.0, 75.0, 90.0, 95.0);
         assertNotNull(rangeWaistHip);
-        assertNull(rangeWaistHip.chestMin());
+        assertNull(rangeWaistHip.minChestCm());
+
+        SizeMeasurementRange rangeFull = SizeMeasurementRange.ofFullBody(90.0, 95.0, 70.0, 75.0);
+        assertNotNull(rangeFull);
+        assertNull(rangeFull.minHipCm());
+        assertFalse(rangeFull.hasHipRange());
+        assertFalse(rangeFull.hipFits(90.0));
 
         GarmentSizeChart chart = new GarmentSizeChart(garmentId, Set.of("S", "M"), Map.of("S", range));
         assertTrue(chart.offersSize("S"));
@@ -325,12 +341,13 @@ class GarmentSizeFitPolicyTest {
         assertFalse(chart.offersSize("L"));
         assertFalse(chart.offersSize(null));
         assertFalse(chart.offersSize("   "));
-        assertEquals(range, chart.getRangeForSize("S"));
-        assertNull(chart.getRangeForSize("XXL"));
-        assertNull(chart.getRangeForSize(null));
+        assertEquals(range, chart.getMeasurementRange("S"));
+        assertNull(chart.getMeasurementRange("XXL"));
+        assertNull(chart.getMeasurementRange(null));
+        assertNull(chart.getMeasurementRange("   "));
 
         GarmentSizeChart emptyChart = new GarmentSizeChart(garmentId, null, null);
         assertFalse(emptyChart.offersSize("S"));
-        assertNull(emptyChart.getRangeForSize("S"));
+        assertNull(emptyChart.getMeasurementRange("S"));
     }
 }
