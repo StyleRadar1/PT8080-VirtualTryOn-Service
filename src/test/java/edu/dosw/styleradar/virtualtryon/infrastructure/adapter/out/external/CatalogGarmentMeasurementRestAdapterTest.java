@@ -180,4 +180,62 @@ class CatalogGarmentMeasurementRestAdapterTest {
         assertTrue(chart.offersSize("M"));
         assertNull(chart.getMeasurementRange("M"), "Al no tener tabla de medidas en sizes, el rango debe ser null");
     }
+
+    @Test
+    @DisplayName("Cuando Catálogo responde availableSizes: [], GarmentSizeChart tiene hasExplicitAvailableSizes=true y lista vacía")
+    void shouldHandleExplicitEmptyAvailableSizesWhenCatalogReturnsEmptyList() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8220");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        CatalogGarmentMeasurementRestAdapter adapter =
+                new CatalogGarmentMeasurementRestAdapter(builder.build(), "http://localhost:8220");
+
+        GarmentId garmentIdEmpty = GarmentId.of(UUID.randomUUID());
+        String jsonEmptySizes = """
+                {
+                    "availableSizes": [],
+                    "sizes": []
+                }
+                """;
+
+        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentIdEmpty.value() + "/tallas-medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(jsonEmptySizes, MediaType.APPLICATION_JSON));
+
+        Optional<GarmentSizeChart> resultEmpty = adapter.findSizeChartByGarmentId(garmentIdEmpty);
+        server.verify();
+        assertTrue(resultEmpty.isPresent());
+        GarmentSizeChart chartEmpty = resultEmpty.get();
+        assertTrue(chartEmpty.hasExplicitAvailableSizes());
+        assertNotNull(chartEmpty.availableSizes());
+        assertTrue(chartEmpty.availableSizes().isEmpty());
+        assertFalse(chartEmpty.offersSize("M"));
+    }
+
+    @Test
+    @DisplayName("Cuando Catálogo omite el campo availableSizes (null), GarmentSizeChart tiene hasExplicitAvailableSizes=false y availableSizes es null")
+    void shouldHandleAbsentAvailableSizesWhenCatalogOmitsField() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8220");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        CatalogGarmentMeasurementRestAdapter adapter =
+                new CatalogGarmentMeasurementRestAdapter(builder.build(), "http://localhost:8220");
+
+        GarmentId garmentIdAbsent = GarmentId.of(UUID.randomUUID());
+        String jsonAbsentSizes = """
+                {
+                    "sizes": []
+                }
+                """;
+
+        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentIdAbsent.value() + "/tallas-medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(jsonAbsentSizes, MediaType.APPLICATION_JSON));
+
+        Optional<GarmentSizeChart> resultAbsent = adapter.findSizeChartByGarmentId(garmentIdAbsent);
+        server.verify();
+        assertTrue(resultAbsent.isPresent());
+        GarmentSizeChart chartAbsent = resultAbsent.get();
+        assertFalse(chartAbsent.hasExplicitAvailableSizes());
+        assertNull(chartAbsent.availableSizes());
+        assertFalse(chartAbsent.offersSize("M"));
+    }
 }

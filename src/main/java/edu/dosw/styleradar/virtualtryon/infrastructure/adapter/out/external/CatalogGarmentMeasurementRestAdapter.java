@@ -74,8 +74,9 @@ public class CatalogGarmentMeasurementRestAdapter implements GarmentSizeMeasurem
                 return Optional.empty();
             }
 
-            Set<String> offeredSizes = new HashSet<>();
+            Set<String> offeredSizes = null;
             if (dto.availableSizes() != null) {
+                offeredSizes = new HashSet<>();
                 for (String s : dto.availableSizes()) {
                     if (s != null && !s.isBlank()) {
                         offeredSizes.add(s.trim().toUpperCase(Locale.ROOT));

@@ -512,6 +512,29 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-24 Regresión: Catálogo responde availableSizes: [], copia local ofrece M y usuario selecciona M -> 400 TRYON_SIZE_UNAVAILABLE")
+    void testValidateGarmentWhenCatalogReturnsEmptyAvailableSizesReturns400() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID garmentId = UUID.randomUUID();
+
+        when(queryTryOnJobsService.validateGarmentEligibility(
+                eq(UserId.of(userId)),
+                eq(GarmentId.of(garmentId)),
+                eq("M"),
+                any()))
+                .thenThrow(new GarmentSizeUnavailableException("M"));
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", garmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "M")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code", is("TRYON_SIZE_UNAVAILABLE")))
+                .andExpect(jsonPath("$.errorCode", is("TRYON_SIZE_UNAVAILABLE")));
+    }
+
+    @Test
     @DisplayName("HU SR-RF-24: Cuando se envía selectedSize Y selectedGarmentIds simultáneamente, valida ambos parámetros correctamente")
     void testValidateGarmentWithSelectedSizeAndSelectedGarments() throws Exception {
         UUID userId = UUID.randomUUID();

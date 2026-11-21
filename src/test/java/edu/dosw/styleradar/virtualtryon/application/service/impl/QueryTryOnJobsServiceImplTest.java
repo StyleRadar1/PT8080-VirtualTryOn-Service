@@ -638,6 +638,66 @@ class QueryTryOnJobsServiceImplTest {
     }
 
     @Test
+    @DisplayName("HU SR-RF-24 Regresión: Catálogo responde availableSizes: [], copia local todavía ofrece M -> Seleccionar M lanza 400 TRYON_SIZE_UNAVAILABLE")
+    void shouldRejectWithTryOnSizeUnavailableWhenCatalogExplicitlyReturnsEmptyAvailableSizesEvenIfLocalOffersSize() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+
+        // Copia local todavía ofrece M (guardada previamente en available_sizes)
+        CatalogGarmentJpaEntity localGarmentWithM = new CatalogGarmentJpaEntity(
+                garmentId.value(), "Camiseta Deportiva", "TOP", "https://cat/deportiva.png", true, "M,L", Instant.now()
+        );
+        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(localGarmentWithM));
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
+                new BiometricConsent(UUID.randomUUID(), userId, "v1.0-LEY1581", true, List.of("VIRTUAL_TRY_ON"), Instant.now(), null, "127.0.0.1")
+        ));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+
+        // Catálogo responde explícitamente availableSizes: [] (0 tallas ofertadas, fuente de verdad)
+        GarmentSizeChart catalogSizeChart = new GarmentSizeChart(
+                garmentId,
+                Set.of(),
+                Map.of()
+        );
+        when(garmentSizeMeasurementPort.findSizeChartByGarmentId(garmentId)).thenReturn(Optional.of(catalogSizeChart));
+
+        GarmentSizeUnavailableException ex = assertThrows(GarmentSizeUnavailableException.class, () ->
+                queryTryOnJobsService.validateGarmentEligibility(userId, garmentId, "M", List.of()));
+        assertEquals("TRYON_SIZE_UNAVAILABLE", ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("M"));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Catálogo no informa availableSizes (null) y copia local ofrece M -> Seleccionar M usa copia local como contingencia")
+    void shouldFallbackToLocalCopyWhenCatalogDoesNotInformAvailableSizes() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+
+        // Copia local ofrece M
+        CatalogGarmentJpaEntity localGarmentWithM = new CatalogGarmentJpaEntity(
+                garmentId.value(), "Camiseta Deportiva", "TOP", "https://cat/deportiva.png", true, "M", Instant.now()
+        );
+        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.of(localGarmentWithM));
+        when(biometricDataRepositoryPort.findConsentByUserId(userId)).thenReturn(Optional.of(
+                new BiometricConsent(UUID.randomUUID(), userId, "v1.0-LEY1581", true, List.of("VIRTUAL_TRY_ON"), Instant.now(), null, "127.0.0.1")
+        ));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
+
+        // Catálogo responde tabla de medidas pero availableSizes es null (no informado)
+        GarmentSizeChart catalogSizeChartWithoutSizes = new GarmentSizeChart(
+                garmentId,
+                null,
+                Map.of()
+        );
+        when(garmentSizeMeasurementPort.findSizeChartByGarmentId(garmentId)).thenReturn(Optional.of(catalogSizeChartWithoutSizes));
+
+        GarmentValidationResult result = queryTryOnJobsService.validateGarmentEligibility(userId, garmentId, "M", List.of());
+        assertNotNull(result);
+        assertTrue(result.eligibleForTryOn());
+        assertEquals("M", result.selectedSize());
+    }
+
+    @Test
     @DisplayName("HU SR-RF-24: Dado evento AMQP catalog.garment.updated válido o inválido, Cuando TryOnEventListenerAdapter lo procesa, Entonces persiste prendas válidas e ignora eventos corruptos")
     void shouldProcessCatalogGarmentUpdatedEventsInListener() {
         UUID garmentUuid = UUID.randomUUID();

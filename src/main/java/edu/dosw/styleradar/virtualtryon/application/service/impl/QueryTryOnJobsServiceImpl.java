@@ -187,7 +187,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                 : null;
 
         boolean sizeOffered;
-        if (sizeChart != null && !sizeChart.availableSizes().isEmpty()) {
+        if (sizeChart != null && sizeChart.hasExplicitAvailableSizes()) {
             sizeOffered = sizeChart.offersSize(normalizedSize);
         } else {
             sizeOffered = garment.offersSize(normalizedSize);

@@ -347,7 +347,12 @@ class GarmentSizeFitPolicyTest {
         assertNull(chart.getMeasurementRange("   "));
 
         GarmentSizeChart emptyChart = new GarmentSizeChart(garmentId, null, null);
+        assertFalse(emptyChart.hasExplicitAvailableSizes());
         assertFalse(emptyChart.offersSize("S"));
         assertNull(emptyChart.getMeasurementRange("S"));
+
+        GarmentSizeChart explicitEmptyChart = new GarmentSizeChart(garmentId, Set.of(), null);
+        assertTrue(explicitEmptyChart.hasExplicitAvailableSizes());
+        assertFalse(explicitEmptyChart.offersSize("S"));
     }
 }
