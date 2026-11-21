@@ -1,5 +1,8 @@
 package edu.dosw.styleradar.virtualtryon.domain.validation;
 
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentSizeUnavailableException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.TryOnSelectionIncompleteException;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentSizeChart;
 import edu.dosw.styleradar.virtualtryon.domain.model.SizeMeasurementRange;
@@ -248,5 +251,86 @@ class GarmentSizeFitPolicyTest {
         assertFalse(GarmentSizeFitPolicy.isValidSize(""));
         assertFalse(GarmentSizeFitPolicy.isValidSize("   "));
         assertFalse(GarmentSizeFitPolicy.isValidSize(null));
+    }
+
+    @Test
+    @DisplayName("Cobertura exhaustiva de excepciones y Value Objects de SR-RF-24")
+    void testExceptionsAndValueObjectsCoverage() {
+        // GarmentNotEligibleException
+        GarmentNotEligibleException ex1 = new GarmentNotEligibleException();
+        assertEquals("GARMENT_NOT_ELIGIBLE", ex1.getErrorCode());
+        assertEquals(GarmentNotEligibleException.DEFAULT_MESSAGE, ex1.getMessage());
+
+        GarmentNotEligibleException ex2 = new GarmentNotEligibleException("Mensaje personalizado");
+        assertEquals("Mensaje personalizado", ex2.getMessage());
+
+        GarmentNotEligibleException ex3 = new GarmentNotEligibleException("   ");
+        assertEquals(GarmentNotEligibleException.DEFAULT_MESSAGE, ex3.getMessage());
+
+        GarmentNotEligibleException ex4 = new GarmentNotEligibleException(UUID.randomUUID());
+        assertEquals(GarmentNotEligibleException.DEFAULT_MESSAGE, ex4.getMessage());
+
+        // GarmentSizeUnavailableException
+        GarmentSizeUnavailableException unavailableEx1 = new GarmentSizeUnavailableException("XL");
+        assertEquals("XL", unavailableEx1.getUnavailableSize());
+        assertEquals("TRYON_SIZE_UNAVAILABLE", unavailableEx1.getErrorCode());
+        assertTrue(unavailableEx1.getMessage().contains("XL"));
+
+        GarmentSizeUnavailableException unavailableEx2 = new GarmentSizeUnavailableException("Talla no disponible", "XXL");
+        assertEquals("Talla no disponible", unavailableEx2.getMessage());
+        assertEquals("XXL", unavailableEx2.getUnavailableSize());
+
+        GarmentSizeUnavailableException unavailableEx3 = new GarmentSizeUnavailableException("   ", "S");
+        assertTrue(unavailableEx3.getMessage().contains("S"));
+
+        // TryOnSelectionIncompleteException
+        TryOnSelectionIncompleteException incompleteEx1 = new TryOnSelectionIncompleteException();
+        assertEquals("TRYON_SELECTION_INCOMPLETE", incompleteEx1.getErrorCode());
+        assertEquals(TryOnSelectionIncompleteException.DEFAULT_MESSAGE, incompleteEx1.getMessage());
+
+        TryOnSelectionIncompleteException incompleteEx2 = new TryOnSelectionIncompleteException("Incompleto");
+        assertEquals("Incompleto", incompleteEx2.getMessage());
+
+        TryOnSelectionIncompleteException incompleteEx3 = new TryOnSelectionIncompleteException(null);
+        assertEquals(TryOnSelectionIncompleteException.DEFAULT_MESSAGE, incompleteEx3.getMessage());
+
+        // SizeMeasurementRange y GarmentSizeChart
+        SizeMeasurementRange range = new SizeMeasurementRange(90.0, 96.0, 75.0, 80.0, 95.0, 100.0);
+        assertTrue(range.containsChest(93.0));
+        assertFalse(range.containsChest(88.0));
+        assertFalse(range.containsChest(98.0));
+        assertFalse(range.containsChest(null));
+
+        assertTrue(range.containsWaist(78.0));
+        assertFalse(range.containsWaist(70.0));
+        assertFalse(range.containsWaist(85.0));
+        assertFalse(range.containsWaist(null));
+
+        assertTrue(range.containsHip(97.0));
+        assertFalse(range.containsHip(90.0));
+        assertFalse(range.containsHip(105.0));
+        assertFalse(range.containsHip(null));
+
+        SizeMeasurementRange rangeChestOnly = SizeMeasurementRange.ofChest(90.0, 95.0);
+        assertNotNull(rangeChestOnly);
+        assertNull(rangeChestOnly.waistMin());
+
+        SizeMeasurementRange rangeWaistHip = SizeMeasurementRange.ofWaistAndHip(70.0, 75.0, 90.0, 95.0);
+        assertNotNull(rangeWaistHip);
+        assertNull(rangeWaistHip.chestMin());
+
+        GarmentSizeChart chart = new GarmentSizeChart(garmentId, Set.of("S", "M"), Map.of("S", range));
+        assertTrue(chart.offersSize("S"));
+        assertTrue(chart.offersSize("m"));
+        assertFalse(chart.offersSize("L"));
+        assertFalse(chart.offersSize(null));
+        assertFalse(chart.offersSize("   "));
+        assertEquals(range, chart.getRangeForSize("S"));
+        assertNull(chart.getRangeForSize("XXL"));
+        assertNull(chart.getRangeForSize(null));
+
+        GarmentSizeChart emptyChart = new GarmentSizeChart(garmentId, null, null);
+        assertFalse(emptyChart.offersSize("S"));
+        assertNull(emptyChart.getRangeForSize("S"));
     }
 }
