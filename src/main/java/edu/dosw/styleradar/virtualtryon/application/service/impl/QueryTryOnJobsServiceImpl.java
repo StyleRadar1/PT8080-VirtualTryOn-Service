@@ -163,27 +163,26 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     @Override
     public UserQuota updateUserSubscriptionPlan(UserId userId, boolean radarPlusActive, Instant occurredAt) {
         java.util.Objects.requireNonNull(userId, "El identificador del usuario no puede ser nulo");
-        Instant effectiveOccurredAt = occurredAt != null ? occurredAt : Instant.now();
         BillingPeriod currentPeriod = currentBillingPeriod();
-        UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
-                .orElseGet(() -> buildQuotaForNewPeriod(userId, currentPeriod));
-
-        if (quota.getPlanUpdatedAt() != null && effectiveOccurredAt.isBefore(quota.getPlanUpdatedAt())) {
-            log.warn("Evento de plan {} ignorado para usuario {}: occurredAt {} es anterior al último cambio aplicado {}",
+        if (occurredAt == null) {
+            log.warn("Evento de plan {} ignorado para usuario {}: carece de timestamp/versión occurredAt emitida por Pagos; se conserva el estado vigente",
                     radarPlusActive ? "Radar+" : "Gratuito",
-                    userId.value(),
-                    effectiveOccurredAt,
-                    quota.getPlanUpdatedAt());
-            return quota;
+                    userId.value());
+            return quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
+                    .orElseGet(() -> buildQuotaForNewPeriod(userId, currentPeriod));
         }
 
-        if (radarPlusActive) {
-            quota.upgradeToRadarPlus(effectiveOccurredAt);
-        } else {
-            quota.downgradeToFreePlan(effectiveOccurredAt);
+        UserQuota fallbackNewPeriod = buildQuotaForNewPeriod(userId, currentPeriod);
+        UserQuota saved = quotaRepositoryPort.updateQuotaPlanAtomically(
+                userId,
+                currentPeriod,
+                radarPlusActive,
+                occurredAt,
+                fallbackNewPeriod
+        );
+        if (saved != null) {
+            resyncCacheFromAuthoritativeQuota(userId, currentPeriod, saved.getUsedCount());
         }
-        UserQuota saved = quotaRepositoryPort.saveQuota(quota);
-        resyncCacheFromAuthoritativeQuota(userId, currentPeriod, saved.getUsedCount());
         return saved;
     }
 
