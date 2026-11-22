@@ -108,6 +108,8 @@ jobs:
                 TRYON_AMQP_LISTENERS_ENABLED=true \
                 TRYON_AI_PROVIDER=fashn \
                 USUARIOS_SERVICE_URL="${{ secrets.USUARIOS_SERVICE_URL_QA || 'https://styleradar-qa-app.azurewebsites.net' }}" \
+                USUARIOS_INTERNAL_AUTH_USERNAME="${{ secrets.USUARIOS_INTERNAL_AUTH_USERNAME_QA || secrets.USUARIOS_INTERNAL_AUTH_USERNAME }}" \
+                USUARIOS_INTERNAL_AUTH_PASSWORD="${{ secrets.USUARIOS_INTERNAL_AUTH_PASSWORD_QA || secrets.USUARIOS_INTERNAL_AUTH_PASSWORD }}" \
                 CATALOGO_SERVICE_URL="${{ secrets.CATALOGO_SERVICE_URL_QA || 'https://rst-itemcatalog-service-qa.redwave-74d6e30f.northcentralus.azurecontainerapps.io' }}" \
                 FASHN_API_KEY="${{ secrets.FASHN_API_KEY }}" \
                 AZURE_STORAGE_ACCOUNT_KEY="${{ secrets.AZURE_STORAGE_ACCOUNT_KEY_QA || secrets.AZURE_STORAGE_ACCOUNT_KEY }}" \
