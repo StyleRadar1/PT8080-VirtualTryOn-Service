@@ -133,10 +133,14 @@ public class TryOnEventListenerAdapter {
             log.error("Evento pagos.pago.confirmado de usuario descartado a DLQ por carecer de userId válido");
             throw new AmqpRejectAndDontRequeueException("Evento pagos.pago.confirmado inválido: carece de userId");
         }
-        if (event.isApproved()) {
-            queryTryOnJobsService.updateUserSubscriptionPlan(UserId.of(event.userId()), true);
-            log.info("Plan Radar+ activado en cuotas del Probador Virtual para usuario {}", event.userId());
+        if (!event.isApproved() || !event.isRadarPlusSubscription()) {
+            log.debug("Evento pagos.pago.confirmado ignorado por no corresponder a un pago aprobado de Radar+ (planId={}, status={})",
+                    event.planId(), event.status());
+            return;
         }
+        queryTryOnJobsService.updateUserSubscriptionPlan(UserId.of(event.userId()), true, event.occurredAt());
+        log.info("Plan Radar+ procesado en cuotas del Probador Virtual para usuario {} (occurredAt={})",
+                event.userId(), event.occurredAt());
     }
 
     @RabbitListener(
@@ -157,8 +161,14 @@ public class TryOnEventListenerAdapter {
             log.error("Evento pagos.suscripcion.suspendida de usuario descartado a DLQ por carecer de userId válido");
             throw new AmqpRejectAndDontRequeueException("Evento pagos.suscripcion.suspendida inválido: carece de userId");
         }
-        queryTryOnJobsService.updateUserSubscriptionPlan(UserId.of(event.userId()), false);
-        log.info("Suscripción suspendida: cuota revertida a plan gratuito para usuario {}", event.userId());
+        if (event.planId() != null && !event.isRadarPlusSubscription()) {
+            log.debug("Evento pagos.suscripcion.suspendida ignorado por corresponder a otro plan (planId={})",
+                    event.planId());
+            return;
+        }
+        queryTryOnJobsService.updateUserSubscriptionPlan(UserId.of(event.userId()), false, event.occurredAt());
+        log.info("Suscripción suspendida procesada en cuotas para usuario {} (occurredAt={})",
+                event.userId(), event.occurredAt());
     }
 
     private void handleVisibilityEvent(CatalogGarmentUpdatedEvent event, boolean visible, String eventName) {

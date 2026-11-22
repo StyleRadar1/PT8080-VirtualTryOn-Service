@@ -1573,6 +1573,142 @@ class QueryTryOnJobsServiceImplTest {
                 };
         assertEquals(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT,
                 defaultPort.updateUserSubscriptionPlan(UserId.of(userUuid), true).getMonthlyLimit());
+        assertEquals(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT,
+                defaultPort.updateUserSubscriptionPlan(UserId.of(userUuid), true, Instant.now()).getMonthlyLimit());
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-108 (Caso 1): Solo un pago aprobado de Radar+ aumenta la cuota; otro plan o evento incompleto no la suben")
+    void shouldOnlyUpgradeQuotaOnApprovedRadarPlusPayment() {
+        UUID userOtherPlanUuid = UserId.parseToUuid(21L);
+        UUID userIncompleteUuid = UserId.parseToUuid(22L);
+        UUID userRadarPlusUuid = UserId.parseToUuid(23L);
+        java.util.Map<UUID, UserQuotaJpaEntity> quotasByUser = new java.util.concurrent.ConcurrentHashMap<>();
+
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(any(), any()))
+                .thenAnswer(inv -> Optional.ofNullable(quotasByUser.get(inv.getArgument(0))));
+        lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
+                .thenAnswer(inv -> {
+                    UserQuotaJpaEntity entity = inv.getArgument(0);
+                    quotasByUser.put(entity.getUserId(), entity);
+                    return entity;
+                });
+
+        // 1. Plan distinto (planId=1) con estado APPROVED -> no debe activar Radar+
+        eventListenerAdapter.onPaymentConfirmed(new UserSubscriptionPlanEvent(
+                userOtherPlanUuid, "USER", 1L, "APPROVED", Instant.parse("2026-11-21T19:00:00Z")
+        ));
+        assertFalse(quotasByUser.containsKey(userOtherPlanUuid));
+
+        // 2. Evento incompleto (sin planId ni estado, solo userId válido) -> no debe activar Radar+
+        eventListenerAdapter.onPaymentConfirmed(new UserSubscriptionPlanEvent(
+                userIncompleteUuid, null, null, null, Instant.parse("2026-11-21T19:01:00Z")
+        ));
+        eventListenerAdapter.onPaymentConfirmed(new UserSubscriptionPlanEvent(
+                userIncompleteUuid, "USER", 2L, null, Instant.parse("2026-11-21T19:02:00Z")
+        ));
+        assertFalse(quotasByUser.containsKey(userIncompleteUuid));
+
+        // 3. Pago válido de Radar+ (planId=2, status=APPROVED) -> único que sube la cuota a 50
+        eventListenerAdapter.onPaymentConfirmed(new UserSubscriptionPlanEvent(
+                userRadarPlusUuid, "USER", 2L, "APPROVED", Instant.parse("2026-11-21T19:05:00Z")
+        ));
+        UserQuotaJpaEntity upgraded = quotasByUser.get(userRadarPlusUuid);
+        assertNotNull(upgraded);
+        assertTrue(upgraded.isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, upgraded.getMonthlyLimit());
+        verify(quotaJpaRepository, org.mockito.Mockito.times(1)).save(any(UserQuotaJpaEntity.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-108 (Caso 2): Reentrega de pago anterior tras una suspensión más reciente mantiene el plan gratuito")
+    void shouldIgnoreOutOfOrderOlderPaymentAfterNewerSuspension() {
+        UUID userUuid = UserId.parseToUuid(31L);
+        java.util.concurrent.atomic.AtomicReference<UserQuotaJpaEntity> storedQuota =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
+        lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
+                .thenAnswer(inv -> {
+                    UserQuotaJpaEntity entity = inv.getArgument(0);
+                    storedQuota.set(entity);
+                    return entity;
+                });
+
+        Instant paymentTime = Instant.parse("2026-11-21T19:00:00Z");
+        Instant suspensionTime = Instant.parse("2026-11-21T19:10:00Z");
+
+        UserSubscriptionPlanEvent paymentEvent = new UserSubscriptionPlanEvent(
+                userUuid, "USER", 2L, "APPROVED", paymentTime
+        );
+        UserSubscriptionPlanEvent suspensionEvent = new UserSubscriptionPlanEvent(
+                userUuid, "USER", 2L, null, suspensionTime
+        );
+
+        // 1. Pago inicial -> activa Radar+
+        eventListenerAdapter.onPaymentConfirmed(paymentEvent);
+        assertTrue(storedQuota.get().isRadarPlus());
+        assertEquals(50, storedQuota.get().getMonthlyLimit());
+
+        // 2. Suspensión más reciente -> baja a plan gratuito
+        eventListenerAdapter.onSubscriptionSuspended(suspensionEvent);
+        assertFalse(storedQuota.get().isRadarPlus());
+        assertEquals(10, storedQuota.get().getMonthlyLimit());
+        assertEquals(suspensionTime, storedQuota.get().getPlanUpdatedAt());
+
+        // 3. Reentrega tardía del mismo pago anterior -> ignorado, sigue en plan gratuito
+        eventListenerAdapter.onPaymentConfirmed(paymentEvent);
+        assertFalse(storedQuota.get().isRadarPlus());
+        assertEquals(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
+        assertEquals(suspensionTime, storedQuota.get().getPlanUpdatedAt());
+        verify(quotaJpaRepository, org.mockito.Mockito.times(2)).save(any(UserQuotaJpaEntity.class));
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-108 (Caso 3): Cambio de mes reinicia el consumo y conserva Radar+ mientras la suscripción siga activa")
+    void shouldPreserveRadarPlusPlanAndResetUsageOnNewBillingPeriod() {
+        UserId userId = UserId.fromFlexible("45");
+        UUID userUuid = userId.value();
+        java.util.Map<String, UserQuotaJpaEntity> quotasByPeriod = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.atomic.AtomicReference<BillingPeriod> activePeriod =
+                new java.util.concurrent.atomic.AtomicReference<>(BillingPeriod.of("2026-11"));
+
+        queryTryOnJobsService.setBillingPeriodSupplier(activePeriod::get);
+
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(quotasByPeriod.get(inv.getArgument(1))));
+        lenient().when(quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(userUuid))
+                .thenAnswer(inv -> quotasByPeriod.values().stream()
+                        .max(java.util.Comparator.comparing(UserQuotaJpaEntity::getBillingPeriod)
+                                .thenComparing(UserQuotaJpaEntity::getLastResetAt)));
+        lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
+                .thenAnswer(inv -> {
+                    UserQuotaJpaEntity entity = inv.getArgument(0);
+                    quotasByPeriod.put(entity.getBillingPeriod(), entity);
+                    return entity;
+                });
+
+        // 1. En noviembre el usuario paga Radar+ y consume 7 intentos
+        Instant paymentAt = Instant.parse("2026-11-10T15:00:00Z");
+        eventListenerAdapter.onPaymentConfirmed(new UserSubscriptionPlanEvent(
+                userUuid, "USER", 2L, "APPROVED", paymentAt
+        ));
+        UserQuotaJpaEntity novemberQuota = quotasByPeriod.get("2026-11");
+        assertNotNull(novemberQuota);
+        novemberQuota.setUsedCount(7);
+        quotasByPeriod.put("2026-11", novemberQuota);
+
+        // 2. Cambia al mes siguiente (diciembre) sin nuevo evento de Pagos
+        activePeriod.set(BillingPeriod.of("2026-12"));
+        UserQuota decemberQuota = queryTryOnJobsService.getUserQuota(userId);
+
+        assertEquals("2026-12", decemberQuota.getBillingPeriod().getValue());
+        assertEquals(0, decemberQuota.getUsedCount());
+        assertEquals(50, decemberQuota.getRemainingCount());
+        assertTrue(decemberQuota.isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, decemberQuota.getMonthlyLimit());
+        assertEquals(paymentAt, decemberQuota.getPlanUpdatedAt());
     }
 }
 

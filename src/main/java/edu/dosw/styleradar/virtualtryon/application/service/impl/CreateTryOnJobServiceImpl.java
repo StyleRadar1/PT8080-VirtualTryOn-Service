@@ -145,7 +145,11 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         int[] updatedUsedCount = new int[1];
         TryOnJob savedQueuedJob = executeInTransaction(() -> {
             UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)
-                    .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
+                    .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createForNewPeriod(
+                            userId,
+                            currentPeriod,
+                            quotaRepositoryPort.findLatestQuotaByUserId(userId).orElse(null)
+                    )));
 
             TryOnValidationContext validationContext = new TryOnValidationContext(
                     userId,

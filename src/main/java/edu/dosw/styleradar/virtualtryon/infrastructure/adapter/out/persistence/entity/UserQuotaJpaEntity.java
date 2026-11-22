@@ -37,6 +37,9 @@ public class UserQuotaJpaEntity {
     @Column(name = "last_reset_at", nullable = false)
     private Instant lastResetAt;
 
+    @Column(name = "plan_updated_at")
+    private Instant planUpdatedAt;
+
     public UserQuotaJpaEntity() {
     }
 
@@ -49,6 +52,19 @@ public class UserQuotaJpaEntity {
             boolean radarPlus,
             Instant lastResetAt
     ) {
+        this(id, userId, monthlyLimit, usedCount, billingPeriod, radarPlus, lastResetAt, null);
+    }
+
+    public UserQuotaJpaEntity(
+            UUID id,
+            UUID userId,
+            int monthlyLimit,
+            int usedCount,
+            String billingPeriod,
+            boolean radarPlus,
+            Instant lastResetAt,
+            Instant planUpdatedAt
+    ) {
         this.id = id;
         this.userId = userId;
         this.monthlyLimit = monthlyLimit;
@@ -56,6 +72,7 @@ public class UserQuotaJpaEntity {
         this.billingPeriod = billingPeriod;
         this.radarPlus = radarPlus;
         this.lastResetAt = lastResetAt;
+        this.planUpdatedAt = planUpdatedAt;
     }
 
     public UUID getId() {
@@ -112,6 +129,14 @@ public class UserQuotaJpaEntity {
 
     public void setLastResetAt(Instant lastResetAt) {
         this.lastResetAt = lastResetAt;
+    }
+
+    public Instant getPlanUpdatedAt() {
+        return planUpdatedAt;
+    }
+
+    public void setPlanUpdatedAt(Instant planUpdatedAt) {
+        this.planUpdatedAt = planUpdatedAt;
     }
 }
 

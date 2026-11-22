@@ -40,10 +40,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Implementación del servicio de aplicación para la consulta y sincronización de cuotas mensuales,
@@ -63,6 +65,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     private final UserMeasurementPort userMeasurementPort;
     private final GarmentSizeMeasurementPort garmentSizeMeasurementPort;
     private final TryOnValidatorHandler eligibilityValidationChain;
+    private Supplier<BillingPeriod> billingPeriodSupplier = BillingPeriod::current;
 
     @Autowired
     public QueryTryOnJobsServiceImpl(
@@ -126,11 +129,24 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         this(quotaRepositoryPort, quotaCachePort, biometricDataRepositoryPort, null, null, null);
     }
 
+    void setBillingPeriodSupplier(Supplier<BillingPeriod> billingPeriodSupplier) {
+        this.billingPeriodSupplier = billingPeriodSupplier != null ? billingPeriodSupplier : BillingPeriod::current;
+    }
+
+    private BillingPeriod currentBillingPeriod() {
+        return billingPeriodSupplier.get();
+    }
+
+    private UserQuota buildQuotaForNewPeriod(UserId userId, BillingPeriod targetPeriod) {
+        UserQuota previous = quotaRepositoryPort.findLatestQuotaByUserId(userId).orElse(null);
+        return UserQuota.createForNewPeriod(userId, targetPeriod, previous);
+    }
+
     @Override
     public UserQuota getUserQuota(UserId userId) {
-        BillingPeriod currentPeriod = BillingPeriod.current();
+        BillingPeriod currentPeriod = currentBillingPeriod();
         UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
-                .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
+                .orElseGet(() -> quotaRepositoryPort.saveQuota(buildQuotaForNewPeriod(userId, currentPeriod)));
 
         // PostgreSQL es la fuente de verdad autoritativa (consumos y reembolsos con bloqueo pesimista);
         // nunca se sobrescribe la BD con contadores potencialmente desactualizados de Redis.
@@ -141,14 +157,30 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
 
     @Override
     public UserQuota updateUserSubscriptionPlan(UserId userId, boolean radarPlusActive) {
+        return updateUserSubscriptionPlan(userId, radarPlusActive, null);
+    }
+
+    @Override
+    public UserQuota updateUserSubscriptionPlan(UserId userId, boolean radarPlusActive, Instant occurredAt) {
         java.util.Objects.requireNonNull(userId, "El identificador del usuario no puede ser nulo");
-        BillingPeriod currentPeriod = BillingPeriod.current();
+        Instant effectiveOccurredAt = occurredAt != null ? occurredAt : Instant.now();
+        BillingPeriod currentPeriod = currentBillingPeriod();
         UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
-                .orElseGet(() -> UserQuota.createDefault(userId, currentPeriod));
+                .orElseGet(() -> buildQuotaForNewPeriod(userId, currentPeriod));
+
+        if (quota.getPlanUpdatedAt() != null && effectiveOccurredAt.isBefore(quota.getPlanUpdatedAt())) {
+            log.warn("Evento de plan {} ignorado para usuario {}: occurredAt {} es anterior al último cambio aplicado {}",
+                    radarPlusActive ? "Radar+" : "Gratuito",
+                    userId.value(),
+                    effectiveOccurredAt,
+                    quota.getPlanUpdatedAt());
+            return quota;
+        }
+
         if (radarPlusActive) {
-            quota.upgradeToRadarPlus();
+            quota.upgradeToRadarPlus(effectiveOccurredAt);
         } else {
-            quota.downgradeToFreePlan();
+            quota.downgradeToFreePlan(effectiveOccurredAt);
         }
         UserQuota saved = quotaRepositoryPort.saveQuota(quota);
         resyncCacheFromAuthoritativeQuota(userId, currentPeriod, saved.getUsedCount());
@@ -181,9 +213,9 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                 .map(BiometricConsent::isValidForInference)
                 .orElse(false);
 
-        BillingPeriod currentPeriod = BillingPeriod.current();
+        BillingPeriod currentPeriod = currentBillingPeriod();
         UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
-                .orElseGet(() -> UserQuota.createDefault(userId, currentPeriod));
+                .orElseGet(() -> buildQuotaForNewPeriod(userId, currentPeriod));
 
         resyncCacheFromAuthoritativeQuota(userId, currentPeriod, quota.getUsedCount());
 

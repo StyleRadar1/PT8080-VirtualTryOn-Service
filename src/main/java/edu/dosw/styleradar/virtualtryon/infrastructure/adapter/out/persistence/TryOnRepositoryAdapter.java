@@ -177,6 +177,15 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     }
 
     @Override
+    public Optional<UserQuota> findLatestQuotaByUserId(UserId userId) {
+        if (quotaJpaRepository == null || userId == null) {
+            return Optional.empty();
+        }
+        return quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(userId.value())
+                .map(persistenceMapper::toQuotaDomain);
+    }
+
+    @Override
     public Optional<UserQuota> findQuotaByUserIdAndPeriodForUpdate(UserId userId, BillingPeriod billingPeriod) {
         return quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), billingPeriod.getValue())
                 .map(persistenceMapper::toQuotaDomain);

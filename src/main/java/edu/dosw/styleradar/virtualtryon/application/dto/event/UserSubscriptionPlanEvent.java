@@ -25,6 +25,8 @@ public record UserSubscriptionPlanEvent(
         Instant occurredAt
 ) {
 
+    public static final long RADAR_PLUS_PLAN_ID = 2L;
+
     @JsonCreator
     public static UserSubscriptionPlanEvent fromJson(
             @JsonProperty("data") Map<String, Object> data,
@@ -50,10 +52,16 @@ public record UserSubscriptionPlanEvent(
                 status,
                 data != null ? stringOrNull(firstPresent(data, "estado", "status")) : null
         );
+        Object resolvedTimestamp = firstNonNull(
+                rawTimestamp,
+                data != null ? firstPresent(data, "timestamp", "occurredAt", "fechaEvento") : null
+        );
 
         UUID parsedUserId = UserId.parseToUuid(resolvedUserId);
         Long parsedPlanId = parsePlanId(resolvedPlan);
-        Instant parsedTimestamp = CatalogGarmentUpdatedEvent.parseFlexibleInstant(rawTimestamp);
+        Instant parsedTimestamp = resolvedTimestamp != null
+                ? CatalogGarmentUpdatedEvent.parseFlexibleInstant(resolvedTimestamp)
+                : null;
 
         return new UserSubscriptionPlanEvent(
                 parsedUserId,
@@ -71,18 +79,36 @@ public record UserSubscriptionPlanEvent(
                 return true;
             }
         }
-        return planId != null && planId == 3L;
+        return planId != null && planId >= 3L;
     }
 
     public boolean isApproved() {
         if (status == null || status.isBlank()) {
-            return true;
+            return false;
         }
         String normalized = status.trim().toUpperCase(Locale.ROOT);
         return "APPROVED".equals(normalized)
                 || "APROBADO".equals(normalized)
                 || "ACTIVE".equals(normalized)
-                || "ACTIVA".equals(normalized);
+                || "ACTIVA".equals(normalized)
+                || "CONFIRMED".equals(normalized)
+                || "CONFIRMADO".equals(normalized);
+    }
+
+    public boolean isRadarPlusSubscription() {
+        if (isStoreSubscription()) {
+            return false;
+        }
+        if (subscriberType != null && !subscriberType.isBlank()) {
+            String normalizedType = subscriberType.trim().toUpperCase(Locale.ROOT);
+            if (!"USER".equals(normalizedType)
+                    && !"USUARIO".equals(normalizedType)
+                    && !"BUYER".equals(normalizedType)
+                    && !"COMPRADOR".equals(normalizedType)) {
+                return false;
+            }
+        }
+        return planId != null && planId == RADAR_PLUS_PLAN_ID;
     }
 
     private static Object firstPresent(Map<String, Object> map, String... keys) {

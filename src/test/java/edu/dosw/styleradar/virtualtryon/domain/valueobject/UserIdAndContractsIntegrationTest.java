@@ -362,6 +362,7 @@ class UserIdAndContractsIntegrationTest {
         assertEquals("APPROVED", confirmed.status());
         assertFalse(confirmed.isStoreSubscription());
         assertTrue(confirmed.isApproved());
+        assertTrue(confirmed.isRadarPlusSubscription());
         assertEquals(Instant.parse("2026-11-21T19:00:00Z"), confirmed.occurredAt());
 
         String storePaymentJson = """
@@ -381,6 +382,7 @@ class UserIdAndContractsIntegrationTest {
 
         UserSubscriptionPlanEvent storeEvent = objectMapper.readValue(storePaymentJson, UserSubscriptionPlanEvent.class);
         assertTrue(storeEvent.isStoreSubscription());
+        assertFalse(storeEvent.isRadarPlusSubscription());
 
         String suspendedJson = """
                 {
@@ -403,25 +405,41 @@ class UserIdAndContractsIntegrationTest {
         UserSubscriptionPlanEvent suspended = objectMapper.readValue(suspendedJson, UserSubscriptionPlanEvent.class);
         assertEquals(UserId.parseToUuid("12"), suspended.userId());
         assertFalse(suspended.isStoreSubscription());
-        assertTrue(suspended.isApproved(), "status nulo en evento de suspensión no impide procesarlo");
+        assertTrue(suspended.isRadarPlusSubscription());
+        assertFalse(suspended.isApproved(), "Un evento sin estado explícito no debe considerarse pago aprobado");
 
-        // Payloads planos alternos (plan textual, rechazo y tienda sin tipoSuscriptor por planId=3)
+        // Payloads planos alternos (plan textual, rechazo, otro plan e incompleto)
         UserSubscriptionPlanEvent flatRadarPlus = objectMapper.readValue("""
                 {"usuarioId":"12","plan":"Radar+","estado":"APROBADO"}
                 """, UserSubscriptionPlanEvent.class);
         assertEquals(2L, flatRadarPlus.planId());
         assertTrue(flatRadarPlus.isApproved());
+        assertTrue(flatRadarPlus.isRadarPlusSubscription());
         assertFalse(flatRadarPlus.isStoreSubscription());
+
+        UserSubscriptionPlanEvent otherPlan = objectMapper.readValue("""
+                {"usuarioId":"12","tipoSuscriptor":"USER","planId":1,"estado":"APPROVED"}
+                """, UserSubscriptionPlanEvent.class);
+        assertTrue(otherPlan.isApproved());
+        assertFalse(otherPlan.isRadarPlusSubscription());
+
+        UserSubscriptionPlanEvent incompleteEvent = objectMapper.readValue("""
+                {"usuarioId":"12"}
+                """, UserSubscriptionPlanEvent.class);
+        assertFalse(incompleteEvent.isApproved());
+        assertFalse(incompleteEvent.isRadarPlusSubscription());
 
         UserSubscriptionPlanEvent flatStoreByPlanId = objectMapper.readValue("""
                 {"suscriptorId":"store-1","planId":3,"estado":"REJECTED"}
                 """, UserSubscriptionPlanEvent.class);
         assertTrue(flatStoreByPlanId.isStoreSubscription());
+        assertFalse(flatStoreByPlanId.isRadarPlusSubscription());
         assertFalse(flatStoreByPlanId.isApproved());
 
         UserSubscriptionPlanEvent flatStoreByName = objectMapper.readValue("""
                 {"suscriptorId":"store-2","plan":"Store Basic"}
                 """, UserSubscriptionPlanEvent.class);
         assertTrue(flatStoreByName.isStoreSubscription());
+        assertFalse(flatStoreByName.isRadarPlusSubscription());
     }
 }

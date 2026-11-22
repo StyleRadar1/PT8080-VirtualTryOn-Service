@@ -18,6 +18,8 @@ public interface UserQuotaJpaRepository extends JpaRepository<UserQuotaJpaEntity
 
     Optional<UserQuotaJpaEntity> findByUserIdAndBillingPeriod(UUID userId, String billingPeriod);
 
+    Optional<UserQuotaJpaEntity> findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(UUID userId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT q FROM UserQuotaJpaEntity q WHERE q.userId = :userId AND q.billingPeriod = :billingPeriod")
     Optional<UserQuotaJpaEntity> findByUserIdAndBillingPeriodForUpdate(
