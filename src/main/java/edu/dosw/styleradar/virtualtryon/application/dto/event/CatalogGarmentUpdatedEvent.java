@@ -7,6 +7,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -52,19 +55,47 @@ public record CatalogGarmentUpdatedEvent(
     public static CatalogGarmentUpdatedEvent fromJson(
             @JsonProperty("garmentId") @JsonAlias({"itemId", "id", "prendaId"}) Object rawGarmentId,
             @JsonProperty("name") @JsonAlias({"nombrePrenda", "nombre", "titulo"}) String name,
-            @JsonProperty("category") @JsonAlias({"categoria", "tipoPrenda"}) String category,
+            @JsonProperty("category") @JsonAlias({"categoria", "tipoPrenda", "tipo"}) String category,
             @JsonProperty("imageUrl") @JsonAlias({"imagenUrl", "fotoUrl", "url", "imagen"}) String imageUrl,
             @JsonProperty("visible") @JsonAlias({"activo", "activa", "disponible"}) Boolean visible,
             @JsonProperty("approved") @JsonAlias({"aprobada", "aprobado"}) Boolean approved,
             @JsonProperty("moderationStatus") @JsonAlias({"estadoModeracion", "estado", "moderationState"}) String moderationStatus,
-            @JsonProperty("updatedAt") @JsonAlias({"fechaPublicacion", "fechaActualizacion", "fechaEvento", "timestamp"}) Instant updatedAt,
+            @JsonProperty("updatedAt") @JsonAlias({"fechaPublicacion", "fechaActualizacion", "fechaEvento", "fechaModeracion", "timestamp", "fecha"}) Object rawUpdatedAt,
             @JsonProperty("availableSizes") @JsonAlias({"tallas", "sizes", "tallasDisponibles"}) Set<String> availableSizes
     ) {
         UUID parsedGarmentId = GarmentId.parseToUuid(rawGarmentId);
         boolean isVisible = resolveVisibility(visible, approved, moderationStatus);
-        Instant parsedUpdatedAt = updatedAt != null ? updatedAt : Instant.now();
+        Instant parsedUpdatedAt = parseFlexibleInstant(rawUpdatedAt);
         Set<String> sizes = availableSizes != null ? availableSizes : Set.of();
         return new CatalogGarmentUpdatedEvent(parsedGarmentId, name, category, imageUrl, isVisible, parsedUpdatedAt, sizes);
+    }
+
+    /**
+     * Parsea marcas de tiempo flexibles recibidas desde otros microservicios:
+     * soporta Instant ISO-8601 con 'Z', LocalDateTime sin zona (p. ej. RabbitMQPublisherAdapter de Catálogo)
+     * y OffsetDateTime.
+     */
+    public static Instant parseFlexibleInstant(Object raw) {
+        if (raw == null) {
+            return Instant.now();
+        }
+        if (raw instanceof Instant instant) {
+            return instant;
+        }
+        String text = raw.toString().trim();
+        if (text.isEmpty()) {
+            return Instant.now();
+        }
+        try {
+            return Instant.parse(text);
+        } catch (Exception ignored) {
+            // Intenta LocalDateTime sin zona (formato enviado por ms-item-catalogo: evento.fecha().toString())
+            try {
+                return LocalDateTime.parse(text).toInstant(ZoneOffset.UTC);
+            } catch (Exception ignoredLocal) {
+                return OffsetDateTime.parse(text).toInstant();
+            }
+        }
     }
 
     public static CatalogGarmentUpdatedEvent fromJson(
