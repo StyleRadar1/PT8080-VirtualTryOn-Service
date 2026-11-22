@@ -59,6 +59,8 @@ services:
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:?AZURE_STORAGE_ACCOUNT_KEY es obligatorio en variables de entorno}
       AZURE_READ_SAS_DURATION: ${AZURE_READ_SAS_DURATION:-PT15M}
       AZURE_STORAGE_API_VERSION: ${AZURE_STORAGE_API_VERSION:-2024-11-04}
+      USUARIOS_SERVICE_URL: ${USUARIOS_SERVICE_URL:-http://ms-usuarios:8120}
+      CATALOGO_SERVICE_URL: ${CATALOGO_SERVICE_URL:-http://ms-item-catalogo:8220}
     depends_on:
       probador-postgres:
         condition: service_healthy
