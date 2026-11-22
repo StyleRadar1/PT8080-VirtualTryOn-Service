@@ -18,6 +18,10 @@ public interface GetUserQuotaUseCase {
 
     UserQuota getUserQuota(UserId userId);
 
+    default UserQuota updateUserSubscriptionPlan(UserId userId, boolean radarPlusActive) {
+        return getUserQuota(userId);
+    }
+
     GarmentValidationResult validateGarmentEligibility(
             UserId userId,
             GarmentId garmentId,

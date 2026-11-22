@@ -59,6 +59,17 @@ public class RabbitConfig {
     public static final String DEFAULT_USER_ACCOUNT_DELETED_DLQ = "styleradar.probador.cuenta-eliminada.dlq";
     public static final String DEFAULT_USER_ACCOUNT_DELETED_DLQ_ROUTING_KEY = "styleradar.probador.cuenta-eliminada.dead";
 
+    public static final String DEFAULT_PAYMENT_EVENTS_EXCHANGE = "styleradar.exchange";
+    public static final String DEFAULT_PAYMENT_CONFIRMED_QUEUE = "styleradar.probador.pago-confirmado.q";
+    public static final String DEFAULT_PAYMENT_CONFIRMED_ROUTING_KEY = "styleradar.pagos.pago.confirmado";
+    public static final String DEFAULT_PAYMENT_CONFIRMED_DLQ = "styleradar.probador.pago-confirmado.dlq";
+    public static final String DEFAULT_PAYMENT_CONFIRMED_DLQ_ROUTING_KEY = "styleradar.probador.pago-confirmado.dead";
+
+    public static final String DEFAULT_SUBSCRIPTION_SUSPENDED_QUEUE = "styleradar.probador.suscripcion-suspendida.q";
+    public static final String DEFAULT_SUBSCRIPTION_SUSPENDED_ROUTING_KEY = "styleradar.pagos.suscripcion.suspendida";
+    public static final String DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ = "styleradar.probador.suscripcion-suspendida.dlq";
+    public static final String DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ_ROUTING_KEY = "styleradar.probador.suscripcion-suspendida.dead";
+
     @Bean
     public TopicExchange catalogEventsExchange(
             @Value("${styleradar.tryon.amqp.catalog-exchange:" + DEFAULT_CATALOG_EXCHANGE + "}") String exchangeName
@@ -279,6 +290,87 @@ public class RabbitConfig {
             @Value("${styleradar.tryon.amqp.user-account-deleted-routing-key:" + DEFAULT_USER_ACCOUNT_DELETED_ROUTING_KEY + "}") String routingKey
     ) {
         return BindingBuilder.bind(userAccountDeletedQueue).to(userEventsExchange).with(routingKey);
+    }
+
+    @Bean
+    public TopicExchange paymentEventsExchange(
+            @Value("${styleradar.tryon.amqp.payment-exchange:" + DEFAULT_PAYMENT_EVENTS_EXCHANGE + "}") String exchangeName
+    ) {
+        return ExchangeBuilder.topicExchange(exchangeName).durable(true).build();
+    }
+
+    @Bean
+    public Queue paymentConfirmedDlq(
+            @Value("${styleradar.tryon.amqp.payment-confirmed-dlq:" + DEFAULT_PAYMENT_CONFIRMED_DLQ + "}") String dlqName
+    ) {
+        return QueueBuilder.durable(dlqName).build();
+    }
+
+    @Bean
+    public Binding paymentConfirmedDlqBinding(
+            @Qualifier("paymentConfirmedDlq") Queue paymentConfirmedDlq,
+            @Qualifier("catalogDeadLetterExchange") DirectExchange catalogDeadLetterExchange,
+            @Value("${styleradar.tryon.amqp.payment-confirmed-dlq-routing-key:" + DEFAULT_PAYMENT_CONFIRMED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return BindingBuilder.bind(paymentConfirmedDlq).to(catalogDeadLetterExchange).with(dlqRoutingKey);
+    }
+
+    @Bean
+    public Queue paymentConfirmedQueue(
+            @Value("${styleradar.tryon.amqp.payment-confirmed-queue:" + DEFAULT_PAYMENT_CONFIRMED_QUEUE + "}") String queueName,
+            @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxExchange,
+            @Value("${styleradar.tryon.amqp.payment-confirmed-dlq-routing-key:" + DEFAULT_PAYMENT_CONFIRMED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return QueueBuilder.durable(queueName)
+                .deadLetterExchange(dlxExchange)
+                .deadLetterRoutingKey(dlqRoutingKey)
+                .build();
+    }
+
+    @Bean
+    public Binding paymentConfirmedBinding(
+            @Qualifier("paymentConfirmedQueue") Queue paymentConfirmedQueue,
+            @Qualifier("paymentEventsExchange") TopicExchange paymentEventsExchange,
+            @Value("${styleradar.tryon.amqp.payment-confirmed-routing-key:" + DEFAULT_PAYMENT_CONFIRMED_ROUTING_KEY + "}") String routingKey
+    ) {
+        return BindingBuilder.bind(paymentConfirmedQueue).to(paymentEventsExchange).with(routingKey);
+    }
+
+    @Bean
+    public Queue subscriptionSuspendedDlq(
+            @Value("${styleradar.tryon.amqp.subscription-suspended-dlq:" + DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ + "}") String dlqName
+    ) {
+        return QueueBuilder.durable(dlqName).build();
+    }
+
+    @Bean
+    public Binding subscriptionSuspendedDlqBinding(
+            @Qualifier("subscriptionSuspendedDlq") Queue subscriptionSuspendedDlq,
+            @Qualifier("catalogDeadLetterExchange") DirectExchange catalogDeadLetterExchange,
+            @Value("${styleradar.tryon.amqp.subscription-suspended-dlq-routing-key:" + DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return BindingBuilder.bind(subscriptionSuspendedDlq).to(catalogDeadLetterExchange).with(dlqRoutingKey);
+    }
+
+    @Bean
+    public Queue subscriptionSuspendedQueue(
+            @Value("${styleradar.tryon.amqp.subscription-suspended-queue:" + DEFAULT_SUBSCRIPTION_SUSPENDED_QUEUE + "}") String queueName,
+            @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxExchange,
+            @Value("${styleradar.tryon.amqp.subscription-suspended-dlq-routing-key:" + DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return QueueBuilder.durable(queueName)
+                .deadLetterExchange(dlxExchange)
+                .deadLetterRoutingKey(dlqRoutingKey)
+                .build();
+    }
+
+    @Bean
+    public Binding subscriptionSuspendedBinding(
+            @Qualifier("subscriptionSuspendedQueue") Queue subscriptionSuspendedQueue,
+            @Qualifier("paymentEventsExchange") TopicExchange paymentEventsExchange,
+            @Value("${styleradar.tryon.amqp.subscription-suspended-routing-key:" + DEFAULT_SUBSCRIPTION_SUSPENDED_ROUTING_KEY + "}") String routingKey
+    ) {
+        return BindingBuilder.bind(subscriptionSuspendedQueue).to(paymentEventsExchange).with(routingKey);
     }
 
     @Bean

@@ -2,6 +2,7 @@ package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp;
 
 import edu.dosw.styleradar.virtualtryon.application.dto.event.CatalogGarmentUpdatedEvent;
 import edu.dosw.styleradar.virtualtryon.application.dto.event.UserAccountDeletedEvent;
+import edu.dosw.styleradar.virtualtryon.application.dto.event.UserSubscriptionPlanEvent;
 import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
@@ -33,6 +34,8 @@ public class TryOnEventListenerAdapter {
     public static final String CATALOG_GARMENT_WITHDRAWN_QUEUE = "styleradar.probador.prenda-retirada.q";
     public static final String CATALOG_GARMENT_MODERATION_QUEUE = "styleradar.probador.moderacion-cambiada.q";
     public static final String USER_ACCOUNT_DELETED_QUEUE = "styleradar.probador.cuenta-eliminada.q";
+    public static final String PAYMENT_CONFIRMED_QUEUE = "styleradar.probador.pago-confirmado.q";
+    public static final String SUBSCRIPTION_SUSPENDED_QUEUE = "styleradar.probador.suscripcion-suspendida.q";
 
     private final QueryTryOnJobsService queryTryOnJobsService;
     private final DeleteBiometricDataService deleteBiometricDataService;
@@ -110,6 +113,52 @@ public class TryOnEventListenerAdapter {
         deleteBiometricDataService.purgeAllBiometricDataForUser(UserId.of(event.userId()));
         log.info("Datos biométricos purgados automáticamente tras evento user.account.deleted para usuario {}",
                 event.userId());
+    }
+
+    @RabbitListener(
+            queues = "${styleradar.tryon.amqp.payment-confirmed-queue:" + PAYMENT_CONFIRMED_QUEUE + "}",
+            autoStartup = "${styleradar.tryon.amqp.listeners-enabled:true}"
+    )
+    public void onPaymentConfirmed(UserSubscriptionPlanEvent event) {
+        if (event == null) {
+            log.error("Evento pagos.pago.confirmado nulo descartado a DLQ");
+            throw new AmqpRejectAndDontRequeueException("Evento pagos.pago.confirmado inválido: payload nulo");
+        }
+        if (event.isStoreSubscription()) {
+            log.debug("Evento pagos.pago.confirmado ignorado por corresponder a suscripción de tienda (planId={})",
+                    event.planId());
+            return;
+        }
+        if (event.userId() == null) {
+            log.error("Evento pagos.pago.confirmado de usuario descartado a DLQ por carecer de userId válido");
+            throw new AmqpRejectAndDontRequeueException("Evento pagos.pago.confirmado inválido: carece de userId");
+        }
+        if (event.isApproved()) {
+            queryTryOnJobsService.updateUserSubscriptionPlan(UserId.of(event.userId()), true);
+            log.info("Plan Radar+ activado en cuotas del Probador Virtual para usuario {}", event.userId());
+        }
+    }
+
+    @RabbitListener(
+            queues = "${styleradar.tryon.amqp.subscription-suspended-queue:" + SUBSCRIPTION_SUSPENDED_QUEUE + "}",
+            autoStartup = "${styleradar.tryon.amqp.listeners-enabled:true}"
+    )
+    public void onSubscriptionSuspended(UserSubscriptionPlanEvent event) {
+        if (event == null) {
+            log.error("Evento pagos.suscripcion.suspendida nulo descartado a DLQ");
+            throw new AmqpRejectAndDontRequeueException("Evento pagos.suscripcion.suspendida inválido: payload nulo");
+        }
+        if (event.isStoreSubscription()) {
+            log.debug("Evento pagos.suscripcion.suspendida ignorado por corresponder a suscripción de tienda (planId={})",
+                    event.planId());
+            return;
+        }
+        if (event.userId() == null) {
+            log.error("Evento pagos.suscripcion.suspendida de usuario descartado a DLQ por carecer de userId válido");
+            throw new AmqpRejectAndDontRequeueException("Evento pagos.suscripcion.suspendida inválido: carece de userId");
+        }
+        queryTryOnJobsService.updateUserSubscriptionPlan(UserId.of(event.userId()), false);
+        log.info("Suscripción suspendida: cuota revertida a plan gratuito para usuario {}", event.userId());
     }
 
     private void handleVisibilityEvent(CatalogGarmentUpdatedEvent event, boolean visible, String eventName) {

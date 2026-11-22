@@ -140,6 +140,22 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     }
 
     @Override
+    public UserQuota updateUserSubscriptionPlan(UserId userId, boolean radarPlusActive) {
+        java.util.Objects.requireNonNull(userId, "El identificador del usuario no puede ser nulo");
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
+                .orElseGet(() -> UserQuota.createDefault(userId, currentPeriod));
+        if (radarPlusActive) {
+            quota.upgradeToRadarPlus();
+        } else {
+            quota.downgradeToFreePlan();
+        }
+        UserQuota saved = quotaRepositoryPort.saveQuota(quota);
+        resyncCacheFromAuthoritativeQuota(userId, currentPeriod, saved.getUsedCount());
+        return saved;
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public GarmentValidationResult validateGarmentEligibility(
             UserId userId,

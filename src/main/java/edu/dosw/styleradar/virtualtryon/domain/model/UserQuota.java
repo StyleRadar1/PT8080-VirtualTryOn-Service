@@ -92,6 +92,11 @@ public class UserQuota {
         this.monthlyLimit = RADAR_PLUS_MONTHLY_LIMIT;
     }
 
+    public void downgradeToFreePlan() {
+        this.radarPlus = false;
+        this.monthlyLimit = DEFAULT_FREE_MONTHLY_LIMIT;
+    }
+
     public UUID getId() {
         return id;
     }
