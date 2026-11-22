@@ -52,15 +52,37 @@ import java.util.UUID;
 public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     private static final Set<String> ALLOWED_ROLES = Set.of(
+            "ROLE_BUYER",
+            "ROLE_STYLERADAR_ADMIN",
+            "ROLE_STORE_ADMIN",
+            "ROLE_FOUNDATION_REPRESENTATIVE",
             "ROLE_COMPRADOR",
             "ROLE_USER",
             "ROLE_ADMIN",
-            "ROLE_ADMIN_STYLERADAR"
+            "ROLE_ADMIN_STYLERADAR",
+            "ROLE_ADMIN_TIENDA",
+            "ROLE_ADMIN_ALMACEN",
+            "ROLE_REPRESENTANTE_FUNDACION",
+            "BUYER",
+            "STYLERADAR_ADMIN",
+            "STORE_ADMIN",
+            "FOUNDATION_REPRESENTATIVE",
+            "COMPRADOR",
+            "USER",
+            "ADMIN",
+            "ADMIN_STYLERADAR",
+            "ADMIN_TIENDA",
+            "ADMIN_ALMACEN",
+            "REPRESENTANTE_FUNDACION"
     );
 
     private static final Set<String> ADMIN_ROLES = Set.of(
             "ROLE_ADMIN",
-            "ROLE_ADMIN_STYLERADAR"
+            "ROLE_ADMIN_STYLERADAR",
+            "ROLE_STYLERADAR_ADMIN",
+            "ADMIN",
+            "ADMIN_STYLERADAR",
+            "STYLERADAR_ADMIN"
     );
 
     private final CreateTryOnJobService createTryOnJobService;
@@ -91,7 +113,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     @Override
     @PostMapping("/jobs")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
     public ResponseEntity<TryOnJobResponse> startTryOn(@Valid @RequestBody StartTryOnRequest request) {
         UUID targetUserId = resolveAndVerifyCallerUserId(request.userId());
         UUID garmentUuid = GarmentId.parseToUuid(request.garmentId());
@@ -111,7 +133,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     @Override
     @GetMapping("/jobs/{jobId}")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
     public ResponseEntity<TryOnJobResponse> getTryOnJob(@PathVariable UUID jobId) {
         UUID callerUserId = resolveAndVerifyCallerUserId(null);
         boolean callerIsAdmin = isAdminCaller();
@@ -121,7 +143,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     @Override
     @GetMapping("/jobs")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
     public ResponseEntity<List<TryOnJobResponse>> getUserTryOnHistory(@RequestParam(required = false) Object userId) {
         UUID targetUserId = resolveAndVerifyCallerUserId(userId);
         List<TryOnJobResponse> history = queryTryOnJobsService.getJobHistory(UserId.of(targetUserId)).stream()
@@ -132,7 +154,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     @Override
     @GetMapping("/quotas")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
     public ResponseEntity<UserQuotaResponse> getUserQuotas(@RequestParam(required = false) Object userId) {
         UUID targetUserId = resolveAndVerifyCallerUserId(userId);
         UserQuota quota = queryTryOnJobsService.getUserQuota(UserId.of(targetUserId));
@@ -141,7 +163,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     @Override
     @GetMapping("/garments/{garmentId}/validate")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
     public ResponseEntity<GarmentValidationResponse> validateGarmentForTryOn(
             @PathVariable("garmentId") Object garmentId,
             @RequestParam(value = "selectedSize", required = false) String selectedSize,
@@ -176,7 +198,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
 
     @Override
     @DeleteMapping("/personal-photos/{jobId}")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
     public ResponseEntity<Void> deleteBiometricPhoto(@PathVariable UUID jobId) {
         UUID callerUserId = resolveAndVerifyCallerUserId(null);
         boolean isAdmin = isAdminCaller();

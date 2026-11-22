@@ -71,7 +71,7 @@ public class SecurityConfig {
                                 "/swagger-ui/**"
                         ).permitAll()
                         .requestMatchers("/actuator/metrics", "/actuator/metrics/**")
-                        .hasAnyRole("ADMIN", "ADMIN_STYLERADAR")
+                        .hasAnyRole("ADMIN", "ADMIN_STYLERADAR", "STYLERADAR_ADMIN")
                         .requestMatchers(
                                 "/api/v1/try-on/consents/**",
                                 "/api/v1/try-on/photos/**",
@@ -81,7 +81,19 @@ public class SecurityConfig {
                                 "/api/v1/try-on/garments/**",
                                 "/api/v1/try-on/jobs",
                                 "/api/v1/try-on/jobs/**"
-                        ).hasAnyRole("COMPRADOR", "USER", "ADMIN", "ADMIN_STYLERADAR", "ADMIN_TIENDA")
+                        ).hasAnyRole(
+                                "BUYER",
+                                "STYLERADAR_ADMIN",
+                                "STORE_ADMIN",
+                                "FOUNDATION_REPRESENTATIVE",
+                                "COMPRADOR",
+                                "USER",
+                                "ADMIN",
+                                "ADMIN_STYLERADAR",
+                                "ADMIN_TIENDA",
+                                "ADMIN_ALMACEN",
+                                "REPRESENTANTE_FUNDACION"
+                        )
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
