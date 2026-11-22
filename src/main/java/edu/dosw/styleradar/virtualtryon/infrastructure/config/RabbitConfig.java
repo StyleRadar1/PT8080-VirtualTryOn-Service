@@ -1,6 +1,12 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp.TryOnJobRetryRecoverer;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
@@ -8,17 +14,20 @@ import org.springframework.amqp.core.ExchangeBuilder;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
-import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
-import org.springframework.retry.interceptor.RetryInterceptorBuilder;
-import org.springframework.retry.interceptor.RetryOperationsInterceptor;
-import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp.TryOnJobRetryRecoverer;
+import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.retry.interceptor.RetryInterceptorBuilder;
+import org.springframework.retry.interceptor.RetryOperationsInterceptor;
+import org.springframework.retry.policy.SimpleRetryPolicy;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Configuración del broker RabbitMQ para el microservicio de Probador Virtual.
@@ -380,6 +389,31 @@ public class RabbitConfig {
         return converter;
     }
 
+    public static SimpleRetryPolicy buildTryOnRetryPolicy(int maxAttempts) {
+        Map<Class<? extends Throwable>, Boolean> nonRetryableExceptions = new HashMap<>();
+        nonRetryableExceptions.put(AmqpRejectAndDontRequeueException.class, false);
+        nonRetryableExceptions.put(JobNotFoundException.class, false);
+        nonRetryableExceptions.put(ConsentRequiredException.class, false);
+        nonRetryableExceptions.put(InvalidPhotoException.class, false);
+        nonRetryableExceptions.put(AiInferencePermanentException.class, false);
+        nonRetryableExceptions.put(IllegalArgumentException.class, false);
+        return new SimpleRetryPolicy(maxAttempts, nonRetryableExceptions, true, true);
+    }
+
+    public static RetryOperationsInterceptor buildTryOnRetryInterceptor(
+            TryOnJobRetryRecoverer recoverer,
+            int maxAttempts,
+            long initialInterval,
+            double multiplier,
+            long maxInterval
+    ) {
+        return RetryInterceptorBuilder.stateless()
+                .retryPolicy(buildTryOnRetryPolicy(maxAttempts))
+                .backOffOptions(initialInterval, multiplier, maxInterval)
+                .recoverer(recoverer)
+                .build();
+    }
+
     @Bean
     public RetryOperationsInterceptor tryOnRetryInterceptor(
             TryOnJobRetryRecoverer recoverer,
@@ -388,11 +422,7 @@ public class RabbitConfig {
             @Value("${styleradar.tryon.amqp.retry.multiplier:2.0}") double multiplier,
             @Value("${styleradar.tryon.amqp.retry.max-interval-ms:10000}") long maxInterval
     ) {
-        return RetryInterceptorBuilder.stateless()
-                .maxAttempts(maxAttempts)
-                .backOffOptions(initialInterval, multiplier, maxInterval)
-                .recoverer(recoverer)
-                .build();
+        return buildTryOnRetryInterceptor(recoverer, maxAttempts, initialInterval, multiplier, maxInterval);
     }
 
     @Bean(name = "rabbitListenerContainerFactory")
