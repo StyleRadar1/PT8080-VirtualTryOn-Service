@@ -20,34 +20,17 @@ public interface UserQuotaRepositoryPort {
 
     Optional<UserQuota> findQuotaByUserIdAndPeriod(UserId userId, BillingPeriod billingPeriod);
 
-    default Optional<UserQuota> findLatestQuotaByUserId(UserId userId) {
-        return Optional.empty();
-    }
+    Optional<UserQuota> findLatestQuotaByUserId(UserId userId);
 
     Optional<UserQuota> findQuotaByUserIdAndPeriodForUpdate(UserId userId, BillingPeriod billingPeriod);
 
-    default UserQuota updateQuotaPlanAtomically(
+    UserQuota updateQuotaPlanAtomically(
             UserId userId,
             BillingPeriod billingPeriod,
             boolean radarPlusActive,
             java.time.Instant occurredAt,
             UserQuota fallbackNewPeriodQuota
-    ) {
-        UserQuota quota = findQuotaByUserIdAndPeriodForUpdate(userId, billingPeriod)
-                .orElseGet(() -> findQuotaByUserIdAndPeriod(userId, billingPeriod).orElse(fallbackNewPeriodQuota));
-        if (quota == null) {
-            return null;
-        }
-        if (quota.getPlanUpdatedAt() != null && occurredAt != null && occurredAt.isBefore(quota.getPlanUpdatedAt())) {
-            return quota;
-        }
-        if (radarPlusActive) {
-            quota.upgradeToRadarPlus(occurredAt);
-        } else {
-            quota.downgradeToFreePlan(occurredAt);
-        }
-        return saveQuota(quota);
-    }
+    );
 
     CatalogGarment saveCatalogGarment(CatalogGarment garment);
 

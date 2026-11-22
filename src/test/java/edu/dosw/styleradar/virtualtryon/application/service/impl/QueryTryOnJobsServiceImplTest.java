@@ -1849,5 +1849,71 @@ class QueryTryOnJobsServiceImplTest {
         assertEquals(renewalTime, storedQuota.get().getPlanUpdatedAt());
         assertEquals(5, storedQuota.get().getUsedCount());
     }
+
+    @Test
+    @DisplayName("HU SR-RF-108: Cubrir guardas de TryOnRepositoryAdapter, fallback de período y exclusión de otros planes en suspensión")
+    void shouldCoverAtomicQuotaAdapterEdgeCasesAndListenerPlanBranches() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        Instant olderTime = Instant.parse("2026-11-21T18:00:00Z");
+        Instant newerTime = Instant.parse("2026-11-21T19:00:00Z");
+
+        UserQuota fallbackQuota = UserQuota.createDefault(userId, currentPeriod);
+        fallbackQuota.upgradeToRadarPlus(newerTime);
+
+        // 1. Guardas nulas y constructor sin quotaJpaRepository en TryOnRepositoryAdapter
+        assertEquals(fallbackQuota, repositoryAdapter.updateQuotaPlanAtomically(null, currentPeriod, true, newerTime, fallbackQuota));
+        assertEquals(fallbackQuota, repositoryAdapter.updateQuotaPlanAtomically(userId, null, true, newerTime, fallbackQuota));
+        assertEquals(fallbackQuota, repositoryAdapter.updateQuotaPlanAtomically(userId, currentPeriod, true, null, fallbackQuota));
+
+        TryOnRepositoryAdapter adapterWithoutQuotaRepo = new TryOnRepositoryAdapter(
+                consentJpaRepository,
+                photoJpaRepository,
+                new TryOnPersistenceMapper()
+        );
+        assertEquals(fallbackQuota, adapterWithoutQuotaRepo.updateQuotaPlanAtomically(userId, currentPeriod, true, newerTime, fallbackQuota));
+        assertTrue(adapterWithoutQuotaRepo.findLatestQuotaByUserId(userId).isEmpty());
+        assertTrue(repositoryAdapter.findLatestQuotaByUserId(null).isEmpty());
+
+        // 2. Sin fila previa en BD: fallback con planUpdatedAt más reciente descarta evento antiguo
+        when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.empty());
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.empty());
+
+        UserQuota staleResult = repositoryAdapter.updateQuotaPlanAtomically(userId, currentPeriod, false, olderTime, fallbackQuota);
+        assertEquals(fallbackQuota, staleResult);
+        assertTrue(staleResult.isRadarPlus());
+        verify(quotaJpaRepository, never()).save(any(UserQuotaJpaEntity.class));
+
+        // 3. Sin fila previa en BD ni fallback: crea cuota gratuita por defecto y aplica downgrade
+        when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        UserQuota defaultDowngraded = repositoryAdapter.updateQuotaPlanAtomically(userId, currentPeriod, false, olderTime, null);
+        assertFalse(defaultDowngraded.isRadarPlus());
+        assertEquals(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT, defaultDowngraded.getMonthlyLimit());
+        assertEquals(olderTime, defaultDowngraded.getPlanUpdatedAt());
+
+        // 4. Fallback con timestamp anterior se actualiza con evento más reciente
+        UserQuota outdatedFallback = UserQuota.createDefault(userId, currentPeriod);
+        outdatedFallback.downgradeToFreePlan(olderTime);
+        UserQuota upgradedFromFallback = repositoryAdapter.updateQuotaPlanAtomically(
+                userId, currentPeriod, true, newerTime, outdatedFallback
+        );
+        assertTrue(upgradedFromFallback.isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, upgradedFromFallback.getMonthlyLimit());
+        assertEquals(newerTime, upgradedFromFallback.getPlanUpdatedAt());
+
+        // 5. QueryTryOnJobsServiceImpl: proveedor nulo de período y sobrecarga de 2 argumentos sin occurredAt
+        queryTryOnJobsService.setBillingPeriodSupplier(null);
+        UserQuota preserved = queryTryOnJobsService.updateUserSubscriptionPlan(userId, false);
+        assertFalse(preserved.isRadarPlus());
+
+        // 6. TryOnEventListenerAdapter.onSubscriptionSuspended ignora planes distintos a Radar+ (ej. planId=1)
+        UserId otherPlanUser = UserId.of(UUID.randomUUID());
+        eventListenerAdapter.onSubscriptionSuspended(new UserSubscriptionPlanEvent(
+                otherPlanUser.value(), "USER", 1L, "SUSPENDED", newerTime
+        ));
+        verify(quotaJpaRepository, never()).findByUserIdAndBillingPeriodForUpdate(eq(otherPlanUser.value()), any());
+    }
 }
 
