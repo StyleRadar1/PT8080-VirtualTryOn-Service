@@ -24,6 +24,8 @@ public interface UserQuotaRepositoryPort {
 
     Optional<UserQuota> findQuotaByUserIdAndPeriodForUpdate(UserId userId, BillingPeriod billingPeriod);
 
+    UserQuota findOrCreateQuotaForUpdate(UserId userId, BillingPeriod billingPeriod);
+
     UserQuota updateQuotaPlanAtomically(
             UserId userId,
             BillingPeriod billingPeriod,

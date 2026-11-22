@@ -146,7 +146,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     public UserQuota getUserQuota(UserId userId) {
         BillingPeriod currentPeriod = currentBillingPeriod();
         UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriod(userId, currentPeriod)
-                .orElseGet(() -> quotaRepositoryPort.saveQuota(buildQuotaForNewPeriod(userId, currentPeriod)));
+                .orElseGet(() -> quotaRepositoryPort.findOrCreateQuotaForUpdate(userId, currentPeriod));
 
         // PostgreSQL es la fuente de verdad autoritativa (consumos y reembolsos con bloqueo pesimista);
         // nunca se sobrescribe la BD con contadores potencialmente desactualizados de Redis.

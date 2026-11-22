@@ -1944,6 +1944,53 @@ class QueryTryOnJobsServiceImplTest {
                 otherPlanUser.value(), "USER", 1L, "SUSPENDED", newerTime
         ));
         verify(quotaJpaRepository, never()).findByUserIdAndBillingPeriodForUpdate(eq(otherPlanUser.value()), any());
+
+        // 7. findOrCreateQuotaForUpdate y colisión concurrente de plan tras insertQuotaIfAbsentAndLock
+        UserQuotaJpaEntity existingRow = new UserQuotaJpaEntity(
+                UUID.randomUUID(),
+                userId.value(),
+                UserQuota.RADAR_PLUS_MONTHLY_LIMIT,
+                3,
+                currentPeriod.getValue(),
+                true,
+                Instant.now(),
+                olderTime
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(existingRow));
+        UserQuota existingFound = repositoryAdapter.findOrCreateQuotaForUpdate(userId, currentPeriod);
+        assertTrue(existingFound.isRadarPlus());
+        assertEquals(3, existingFound.getUsedCount());
+
+        UserId raceUser = UserId.of(UUID.randomUUID());
+        UserQuotaJpaEntity winnerRow = new UserQuotaJpaEntity(
+                UUID.randomUUID(),
+                raceUser.value(),
+                UserQuota.RADAR_PLUS_MONTHLY_LIMIT,
+                1,
+                currentPeriod.getValue(),
+                true,
+                Instant.now(),
+                newerTime
+        );
+        when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(raceUser.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(winnerRow))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(winnerRow));
+        when(quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(raceUser.value()))
+                .thenReturn(Optional.empty());
+
+        UserQuota createdLocked = repositoryAdapter.findOrCreateQuotaForUpdate(raceUser, currentPeriod);
+        assertEquals(1, createdLocked.getUsedCount());
+        assertTrue(createdLocked.isRadarPlus());
+
+        UserQuota staleWinner = repositoryAdapter.updateQuotaPlanAtomically(
+                raceUser, currentPeriod, false, olderTime
+        );
+        assertTrue(staleWinner.isRadarPlus());
+        assertEquals(newerTime, staleWinner.getPlanUpdatedAt());
+        assertEquals(1, staleWinner.getUsedCount());
     }
 }
 

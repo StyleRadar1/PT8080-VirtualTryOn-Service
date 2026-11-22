@@ -328,7 +328,6 @@ class CreateTryOnJobServiceImplTest {
 
         // 6. Prendas no compatibles (FOOTWEAR y OUTERWEAR según RN-01)
         mockCatalogGarment(garmentId, GarmentCategory.FOOTWEAR, true);
-        when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(InvalidGarmentException.class);

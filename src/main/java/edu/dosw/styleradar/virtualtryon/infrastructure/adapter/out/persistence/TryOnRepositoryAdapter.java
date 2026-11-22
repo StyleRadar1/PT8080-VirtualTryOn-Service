@@ -171,6 +171,40 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     }
 
     @Override
+    public UserQuota findOrCreateQuotaForUpdate(UserId userId, BillingPeriod billingPeriod) {
+        Optional<UserQuotaJpaEntity> existing = quotaJpaRepository
+                .findByUserIdAndBillingPeriodForUpdate(userId.value(), billingPeriod.getValue());
+        if (existing.isPresent()) {
+            return persistenceMapper.toQuotaDomain(existing.get());
+        }
+        UserQuota previous = findLatestQuotaByUserId(userId).orElse(null);
+        UserQuota initial = UserQuota.createForNewPeriod(userId, billingPeriod, previous);
+        UserQuotaJpaEntity locked = insertQuotaIfAbsentAndLock(userId, billingPeriod, initial)
+                .orElseGet(() -> quotaJpaRepository.save(persistenceMapper.toQuotaJpaEntity(initial)));
+        return persistenceMapper.toQuotaDomain(locked);
+    }
+
+    private Optional<UserQuotaJpaEntity> insertQuotaIfAbsentAndLock(
+            UserId userId,
+            BillingPeriod billingPeriod,
+            UserQuota initial
+    ) {
+        quotaJpaRepository.insertIfAbsent(
+                initial.getId(),
+                userId.value(),
+                initial.getMonthlyLimit(),
+                initial.getUsedCount(),
+                billingPeriod.getValue(),
+                initial.isRadarPlus(),
+                initial.getLastResetAt(),
+                initial.getPlanUpdatedAt()
+        );
+        return quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(
+                userId.value(), billingPeriod.getValue()
+        );
+    }
+
+    @Override
     public UserQuota updateQuotaPlanAtomically(
             UserId userId,
             BillingPeriod billingPeriod,
@@ -180,34 +214,30 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
         if (userId == null || billingPeriod == null || occurredAt == null || quotaJpaRepository == null) {
             return null;
         }
-        UserQuotaJpaEntity existing = quotaJpaRepository
-                .findByUserIdAndBillingPeriodForUpdate(userId.value(), billingPeriod.getValue())
-                .orElse(null);
-
-        if (existing != null) {
-            if (existing.getPlanUpdatedAt() != null && occurredAt.isBefore(existing.getPlanUpdatedAt())) {
-                return persistenceMapper.toQuotaDomain(existing);
-            }
-            existing.setRadarPlus(radarPlusActive);
-            existing.setMonthlyLimit(radarPlusActive
-                    ? UserQuota.RADAR_PLUS_MONTHLY_LIMIT
-                    : UserQuota.DEFAULT_FREE_MONTHLY_LIMIT);
-            existing.setPlanUpdatedAt(occurredAt);
-            UserQuotaJpaEntity saved = quotaJpaRepository.save(existing);
-            return persistenceMapper.toQuotaDomain(saved);
-        }
-
-        UserQuota previous = findLatestQuotaByUserId(userId).orElse(null);
-        UserQuota base = UserQuota.createForNewPeriod(userId, billingPeriod, previous);
-        if (base.getPlanUpdatedAt() != null && occurredAt.isBefore(base.getPlanUpdatedAt())) {
-            return base;
-        }
-        if (radarPlusActive) {
-            base.upgradeToRadarPlus(occurredAt);
+        Optional<UserQuotaJpaEntity> existing = quotaJpaRepository
+                .findByUserIdAndBillingPeriodForUpdate(userId.value(), billingPeriod.getValue());
+        UserQuotaJpaEntity target;
+        if (existing.isPresent()) {
+            target = existing.get();
         } else {
-            base.downgradeToFreePlan(occurredAt);
+            UserQuota previous = findLatestQuotaByUserId(userId).orElse(null);
+            UserQuota initial = UserQuota.createForNewPeriod(userId, billingPeriod, previous);
+            if (initial.getPlanUpdatedAt() != null && occurredAt.isBefore(initial.getPlanUpdatedAt())) {
+                return initial;
+            }
+            target = insertQuotaIfAbsentAndLock(userId, billingPeriod, initial)
+                    .orElseGet(() -> persistenceMapper.toQuotaJpaEntity(initial));
         }
-        UserQuotaJpaEntity saved = quotaJpaRepository.save(persistenceMapper.toQuotaJpaEntity(base));
+
+        if (target.getPlanUpdatedAt() != null && occurredAt.isBefore(target.getPlanUpdatedAt())) {
+            return persistenceMapper.toQuotaDomain(target);
+        }
+        target.setRadarPlus(radarPlusActive);
+        target.setMonthlyLimit(radarPlusActive
+                ? UserQuota.RADAR_PLUS_MONTHLY_LIMIT
+                : UserQuota.DEFAULT_FREE_MONTHLY_LIMIT);
+        target.setPlanUpdatedAt(occurredAt);
+        UserQuotaJpaEntity saved = quotaJpaRepository.save(target);
         return persistenceMapper.toQuotaDomain(saved);
     }
 
