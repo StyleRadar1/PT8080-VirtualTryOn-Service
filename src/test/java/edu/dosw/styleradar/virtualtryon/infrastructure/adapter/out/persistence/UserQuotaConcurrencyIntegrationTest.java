@@ -55,7 +55,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * de la cuota de un nuevo mes mediante {@code INSERT ... ON CONFLICT DO NOTHING} + {@code SELECT ... FOR UPDATE}
  * cuando el primer consumo y una suspensión ocurren simultáneamente (SR-RF-108).
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @SpringBootTest
 @ActiveProfiles("test")
 class UserQuotaConcurrencyIntegrationTest {
