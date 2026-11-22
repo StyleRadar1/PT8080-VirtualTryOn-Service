@@ -14,6 +14,8 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -25,7 +27,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 class UserMeasurementRestAdapterTest {
 
     @Test
-    @DisplayName("Cuando ms-usuarios responde 200 con medidas, retorna UserBodyMeasurements con datos parseados")
+    @DisplayName("Cuando ms-usuarios responde 200 en ruta interna /api/v1/internal/usuarios/{id}/medidas, retorna UserBodyMeasurements")
     void shouldReturnMeasurementsWhenUsuariosResponds200() {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8120");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -41,8 +43,9 @@ class UserMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8120/api/v1/usuarios/" + userId.value() + "/medidas"))
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/" + userId.value() + "/medidas"))
                 .andExpect(method(HttpMethod.GET))
+                .andExpect(headerDoesNotExist(HttpHeaders.AUTHORIZATION))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
 
         Optional<UserBodyMeasurements> result = adapter.findMeasurementsByUserId(userId);
@@ -57,41 +60,25 @@ class UserMeasurementRestAdapterTest {
     }
 
     @Test
-    @DisplayName("Cuando ms-usuarios responde 404 Not Found o 500, degrada retornando Optional.empty() según FA-02")
-    void shouldReturnEmptyWhenUsuariosFailsOrNotFound() {
+    @DisplayName("Cuando hay credenciales internas configuradas, prioriza HTTP Basic Auth preservando el secreto completo y el ID numérico de Auth")
+    void shouldSendBasicAuthAndNumericIdWhenInternalCredentialsConfigured() {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8120");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter(builder.build(), "http://localhost:8120");
-
-        UserId userId = UserId.of(UUID.randomUUID());
-
-        server.expect(requestTo("http://localhost:8120/api/v1/usuarios/" + userId.value() + "/medidas"))
-                .andExpect(method(HttpMethod.GET))
-                .andRespond(withStatus(HttpStatus.NOT_FOUND));
-
-        Optional<UserBodyMeasurements> result = adapter.findMeasurementsByUserId(userId);
-
-        server.verify();
-        assertTrue(result.isEmpty());
-    }
-
-    @Test
-    @DisplayName("Cuando userId es null o servidor inalcanzable, retorna Optional.empty()")
-    void shouldReturnEmptyWhenUserIdIsNull() {
-        UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter("http://localhost:8120");
-        assertTrue(adapter.findMeasurementsByUserId(null).isEmpty());
-    }
-
-    @Test
-    @DisplayName("Cuando userId proviene de un ID numérico de Auth, envía el Long original a ms-usuarios y reenvía Authorization")
-    void shouldSendOriginalNumericIdWhenUserIdWasDerivedFromAuthNumericSubject() {
-        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8120");
-        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter(builder.build(), "http://localhost:8120");
+        String secretWithSpaces = " " + UUID.randomUUID() + " ";
+        UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter(
+                builder.build(),
+                "http://localhost:8120",
+                UserMeasurementRestAdapter.DEFAULT_MEASUREMENTS_PATH,
+                " ms-auth ",
+                secretWithSpaces
+        );
 
         UserId userId = UserId.fromFlexible("12");
         assertNotNull(userId);
         assertNotEquals("12", userId.value().toString());
+
+        String expectedBasicHeader = "Basic " + Base64.getEncoder()
+                .encodeToString(("ms-auth:" + secretWithSpaces).getBytes(StandardCharsets.UTF_8));
 
         String jsonResponse = """
                 {
@@ -102,9 +89,9 @@ class UserMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8120/api/v1/usuarios/12/medidas"))
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/12/medidas"))
                 .andExpect(method(HttpMethod.GET))
-                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer jwt-prueba-ms-auth"))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, expectedBasicHeader))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
 
         MockHttpServletRequest servletRequest = new MockHttpServletRequest();
@@ -122,5 +109,193 @@ class UserMeasurementRestAdapterTest {
         } finally {
             RequestContextHolder.resetRequestAttributes();
         }
+    }
+
+    @Test
+    @DisplayName("Sin credenciales internas, envía ID numérico a /api/v1/internal/usuarios/12/medidas y reenvía Bearer Authorization")
+    void shouldForwardBearerAuthorizationWhenInternalCredentialsAreAbsent() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8120");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter(builder.build(), "http://localhost:8120");
+
+        UserId userId = UserId.fromFlexible("12");
+        assertNotNull(userId);
+
+        String jsonResponse = """
+                {
+                    "heightCm": 170.0,
+                    "chestCm": 92.0,
+                    "waistCm": 76.0,
+                    "hipCm": 94.0
+                }
+                """;
+
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/12/medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer jwt-prueba-ms-auth"))
+                .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
+
+        MockHttpServletRequest servletRequest = new MockHttpServletRequest();
+        servletRequest.addHeader(HttpHeaders.AUTHORIZATION, "Bearer jwt-prueba-ms-auth");
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(servletRequest));
+        try {
+            Optional<UserBodyMeasurements> result = adapter.findMeasurementsByUserId(userId);
+
+            server.verify();
+            assertTrue(result.isPresent());
+        } finally {
+            RequestContextHolder.resetRequestAttributes();
+        }
+    }
+
+    @Test
+    @DisplayName("Con credenciales internas parciales (solo usuario o solo clave), hace fallback a Bearer o sin header si está vacío")
+    void shouldFallbackToBearerWhenOnlyPartialInternalCredentialsAreProvided() {
+        String randomSecret = UUID.randomUUID().toString();
+
+        RestClient.Builder builderUserOnly = RestClient.builder().baseUrl("http://localhost:8120");
+        MockRestServiceServer serverUserOnly = MockRestServiceServer.bindTo(builderUserOnly).build();
+        UserMeasurementRestAdapter adapterUserOnly = new UserMeasurementRestAdapter(
+                builderUserOnly.build(),
+                "http://localhost:8120",
+                null,
+                "ms-auth",
+                "   "
+        );
+
+        serverUserOnly.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/15/medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer jwt-fallback"))
+                .andRespond(withSuccess("{\"chestCm\": 95.0}", MediaType.APPLICATION_JSON));
+
+        MockHttpServletRequest reqWithBearer = new MockHttpServletRequest();
+        reqWithBearer.addHeader(HttpHeaders.AUTHORIZATION, "Bearer jwt-fallback");
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(reqWithBearer));
+        try {
+            Optional<UserBodyMeasurements> res1 = adapterUserOnly.findMeasurementsByUserId(UserId.fromFlexible("15"));
+            serverUserOnly.verify();
+            assertTrue(res1.isPresent());
+            assertEquals(95.0, res1.get().chestCm());
+        } finally {
+            RequestContextHolder.resetRequestAttributes();
+        }
+
+        RestClient.Builder builderSecretOnly = RestClient.builder().baseUrl("http://localhost:8120");
+        MockRestServiceServer serverSecretOnly = MockRestServiceServer.bindTo(builderSecretOnly).build();
+        UserMeasurementRestAdapter adapterSecretOnly = new UserMeasurementRestAdapter(
+                builderSecretOnly.build(),
+                "http://localhost:8120",
+                "",
+                "   ",
+                randomSecret
+        );
+
+        serverSecretOnly.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/16/medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(headerDoesNotExist(HttpHeaders.AUTHORIZATION))
+                .andRespond(withSuccess("{\"chestCm\": 90.0}", MediaType.APPLICATION_JSON));
+
+        MockHttpServletRequest reqBlankAuth = new MockHttpServletRequest();
+        reqBlankAuth.addHeader(HttpHeaders.AUTHORIZATION, "   ");
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(reqBlankAuth));
+        try {
+            Optional<UserBodyMeasurements> res2 = adapterSecretOnly.findMeasurementsByUserId(UserId.fromFlexible("16"));
+            serverSecretOnly.verify();
+            assertTrue(res2.isPresent());
+            assertEquals(90.0, res2.get().chestCm());
+        } finally {
+            RequestContextHolder.resetRequestAttributes();
+        }
+    }
+
+    @Test
+    @DisplayName("Permite personalizar la ruta de medidas y usa la ruta por defecto si viene en blanco")
+    void shouldUseCustomPathAndFallbackToDefaultWhenPathIsBlank() {
+        RestClient.Builder customBuilder = RestClient.builder().baseUrl("http://localhost:8120");
+        MockRestServiceServer customServer = MockRestServiceServer.bindTo(customBuilder).build();
+        UserMeasurementRestAdapter customAdapter = new UserMeasurementRestAdapter(
+                customBuilder.build(),
+                "http://localhost:8120",
+                " /api/v1/usuarios/{userId}/medidas ",
+                null,
+                null
+        );
+
+        customServer.expect(requestTo("http://localhost:8120/api/v1/usuarios/21/medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("{\"heightCm\": 180.0}", MediaType.APPLICATION_JSON));
+
+        Optional<UserBodyMeasurements> customResult = customAdapter.findMeasurementsByUserId(UserId.fromFlexible("21"));
+        customServer.verify();
+        assertTrue(customResult.isPresent());
+        assertEquals(180.0, customResult.get().heightCm());
+
+        RestClient.Builder blankPathBuilder = RestClient.builder().baseUrl("http://localhost:8120");
+        MockRestServiceServer blankPathServer = MockRestServiceServer.bindTo(blankPathBuilder).build();
+        UserMeasurementRestAdapter blankPathAdapter = new UserMeasurementRestAdapter(
+                blankPathBuilder.build(),
+                "http://localhost:8120",
+                "   ",
+                null,
+                null
+        );
+
+        blankPathServer.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/22/medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("{\"heightCm\": 165.0}", MediaType.APPLICATION_JSON));
+
+        Optional<UserBodyMeasurements> blankPathResult = blankPathAdapter.findMeasurementsByUserId(UserId.fromFlexible("22"));
+        blankPathServer.verify();
+        assertTrue(blankPathResult.isPresent());
+        assertEquals(165.0, blankPathResult.get().heightCm());
+    }
+
+    @Test
+    @DisplayName("Cuando ms-usuarios responde 200 sin cuerpo, retorna Optional.empty()")
+    void shouldReturnEmptyWhenUsuariosRespondsWithEmptyBody() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8120");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter(builder.build(), "http://localhost:8120");
+
+        UserId userId = UserId.of(UUID.randomUUID());
+
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/" + userId.value() + "/medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess());
+
+        Optional<UserBodyMeasurements> result = adapter.findMeasurementsByUserId(userId);
+
+        server.verify();
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    @DisplayName("Cuando ms-usuarios responde 404 Not Found o 403 Forbidden, degrada retornando Optional.empty() según FA-02")
+    void shouldReturnEmptyWhenUsuariosFailsOrNotFound() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8120");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter(builder.build(), "http://localhost:8120");
+
+        UserId userId1 = UserId.of(UUID.randomUUID());
+        UserId userId2 = UserId.of(UUID.randomUUID());
+
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/" + userId1.value() + "/medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/" + userId2.value() + "/medidas"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN));
+
+        assertTrue(adapter.findMeasurementsByUserId(userId1).isEmpty());
+        assertTrue(adapter.findMeasurementsByUserId(userId2).isEmpty());
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("Cuando userId es null o servidor inalcanzable, retorna Optional.empty()")
+    void shouldReturnEmptyWhenUserIdIsNull() {
+        UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter("http://localhost:8120");
+        assertTrue(adapter.findMeasurementsByUserId(null).isEmpty());
     }
 }
