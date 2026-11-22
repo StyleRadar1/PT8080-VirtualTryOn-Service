@@ -60,17 +60,17 @@ class UserMeasurementRestAdapterTest {
     }
 
     @Test
-    @DisplayName("Cuando hay credenciales internas configuradas, prioriza HTTP Basic Auth sobre Bearer y preserva el ID numérico de Auth")
+    @DisplayName("Cuando hay credenciales internas configuradas, prioriza HTTP Basic Auth preservando el secreto completo y el ID numérico de Auth")
     void shouldSendBasicAuthAndNumericIdWhenInternalCredentialsConfigured() {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8120");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        String secretToken = UUID.randomUUID().toString();
+        String secretWithSpaces = " " + UUID.randomUUID() + " ";
         UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter(
                 builder.build(),
                 "http://localhost:8120",
                 UserMeasurementRestAdapter.DEFAULT_MEASUREMENTS_PATH,
                 " ms-auth ",
-                " " + secretToken + " "
+                secretWithSpaces
         );
 
         UserId userId = UserId.fromFlexible("12");
@@ -78,7 +78,7 @@ class UserMeasurementRestAdapterTest {
         assertNotEquals("12", userId.value().toString());
 
         String expectedBasicHeader = "Basic " + Base64.getEncoder()
-                .encodeToString(("ms-auth:" + secretToken).getBytes(StandardCharsets.UTF_8));
+                .encodeToString(("ms-auth:" + secretWithSpaces).getBytes(StandardCharsets.UTF_8));
 
         String jsonResponse = """
                 {

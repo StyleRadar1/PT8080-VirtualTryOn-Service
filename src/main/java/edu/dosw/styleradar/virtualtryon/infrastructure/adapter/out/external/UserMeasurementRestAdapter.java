@@ -79,7 +79,7 @@ public class UserMeasurementRestAdapter implements UserMeasurementPort {
         this.baseUrl = baseUrl;
         this.measurementsPath = normalizeMeasurementsPath(measurementsPath);
         this.internalAuthUsername = trimToNull(internalAuthUsername);
-        this.internalAuthPassword = trimToNull(internalAuthPassword);
+        this.internalAuthPassword = nullIfBlank(internalAuthPassword);
     }
 
     @Override
@@ -144,6 +144,13 @@ public class UserMeasurementRestAdapter implements UserMeasurementPort {
             return null;
         }
         return value.trim();
+    }
+
+    private static String nullIfBlank(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value;
     }
 
     private boolean hasInternalBasicAuth() {
