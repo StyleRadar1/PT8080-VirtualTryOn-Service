@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -12,7 +13,13 @@ import java.util.UUID;
  * Entidad JPA para la tabla user_quotas que persiste el límite y consumo mensual de pruebas virtuales (SR-RF-24).
  */
 @Entity
-@Table(name = "user_quotas")
+@Table(
+        name = "user_quotas",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_user_billing_period",
+                columnNames = {"user_id", "billing_period"}
+        )
+)
 public class UserQuotaJpaEntity {
 
     @Id

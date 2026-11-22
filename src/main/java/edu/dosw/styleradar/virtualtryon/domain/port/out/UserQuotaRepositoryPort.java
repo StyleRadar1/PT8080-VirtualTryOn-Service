@@ -28,8 +28,7 @@ public interface UserQuotaRepositoryPort {
             UserId userId,
             BillingPeriod billingPeriod,
             boolean radarPlusActive,
-            java.time.Instant occurredAt,
-            UserQuota fallbackNewPeriodQuota
+            java.time.Instant occurredAt
     );
 
     CatalogGarment saveCatalogGarment(CatalogGarment garment);

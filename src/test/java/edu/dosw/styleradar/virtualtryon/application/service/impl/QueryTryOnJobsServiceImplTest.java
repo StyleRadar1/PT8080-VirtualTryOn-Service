@@ -1464,6 +1464,8 @@ class QueryTryOnJobsServiceImplTest {
 
         lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userUuid), any()))
                 .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
         lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
                 .thenAnswer(inv -> {
                     UserQuotaJpaEntity entity = inv.getArgument(0);
@@ -1587,6 +1589,8 @@ class QueryTryOnJobsServiceImplTest {
 
         lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(any(), any()))
                 .thenAnswer(inv -> Optional.ofNullable(quotasByUser.get(inv.getArgument(0))));
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(any(), any()))
+                .thenAnswer(inv -> Optional.ofNullable(quotasByUser.get(inv.getArgument(0))));
         lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
                 .thenAnswer(inv -> {
                     UserQuotaJpaEntity entity = inv.getArgument(0);
@@ -1628,6 +1632,8 @@ class QueryTryOnJobsServiceImplTest {
                 new java.util.concurrent.atomic.AtomicReference<>();
 
         lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(eq(userUuid), any()))
                 .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
         lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
                 .thenAnswer(inv -> {
@@ -1677,6 +1683,8 @@ class QueryTryOnJobsServiceImplTest {
         queryTryOnJobsService.setBillingPeriodSupplier(activePeriod::get);
 
         lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(quotasByPeriod.get(inv.getArgument(1))));
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(eq(userUuid), any()))
                 .thenAnswer(inv -> Optional.ofNullable(quotasByPeriod.get(inv.getArgument(1))));
         lenient().when(quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(userUuid))
                 .thenAnswer(inv -> quotasByPeriod.values().stream()
@@ -1778,9 +1786,9 @@ class QueryTryOnJobsServiceImplTest {
         java.util.concurrent.CountDownLatch paymentEnteredService = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.CountDownLatch allowPaymentToProceed = new java.util.concurrent.CountDownLatch(1);
 
-        // El hilo del pago entra primero y queda retenido antes del bloqueo atómico mientras se procesa la suspensión
-        // y un consumo concurrente en BD; al reanudar, la comparación/actualización atómica descarta el pago obsoleto.
-        lenient().when(quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(userUuid))
+        // El hilo del pago entra primero y queda retenido al intentar adquirir el bloqueo en BD mientras se procesa
+        // la suspensión y un consumo concurrente; al reanudar, la comparación/actualización atómica descarta el pago obsoleto.
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(eq(userUuid), any()))
                 .thenAnswer(inv -> {
                     if (Thread.currentThread().getName().contains("payment-thread")) {
                         paymentEnteredService.countDown();
@@ -1792,8 +1800,6 @@ class QueryTryOnJobsServiceImplTest {
                     }
                     return Optional.ofNullable(storedQuota.get());
                 });
-        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(eq(userUuid), any()))
-                .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
         lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userUuid), any()))
                 .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
         lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
@@ -1858,52 +1864,76 @@ class QueryTryOnJobsServiceImplTest {
         Instant olderTime = Instant.parse("2026-11-21T18:00:00Z");
         Instant newerTime = Instant.parse("2026-11-21T19:00:00Z");
 
-        UserQuota fallbackQuota = UserQuota.createDefault(userId, currentPeriod);
-        fallbackQuota.upgradeToRadarPlus(newerTime);
-
         // 1. Guardas nulas y constructor sin quotaJpaRepository en TryOnRepositoryAdapter
-        assertEquals(fallbackQuota, repositoryAdapter.updateQuotaPlanAtomically(null, currentPeriod, true, newerTime, fallbackQuota));
-        assertEquals(fallbackQuota, repositoryAdapter.updateQuotaPlanAtomically(userId, null, true, newerTime, fallbackQuota));
-        assertEquals(fallbackQuota, repositoryAdapter.updateQuotaPlanAtomically(userId, currentPeriod, true, null, fallbackQuota));
+        assertNull(repositoryAdapter.updateQuotaPlanAtomically(null, currentPeriod, true, newerTime));
+        assertNull(repositoryAdapter.updateQuotaPlanAtomically(userId, null, true, newerTime));
+        assertNull(repositoryAdapter.updateQuotaPlanAtomically(userId, currentPeriod, true, null));
 
         TryOnRepositoryAdapter adapterWithoutQuotaRepo = new TryOnRepositoryAdapter(
                 consentJpaRepository,
                 photoJpaRepository,
                 new TryOnPersistenceMapper()
         );
-        assertEquals(fallbackQuota, adapterWithoutQuotaRepo.updateQuotaPlanAtomically(userId, currentPeriod, true, newerTime, fallbackQuota));
+        assertNull(adapterWithoutQuotaRepo.updateQuotaPlanAtomically(userId, currentPeriod, true, newerTime));
         assertTrue(adapterWithoutQuotaRepo.findLatestQuotaByUserId(userId).isEmpty());
         assertTrue(repositoryAdapter.findLatestQuotaByUserId(null).isEmpty());
 
-        // 2. Sin fila previa en BD: fallback con planUpdatedAt más reciente descarta evento antiguo
+        // 2. Sin fila en el período actual: período previo con planUpdatedAt más reciente descarta evento antiguo
+        UserQuotaJpaEntity newerPreviousPeriodEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(),
+                userId.value(),
+                UserQuota.RADAR_PLUS_MONTHLY_LIMIT,
+                2,
+                "2026-10",
+                true,
+                Instant.now(),
+                newerTime
+        );
         when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(userId.value(), currentPeriod.getValue()))
                 .thenReturn(Optional.empty());
-        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
-                .thenReturn(Optional.empty());
+        when(quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(userId.value()))
+                .thenReturn(Optional.of(newerPreviousPeriodEntity));
 
-        UserQuota staleResult = repositoryAdapter.updateQuotaPlanAtomically(userId, currentPeriod, false, olderTime, fallbackQuota);
-        assertEquals(fallbackQuota, staleResult);
+        UserQuota staleResult = repositoryAdapter.updateQuotaPlanAtomically(userId, currentPeriod, false, olderTime);
+        assertNotNull(staleResult);
         assertTrue(staleResult.isRadarPlus());
+        assertEquals(0, staleResult.getUsedCount());
         verify(quotaJpaRepository, never()).save(any(UserQuotaJpaEntity.class));
 
-        // 3. Sin fila previa en BD ni fallback: crea cuota gratuita por defecto y aplica downgrade
+        // 3. Sin fila previa en BD: crea cuota gratuita por defecto y aplica downgrade
+        when(quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(userId.value()))
+                .thenReturn(Optional.empty());
         when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        UserQuota defaultDowngraded = repositoryAdapter.updateQuotaPlanAtomically(userId, currentPeriod, false, olderTime, null);
+        UserQuota defaultDowngraded = repositoryAdapter.updateQuotaPlanAtomically(userId, currentPeriod, false, olderTime);
         assertFalse(defaultDowngraded.isRadarPlus());
         assertEquals(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT, defaultDowngraded.getMonthlyLimit());
         assertEquals(olderTime, defaultDowngraded.getPlanUpdatedAt());
 
-        // 4. Fallback con timestamp anterior se actualiza con evento más reciente
-        UserQuota outdatedFallback = UserQuota.createDefault(userId, currentPeriod);
-        outdatedFallback.downgradeToFreePlan(olderTime);
-        UserQuota upgradedFromFallback = repositoryAdapter.updateQuotaPlanAtomically(
-                userId, currentPeriod, true, newerTime, outdatedFallback
+        // 4. Sin fila en el período actual: período previo con timestamp anterior se actualiza con evento más reciente
+        UserQuotaJpaEntity olderPreviousPeriodEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(),
+                userId.value(),
+                UserQuota.DEFAULT_FREE_MONTHLY_LIMIT,
+                1,
+                "2026-10",
+                false,
+                Instant.now(),
+                olderTime
         );
-        assertTrue(upgradedFromFallback.isRadarPlus());
-        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, upgradedFromFallback.getMonthlyLimit());
-        assertEquals(newerTime, upgradedFromFallback.getPlanUpdatedAt());
+        when(quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(userId.value()))
+                .thenReturn(Optional.of(olderPreviousPeriodEntity));
+        UserQuota upgradedFromPrevious = repositoryAdapter.updateQuotaPlanAtomically(
+                userId, currentPeriod, true, newerTime
+        );
+        assertTrue(upgradedFromPrevious.isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, upgradedFromPrevious.getMonthlyLimit());
+        assertEquals(newerTime, upgradedFromPrevious.getPlanUpdatedAt());
 
         // 5. QueryTryOnJobsServiceImpl: proveedor nulo de período y sobrecarga de 2 argumentos sin occurredAt
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.empty());
+        when(quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(userId.value()))
+                .thenReturn(Optional.empty());
         queryTryOnJobsService.setBillingPeriodSupplier(null);
         UserQuota preserved = queryTryOnJobsService.updateUserSubscriptionPlan(userId, false);
         assertFalse(preserved.isRadarPlus());

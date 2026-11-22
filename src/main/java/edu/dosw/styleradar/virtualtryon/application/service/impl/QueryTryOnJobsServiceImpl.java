@@ -172,13 +172,11 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
                     .orElseGet(() -> buildQuotaForNewPeriod(userId, currentPeriod));
         }
 
-        UserQuota fallbackNewPeriod = buildQuotaForNewPeriod(userId, currentPeriod);
         UserQuota saved = quotaRepositoryPort.updateQuotaPlanAtomically(
                 userId,
                 currentPeriod,
                 radarPlusActive,
-                occurredAt,
-                fallbackNewPeriod
+                occurredAt
         );
         if (saved != null) {
             resyncCacheFromAuthoritativeQuota(userId, currentPeriod, saved.getUsedCount());
