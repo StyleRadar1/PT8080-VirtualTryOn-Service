@@ -10,10 +10,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Duration;
 import java.util.Optional;
@@ -53,13 +56,20 @@ public class UserMeasurementRestAdapter implements UserMeasurementPort {
 
     @Override
     public Optional<UserBodyMeasurements> findMeasurementsByUserId(UserId userId) {
-        if (userId == null) {
+        String targetId = UserId.resolveExternalIdentifier(userId);
+        if (targetId == null || targetId.isBlank()) {
             return Optional.empty();
         }
         try {
+            String authorizationHeader = resolveCurrentAuthorizationHeader();
             UserMeasurementDto dto = restClient.get()
-                    .uri("/api/v1/usuarios/{userId}/medidas", userId.value())
+                    .uri("/api/v1/usuarios/{userId}/medidas", targetId)
                     .accept(MediaType.APPLICATION_JSON)
+                    .headers(headers -> {
+                        if (authorizationHeader != null && !authorizationHeader.isBlank()) {
+                            headers.set(HttpHeaders.AUTHORIZATION, authorizationHeader);
+                        }
+                    })
                     .retrieve()
                     .body(UserMeasurementDto.class);
 
@@ -75,9 +85,17 @@ public class UserMeasurementRestAdapter implements UserMeasurementPort {
             return Optional.of(measurements);
         } catch (Exception ex) {
             log.debug("No se pudieron obtener medidas autorizadas desde ms-usuarios ({}) para usuario {}: {}",
-                    baseUrl, userId.value(), ex.getMessage());
+                    baseUrl, targetId, ex.getMessage());
             return Optional.empty();
         }
+    }
+
+    private static String resolveCurrentAuthorizationHeader() {
+        var attributes = RequestContextHolder.getRequestAttributes();
+        if (attributes instanceof ServletRequestAttributes servletAttributes) {
+            return servletAttributes.getRequest().getHeader(HttpHeaders.AUTHORIZATION);
+        }
+        return null;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
