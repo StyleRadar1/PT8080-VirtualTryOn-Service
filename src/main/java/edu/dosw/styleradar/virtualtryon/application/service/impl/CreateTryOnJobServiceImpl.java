@@ -144,8 +144,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         // 4. Creación atómica del TryOnJob, consumo de cuota y persistencia en Outbox dentro de la misma transacción JDBC
         int[] updatedUsedCount = new int[1];
         TryOnJob savedQueuedJob = executeInTransaction(() -> {
-            UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)
-                    .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
+            UserQuota quota = quotaRepositoryPort.findOrCreateQuotaForUpdate(userId, currentPeriod);
 
             TryOnValidationContext validationContext = new TryOnValidationContext(
                     userId,

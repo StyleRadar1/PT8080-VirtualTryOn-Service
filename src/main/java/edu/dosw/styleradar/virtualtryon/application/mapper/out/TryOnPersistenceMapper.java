@@ -104,7 +104,8 @@ public class TryOnPersistenceMapper {
                 domain.getUsedCount(),
                 domain.getBillingPeriod().getValue(),
                 domain.isRadarPlus(),
-                domain.getLastResetAt()
+                domain.getLastResetAt(),
+                domain.getPlanUpdatedAt()
         );
     }
 
@@ -116,7 +117,8 @@ public class TryOnPersistenceMapper {
                 entity.getUsedCount(),
                 BillingPeriod.of(entity.getBillingPeriod()),
                 entity.isRadarPlus(),
-                entity.getLastResetAt()
+                entity.getLastResetAt(),
+                entity.getPlanUpdatedAt()
         );
     }
 

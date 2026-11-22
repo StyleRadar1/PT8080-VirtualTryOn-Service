@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      DOCKER_API_VERSION: "1.44"
 
     steps:
       - name: Checkout repository

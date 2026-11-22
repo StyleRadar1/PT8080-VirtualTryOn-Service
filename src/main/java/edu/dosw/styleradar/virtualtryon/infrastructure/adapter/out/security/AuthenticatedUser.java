@@ -52,7 +52,9 @@ public record AuthenticatedUser(UUID userId, String role, List<String> roles) {
         if (targetUserId == null) {
             return false;
         }
-        if (roles.contains("ADMIN") || roles.contains("ADMIN_STYLERADAR")) {
+        if (roles.contains("ADMIN")
+                || roles.contains("ADMIN_STYLERADAR")
+                || roles.contains("STYLERADAR_ADMIN")) {
             return true;
         }
         return userId.equals(targetUserId);

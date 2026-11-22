@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import edu.dosw.styleradar.virtualtryon.application.dto.event.CatalogGarmentUpdatedEvent;
 import edu.dosw.styleradar.virtualtryon.application.dto.event.UserAccountDeletedEvent;
+import edu.dosw.styleradar.virtualtryon.application.dto.event.UserSubscriptionPlanEvent;
 import edu.dosw.styleradar.virtualtryon.application.dto.request.BiometricConsentRequest;
 import edu.dosw.styleradar.virtualtryon.application.dto.request.StartTryOnRequest;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.AuthenticatedUser;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtTokenProvider;
 import org.junit.jupiter.api.DisplayName;
@@ -236,5 +238,208 @@ class UserIdAndContractsIntegrationTest {
 
         assertTrue(adminUser.canAccessUser(targetUserId), "ADMIN_STYLERADAR debe tener acceso a cualquier usuario objetivo");
         assertEquals("ADMIN_STYLERADAR", adminUser.role());
+    }
+
+    @Test
+    @DisplayName("Catálogo: Deserializa los 3 eventos reales de RabbitMQPublisherAdapter con LocalDateTime sin Z, fechaModeracion y tildes")
+    void shouldDeserializeRealItemCatalogEventsWithLocalDateTimeAndAccents() throws Exception {
+        UUID garmentUuid = UUID.randomUUID();
+        UUID storeUuid = UUID.randomUUID();
+
+        // 1. styleradar.catalogo.prenda.publicada
+        String publicadaPayload = """
+                {
+                  "eventoId": "%s",
+                  "productor": "ms-item-catalogo",
+                  "itemId": "%s",
+                  "prendaId": "%s",
+                  "tiendaId": "%s",
+                  "almacenId": "%s",
+                  "nombrePrenda": "Pantalón Clásico",
+                  "categoria": "Pantalón",
+                  "color": "Negro",
+                  "marca": "StyleCo",
+                  "estilo": "Casual",
+                  "precio": 120000,
+                  "imagenUrl": "https://storage.styleradar.co/garments/pant-1.png",
+                  "fechaPublicacion": "2026-11-21T18:00:00"
+                }
+                """.formatted(UUID.randomUUID(), garmentUuid, garmentUuid, storeUuid, storeUuid);
+
+        CatalogGarmentUpdatedEvent publicada = objectMapper.readValue(publicadaPayload, CatalogGarmentUpdatedEvent.class);
+        assertEquals(garmentUuid, publicada.garmentId());
+        assertEquals("Pantalón Clásico", publicada.name());
+        assertEquals("Pantalón", publicada.category());
+        assertEquals("https://storage.styleradar.co/garments/pant-1.png", publicada.imageUrl());
+        assertTrue(publicada.visible());
+        assertEquals(Instant.parse("2026-11-21T18:00:00Z"), publicada.updatedAt());
+
+        // 2. styleradar.catalogo.prenda.retirada
+        String retiradaPayload = """
+                {
+                  "eventoId": "%s",
+                  "productor": "ms-item-catalogo",
+                  "itemId": "%s",
+                  "prendaId": "%s",
+                  "tiendaId": "%s",
+                  "almacenId": "%s",
+                  "motivo": "Retirada por tienda",
+                  "fechaEvento": "2026-11-21T18:05:00"
+                }
+                """.formatted(UUID.randomUUID(), garmentUuid, garmentUuid, storeUuid, storeUuid);
+
+        CatalogGarmentUpdatedEvent retirada = objectMapper.readValue(retiradaPayload, CatalogGarmentUpdatedEvent.class);
+        assertEquals(garmentUuid, retirada.garmentId());
+        assertEquals(Instant.parse("2026-11-21T18:05:00Z"), retirada.updatedAt());
+
+        // 3. styleradar.catalogo.moderacion.cambiada
+        String moderacionPayload = """
+                {
+                  "eventoId": "%s",
+                  "productor": "ms-item-catalogo",
+                  "itemId": "%s",
+                  "prendaId": "%s",
+                  "tiendaId": "%s",
+                  "almacenId": "%s",
+                  "nombrePrenda": "Pantalón Clásico",
+                  "estadoModeracion": "RECHAZADA",
+                  "observacion": "Imagen no válida",
+                  "fechaModeracion": "2026-11-21T18:10:00"
+                }
+                """.formatted(UUID.randomUUID(), garmentUuid, garmentUuid, storeUuid, storeUuid);
+
+        CatalogGarmentUpdatedEvent moderacion = objectMapper.readValue(moderacionPayload, CatalogGarmentUpdatedEvent.class);
+        assertEquals(garmentUuid, moderacion.garmentId());
+        assertEquals("Pantalón Clásico", moderacion.name());
+        assertFalse(moderacion.visible(), "estadoModeracion RECHAZADA debe marcar la prenda como no visible");
+        assertEquals(Instant.parse("2026-11-21T18:10:00Z"), moderacion.updatedAt());
+
+        // Validaciones adicionales de parseFlexibleInstant y GarmentCategory con tildes y tipos de Catálogo
+        assertEquals(Instant.parse("2026-11-21T23:00:00Z"),
+                CatalogGarmentUpdatedEvent.parseFlexibleInstant("2026-11-21T18:00:00-05:00"));
+        Instant directInstant = Instant.parse("2026-11-21T18:00:00Z");
+        assertEquals(directInstant, CatalogGarmentUpdatedEvent.parseFlexibleInstant(directInstant));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant("   "));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant(null));
+
+        assertEquals(GarmentCategory.BOTTOM, GarmentCategory.fromRawValue("Pantalón"));
+        assertEquals(GarmentCategory.TOP, GarmentCategory.fromRawValue("Saco"));
+        assertEquals(GarmentCategory.TOP, GarmentCategory.fromRawValue("Blazer"));
+        assertEquals(GarmentCategory.BOTTOM, GarmentCategory.fromRawValue("Jean"));
+        assertEquals(GarmentCategory.TOP, GarmentCategory.fromRawValue("Suéter"));
+        assertEquals(GarmentCategory.ACCESSORIES, GarmentCategory.fromRawValue("Joyería"));
+    }
+
+    @Test
+    @DisplayName("Pagos: Deserializa PaymentConfirmedEvent y SubscriptionSuspendedEvent reales con bloque data e ID numérico")
+    void shouldDeserializeRealPaymentAndSubscriptionEvents() throws Exception {
+        String paymentConfirmedJson = """
+                {
+                  "eventId": "%s",
+                  "eventType": "styleradar.pagos.pago.confirmado",
+                  "version": 1,
+                  "timestamp": "2026-11-21T19:00:00Z",
+                  "producer": "ms-pagos-suscripciones",
+                  "correlationId": "corr-123",
+                  "data": {
+                    "ordenId": 100,
+                    "suscripcionId": 55,
+                    "suscriptorId": "12",
+                    "usuarioId": 12,
+                    "tipoSuscriptor": "USER",
+                    "planId": 2,
+                    "nit": null,
+                    "almacenId": null,
+                    "estado": "APPROVED"
+                  }
+                }
+                """.formatted(UUID.randomUUID());
+
+        UserSubscriptionPlanEvent confirmed = objectMapper.readValue(paymentConfirmedJson, UserSubscriptionPlanEvent.class);
+        assertEquals(UserId.parseToUuid(12L), confirmed.userId());
+        assertEquals("USER", confirmed.subscriberType());
+        assertEquals(2L, confirmed.planId());
+        assertEquals("APPROVED", confirmed.status());
+        assertFalse(confirmed.isStoreSubscription());
+        assertTrue(confirmed.isApproved());
+        assertTrue(confirmed.isRadarPlusSubscription());
+        assertEquals(Instant.parse("2026-11-21T19:00:00Z"), confirmed.occurredAt());
+
+        String storePaymentJson = """
+                {
+                  "eventId": "%s",
+                  "eventType": "styleradar.pagos.pago.confirmado",
+                  "timestamp": "2026-11-21T19:05:00Z",
+                  "data": {
+                    "suscriptorId": "store-99",
+                    "tipoSuscriptor": "STORE",
+                    "planId": 3,
+                    "almacenId": "%s",
+                    "estado": "APPROVED"
+                  }
+                }
+                """.formatted(UUID.randomUUID(), UUID.randomUUID());
+
+        UserSubscriptionPlanEvent storeEvent = objectMapper.readValue(storePaymentJson, UserSubscriptionPlanEvent.class);
+        assertTrue(storeEvent.isStoreSubscription());
+        assertFalse(storeEvent.isRadarPlusSubscription());
+
+        String suspendedJson = """
+                {
+                  "eventId": "%s",
+                  "eventType": "styleradar.pagos.suscripcion.suspendida",
+                  "version": 1,
+                  "timestamp": "2026-11-21T19:10:00Z",
+                  "producer": "ms-pagos-suscripciones",
+                  "data": {
+                    "suscripcionId": 55,
+                    "suscriptorId": "12",
+                    "tipoSuscriptor": "USER",
+                    "planId": 2,
+                    "fechaFin": "2026-11-20",
+                    "motivo": "Periodo expirado"
+                  }
+                }
+                """.formatted(UUID.randomUUID());
+
+        UserSubscriptionPlanEvent suspended = objectMapper.readValue(suspendedJson, UserSubscriptionPlanEvent.class);
+        assertEquals(UserId.parseToUuid("12"), suspended.userId());
+        assertFalse(suspended.isStoreSubscription());
+        assertTrue(suspended.isRadarPlusSubscription());
+        assertFalse(suspended.isApproved(), "Un evento sin estado explícito no debe considerarse pago aprobado");
+
+        // Payloads planos alternos (plan textual, rechazo, otro plan e incompleto)
+        UserSubscriptionPlanEvent flatRadarPlus = objectMapper.readValue("""
+                {"usuarioId":"12","plan":"Radar+","estado":"APROBADO"}
+                """, UserSubscriptionPlanEvent.class);
+        assertEquals(2L, flatRadarPlus.planId());
+        assertTrue(flatRadarPlus.isApproved());
+        assertTrue(flatRadarPlus.isRadarPlusSubscription());
+        assertFalse(flatRadarPlus.isStoreSubscription());
+
+        UserSubscriptionPlanEvent otherPlan = objectMapper.readValue("""
+                {"usuarioId":"12","tipoSuscriptor":"USER","planId":1,"estado":"APPROVED"}
+                """, UserSubscriptionPlanEvent.class);
+        assertTrue(otherPlan.isApproved());
+        assertFalse(otherPlan.isRadarPlusSubscription());
+
+        UserSubscriptionPlanEvent incompleteEvent = objectMapper.readValue("""
+                {"usuarioId":"12"}
+                """, UserSubscriptionPlanEvent.class);
+        assertFalse(incompleteEvent.isApproved());
+        assertFalse(incompleteEvent.isRadarPlusSubscription());
+
+        UserSubscriptionPlanEvent flatStoreByPlanId = objectMapper.readValue("""
+                {"suscriptorId":"store-1","planId":3,"estado":"REJECTED"}
+                """, UserSubscriptionPlanEvent.class);
+        assertTrue(flatStoreByPlanId.isStoreSubscription());
+        assertFalse(flatStoreByPlanId.isRadarPlusSubscription());
+        assertFalse(flatStoreByPlanId.isApproved());
+
+        UserSubscriptionPlanEvent flatStoreByName = objectMapper.readValue("""
+                {"suscriptorId":"store-2","plan":"Store Basic"}
+                """, UserSubscriptionPlanEvent.class);
+        assertTrue(flatStoreByName.isStoreSubscription());
+        assertFalse(flatStoreByName.isRadarPlusSubscription());
     }
 }

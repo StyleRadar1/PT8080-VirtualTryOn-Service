@@ -20,7 +20,18 @@ public interface UserQuotaRepositoryPort {
 
     Optional<UserQuota> findQuotaByUserIdAndPeriod(UserId userId, BillingPeriod billingPeriod);
 
+    Optional<UserQuota> findLatestQuotaByUserId(UserId userId);
+
     Optional<UserQuota> findQuotaByUserIdAndPeriodForUpdate(UserId userId, BillingPeriod billingPeriod);
+
+    UserQuota findOrCreateQuotaForUpdate(UserId userId, BillingPeriod billingPeriod);
+
+    UserQuota updateQuotaPlanAtomically(
+            UserId userId,
+            BillingPeriod billingPeriod,
+            boolean radarPlusActive,
+            java.time.Instant occurredAt
+    );
 
     CatalogGarment saveCatalogGarment(CatalogGarment garment);
 

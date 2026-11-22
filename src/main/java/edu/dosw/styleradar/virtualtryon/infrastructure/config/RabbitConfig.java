@@ -1,6 +1,12 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp.TryOnJobRetryRecoverer;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
@@ -8,17 +14,20 @@ import org.springframework.amqp.core.ExchangeBuilder;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
-import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
-import org.springframework.retry.interceptor.RetryInterceptorBuilder;
-import org.springframework.retry.interceptor.RetryOperationsInterceptor;
-import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.amqp.TryOnJobRetryRecoverer;
+import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.retry.interceptor.RetryInterceptorBuilder;
+import org.springframework.retry.interceptor.RetryOperationsInterceptor;
+import org.springframework.retry.policy.SimpleRetryPolicy;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Configuración del broker RabbitMQ para el microservicio de Probador Virtual.
@@ -58,6 +67,17 @@ public class RabbitConfig {
     public static final String DEFAULT_USER_ACCOUNT_DELETED_ROUTING_KEY = "styleradar.usuarios.cuenta.eliminada";
     public static final String DEFAULT_USER_ACCOUNT_DELETED_DLQ = "styleradar.probador.cuenta-eliminada.dlq";
     public static final String DEFAULT_USER_ACCOUNT_DELETED_DLQ_ROUTING_KEY = "styleradar.probador.cuenta-eliminada.dead";
+
+    public static final String DEFAULT_PAYMENT_EVENTS_EXCHANGE = "styleradar.exchange";
+    public static final String DEFAULT_PAYMENT_CONFIRMED_QUEUE = "styleradar.probador.pago-confirmado.q";
+    public static final String DEFAULT_PAYMENT_CONFIRMED_ROUTING_KEY = "styleradar.pagos.pago.confirmado";
+    public static final String DEFAULT_PAYMENT_CONFIRMED_DLQ = "styleradar.probador.pago-confirmado.dlq";
+    public static final String DEFAULT_PAYMENT_CONFIRMED_DLQ_ROUTING_KEY = "styleradar.probador.pago-confirmado.dead";
+
+    public static final String DEFAULT_SUBSCRIPTION_SUSPENDED_QUEUE = "styleradar.probador.suscripcion-suspendida.q";
+    public static final String DEFAULT_SUBSCRIPTION_SUSPENDED_ROUTING_KEY = "styleradar.pagos.suscripcion.suspendida";
+    public static final String DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ = "styleradar.probador.suscripcion-suspendida.dlq";
+    public static final String DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ_ROUTING_KEY = "styleradar.probador.suscripcion-suspendida.dead";
 
     @Bean
     public TopicExchange catalogEventsExchange(
@@ -282,10 +302,116 @@ public class RabbitConfig {
     }
 
     @Bean
+    public TopicExchange paymentEventsExchange(
+            @Value("${styleradar.tryon.amqp.payment-exchange:" + DEFAULT_PAYMENT_EVENTS_EXCHANGE + "}") String exchangeName
+    ) {
+        return ExchangeBuilder.topicExchange(exchangeName).durable(true).build();
+    }
+
+    @Bean
+    public Queue paymentConfirmedDlq(
+            @Value("${styleradar.tryon.amqp.payment-confirmed-dlq:" + DEFAULT_PAYMENT_CONFIRMED_DLQ + "}") String dlqName
+    ) {
+        return QueueBuilder.durable(dlqName).build();
+    }
+
+    @Bean
+    public Binding paymentConfirmedDlqBinding(
+            @Qualifier("paymentConfirmedDlq") Queue paymentConfirmedDlq,
+            @Qualifier("catalogDeadLetterExchange") DirectExchange catalogDeadLetterExchange,
+            @Value("${styleradar.tryon.amqp.payment-confirmed-dlq-routing-key:" + DEFAULT_PAYMENT_CONFIRMED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return BindingBuilder.bind(paymentConfirmedDlq).to(catalogDeadLetterExchange).with(dlqRoutingKey);
+    }
+
+    @Bean
+    public Queue paymentConfirmedQueue(
+            @Value("${styleradar.tryon.amqp.payment-confirmed-queue:" + DEFAULT_PAYMENT_CONFIRMED_QUEUE + "}") String queueName,
+            @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxExchange,
+            @Value("${styleradar.tryon.amqp.payment-confirmed-dlq-routing-key:" + DEFAULT_PAYMENT_CONFIRMED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return QueueBuilder.durable(queueName)
+                .deadLetterExchange(dlxExchange)
+                .deadLetterRoutingKey(dlqRoutingKey)
+                .build();
+    }
+
+    @Bean
+    public Binding paymentConfirmedBinding(
+            @Qualifier("paymentConfirmedQueue") Queue paymentConfirmedQueue,
+            @Qualifier("paymentEventsExchange") TopicExchange paymentEventsExchange,
+            @Value("${styleradar.tryon.amqp.payment-confirmed-routing-key:" + DEFAULT_PAYMENT_CONFIRMED_ROUTING_KEY + "}") String routingKey
+    ) {
+        return BindingBuilder.bind(paymentConfirmedQueue).to(paymentEventsExchange).with(routingKey);
+    }
+
+    @Bean
+    public Queue subscriptionSuspendedDlq(
+            @Value("${styleradar.tryon.amqp.subscription-suspended-dlq:" + DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ + "}") String dlqName
+    ) {
+        return QueueBuilder.durable(dlqName).build();
+    }
+
+    @Bean
+    public Binding subscriptionSuspendedDlqBinding(
+            @Qualifier("subscriptionSuspendedDlq") Queue subscriptionSuspendedDlq,
+            @Qualifier("catalogDeadLetterExchange") DirectExchange catalogDeadLetterExchange,
+            @Value("${styleradar.tryon.amqp.subscription-suspended-dlq-routing-key:" + DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return BindingBuilder.bind(subscriptionSuspendedDlq).to(catalogDeadLetterExchange).with(dlqRoutingKey);
+    }
+
+    @Bean
+    public Queue subscriptionSuspendedQueue(
+            @Value("${styleradar.tryon.amqp.subscription-suspended-queue:" + DEFAULT_SUBSCRIPTION_SUSPENDED_QUEUE + "}") String queueName,
+            @Value("${styleradar.tryon.amqp.catalog-dlx:" + DEFAULT_CATALOG_DLX + "}") String dlxExchange,
+            @Value("${styleradar.tryon.amqp.subscription-suspended-dlq-routing-key:" + DEFAULT_SUBSCRIPTION_SUSPENDED_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
+    ) {
+        return QueueBuilder.durable(queueName)
+                .deadLetterExchange(dlxExchange)
+                .deadLetterRoutingKey(dlqRoutingKey)
+                .build();
+    }
+
+    @Bean
+    public Binding subscriptionSuspendedBinding(
+            @Qualifier("subscriptionSuspendedQueue") Queue subscriptionSuspendedQueue,
+            @Qualifier("paymentEventsExchange") TopicExchange paymentEventsExchange,
+            @Value("${styleradar.tryon.amqp.subscription-suspended-routing-key:" + DEFAULT_SUBSCRIPTION_SUSPENDED_ROUTING_KEY + "}") String routingKey
+    ) {
+        return BindingBuilder.bind(subscriptionSuspendedQueue).to(paymentEventsExchange).with(routingKey);
+    }
+
+    @Bean
     public MessageConverter jackson2JsonMessageConverter(ObjectMapper objectMapper) {
         Jackson2JsonMessageConverter converter = new Jackson2JsonMessageConverter(objectMapper);
         converter.setAlwaysConvertToInferredType(true);
         return converter;
+    }
+
+    public static SimpleRetryPolicy buildTryOnRetryPolicy(int maxAttempts) {
+        Map<Class<? extends Throwable>, Boolean> nonRetryableExceptions = new HashMap<>();
+        nonRetryableExceptions.put(AmqpRejectAndDontRequeueException.class, false);
+        nonRetryableExceptions.put(JobNotFoundException.class, false);
+        nonRetryableExceptions.put(ConsentRequiredException.class, false);
+        nonRetryableExceptions.put(InvalidPhotoException.class, false);
+        nonRetryableExceptions.put(AiInferencePermanentException.class, false);
+        nonRetryableExceptions.put(IllegalArgumentException.class, false);
+        return new SimpleRetryPolicy(maxAttempts, nonRetryableExceptions, true, true);
+    }
+
+    public static RetryOperationsInterceptor buildTryOnRetryInterceptor(
+            TryOnJobRetryRecoverer recoverer,
+            int maxAttempts,
+            long initialInterval,
+            double multiplier,
+            long maxInterval
+    ) {
+        return RetryInterceptorBuilder.stateless()
+                .retryPolicy(buildTryOnRetryPolicy(maxAttempts))
+                .backOffOptions(initialInterval, multiplier, maxInterval)
+                .recoverer(recoverer)
+                .build();
     }
 
     @Bean
@@ -296,11 +422,7 @@ public class RabbitConfig {
             @Value("${styleradar.tryon.amqp.retry.multiplier:2.0}") double multiplier,
             @Value("${styleradar.tryon.amqp.retry.max-interval-ms:10000}") long maxInterval
     ) {
-        return RetryInterceptorBuilder.stateless()
-                .maxAttempts(maxAttempts)
-                .backOffOptions(initialInterval, multiplier, maxInterval)
-                .recoverer(recoverer)
-                .build();
+        return buildTryOnRetryInterceptor(recoverer, maxAttempts, initialInterval, multiplier, maxInterval);
     }
 
     @Bean(name = "rabbitListenerContainerFactory")

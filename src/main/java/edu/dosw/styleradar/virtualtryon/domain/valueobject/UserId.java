@@ -1,8 +1,10 @@
 package edu.dosw.styleradar.virtualtryon.domain.valueobject;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Value Object inmutable que encapsula el identificador único del usuario dentro del dominio.
@@ -13,6 +15,7 @@ import java.util.UUID;
 public record UserId(UUID value) {
 
     public static final String NUMERIC_USER_ID_PREFIX = "styleradar-user-";
+    private static final Map<UUID, String> EXTERNAL_NUMERIC_IDS = new ConcurrentHashMap<>();
 
     public UserId {
         Objects.requireNonNull(value, "El identificador del usuario (UserId) no puede ser nulo");
@@ -49,7 +52,10 @@ public record UserId(UUID value) {
             return u.value();
         }
         if (raw instanceof Number num) {
-            return UUID.nameUUIDFromBytes((NUMERIC_USER_ID_PREFIX + num).getBytes(StandardCharsets.UTF_8));
+            String numericStr = String.valueOf(num.longValue());
+            UUID uuid = UUID.nameUUIDFromBytes((NUMERIC_USER_ID_PREFIX + numericStr).getBytes(StandardCharsets.UTF_8));
+            EXTERNAL_NUMERIC_IDS.put(uuid, numericStr);
+            return uuid;
         }
         String str = raw.toString().trim();
         if (str.isBlank()) {
@@ -59,13 +65,31 @@ public record UserId(UUID value) {
             return UUID.fromString(str);
         } catch (IllegalArgumentException ex) {
             if (str.startsWith(NUMERIC_USER_ID_PREFIX)) {
-                return UUID.nameUUIDFromBytes(str.getBytes(StandardCharsets.UTF_8));
+                UUID uuid = UUID.nameUUIDFromBytes(str.getBytes(StandardCharsets.UTF_8));
+                String digits = str.substring(NUMERIC_USER_ID_PREFIX.length());
+                if (digits.matches("[0-9]+")) {
+                    EXTERNAL_NUMERIC_IDS.put(uuid, digits);
+                }
+                return uuid;
             }
             if (str.matches("[0-9]+")) {
-                return UUID.nameUUIDFromBytes((NUMERIC_USER_ID_PREFIX + str).getBytes(StandardCharsets.UTF_8));
+                UUID uuid = UUID.nameUUIDFromBytes((NUMERIC_USER_ID_PREFIX + str).getBytes(StandardCharsets.UTF_8));
+                EXTERNAL_NUMERIC_IDS.put(uuid, str);
+                return uuid;
             }
             return null;
         }
+    }
+
+    /**
+     * Resuelve el identificador externo original (ID numérico Long de ms-auth/ms-usuarios si aplica)
+     * para llamadas internas servidor-a-servidor, manteniendo el UUID canónico en el dominio y API pública.
+     */
+    public static String resolveExternalIdentifier(UserId userId) {
+        if (userId == null || userId.value() == null) {
+            return null;
+        }
+        return EXTERNAL_NUMERIC_IDS.getOrDefault(userId.value(), userId.value().toString());
     }
 }
 

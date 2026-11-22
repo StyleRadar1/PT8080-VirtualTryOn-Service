@@ -85,6 +85,11 @@ class UserQuotaTest {
         assertThat(quota.isRadarPlus()).isTrue();
         assertThat(quota.getMonthlyLimit()).isEqualTo(UserQuota.RADAR_PLUS_MONTHLY_LIMIT);
         assertThat(quota.getRemainingCount()).isEqualTo(50);
+
+        quota.downgradeToFreePlan();
+        assertThat(quota.isRadarPlus()).isFalse();
+        assertThat(quota.getMonthlyLimit()).isEqualTo(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT);
+        assertThat(quota.getRemainingCount()).isEqualTo(10);
     }
 
     @Test
@@ -127,6 +132,32 @@ class UserQuotaTest {
 
         assertThatThrownBy(() -> new UserQuota(quotaId, userId, 10, 0, period, false, null))
                 .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-108: createForNewPeriod conserva Radar+ y planUpdatedAt mientras reinicia el consumo")
+    void shouldCarryOverRadarPlusPlanToNewBillingPeriod() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        Instant t1 = Instant.parse("2026-11-15T10:00:00Z");
+        UserQuota november = UserQuota.createDefault(userId, BillingPeriod.of("2026-11"));
+        november.upgradeToRadarPlus(t1);
+        november.consumeQuota();
+        november.consumeQuota();
+
+        UserQuota december = UserQuota.createForNewPeriod(userId, BillingPeriod.of("2026-12"), november);
+        assertThat(december.getBillingPeriod().getValue()).isEqualTo("2026-12");
+        assertThat(december.isRadarPlus()).isTrue();
+        assertThat(december.getMonthlyLimit()).isEqualTo(UserQuota.RADAR_PLUS_MONTHLY_LIMIT);
+        assertThat(december.getUsedCount()).isZero();
+        assertThat(december.getRemainingCount()).isEqualTo(50);
+        assertThat(december.getPlanUpdatedAt()).isEqualTo(t1);
+
+        Instant t2 = Instant.parse("2026-12-02T10:00:00Z");
+        december.downgradeToFreePlan(t2);
+        UserQuota january = UserQuota.createForNewPeriod(userId, BillingPeriod.of("2027-01"), december);
+        assertThat(january.isRadarPlus()).isFalse();
+        assertThat(january.getMonthlyLimit()).isEqualTo(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT);
+        assertThat(january.getPlanUpdatedAt()).isEqualTo(t2);
     }
 }
 

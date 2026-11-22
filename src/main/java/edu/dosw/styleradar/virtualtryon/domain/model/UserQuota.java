@@ -23,6 +23,7 @@ public class UserQuota {
     private BillingPeriod billingPeriod;
     private boolean radarPlus;
     private Instant lastResetAt;
+    private Instant planUpdatedAt;
 
     public UserQuota(
             UUID id,
@@ -32,6 +33,19 @@ public class UserQuota {
             BillingPeriod billingPeriod,
             boolean radarPlus,
             Instant lastResetAt
+    ) {
+        this(id, userId, monthlyLimit, usedCount, billingPeriod, radarPlus, lastResetAt, null);
+    }
+
+    public UserQuota(
+            UUID id,
+            UserId userId,
+            int monthlyLimit,
+            int usedCount,
+            BillingPeriod billingPeriod,
+            boolean radarPlus,
+            Instant lastResetAt,
+            Instant planUpdatedAt
     ) {
         this.id = Objects.requireNonNull(id, "El id de la cuota no puede ser nulo");
         this.userId = Objects.requireNonNull(userId, "El identificador del usuario no puede ser nulo");
@@ -46,6 +60,7 @@ public class UserQuota {
         this.billingPeriod = Objects.requireNonNull(billingPeriod, "El período de facturación no puede ser nulo");
         this.radarPlus = radarPlus;
         this.lastResetAt = Objects.requireNonNull(lastResetAt, "La fecha de último reinicio no puede ser nula");
+        this.planUpdatedAt = planUpdatedAt;
     }
 
     public static UserQuota createDefault(UserId userId, BillingPeriod billingPeriod) {
@@ -56,7 +71,28 @@ public class UserQuota {
                 0,
                 billingPeriod,
                 false,
-                Instant.now()
+                Instant.now(),
+                null
+        );
+    }
+
+    public static UserQuota createForNewPeriod(UserId userId, BillingPeriod billingPeriod, UserQuota previousQuota) {
+        if (previousQuota == null || !previousQuota.isRadarPlus()) {
+            UserQuota fresh = createDefault(userId, billingPeriod);
+            if (previousQuota != null) {
+                fresh.setPlanUpdatedAt(previousQuota.getPlanUpdatedAt());
+            }
+            return fresh;
+        }
+        return new UserQuota(
+                UUID.randomUUID(),
+                userId,
+                RADAR_PLUS_MONTHLY_LIMIT,
+                0,
+                billingPeriod,
+                true,
+                Instant.now(),
+                previousQuota.getPlanUpdatedAt()
         );
     }
 
@@ -92,6 +128,25 @@ public class UserQuota {
         this.monthlyLimit = RADAR_PLUS_MONTHLY_LIMIT;
     }
 
+    public void upgradeToRadarPlus(Instant occurredAt) {
+        upgradeToRadarPlus();
+        if (occurredAt != null) {
+            this.planUpdatedAt = occurredAt;
+        }
+    }
+
+    public void downgradeToFreePlan() {
+        this.radarPlus = false;
+        this.monthlyLimit = DEFAULT_FREE_MONTHLY_LIMIT;
+    }
+
+    public void downgradeToFreePlan(Instant occurredAt) {
+        downgradeToFreePlan();
+        if (occurredAt != null) {
+            this.planUpdatedAt = occurredAt;
+        }
+    }
+
     public UUID getId() {
         return id;
     }
@@ -118,6 +173,14 @@ public class UserQuota {
 
     public Instant getLastResetAt() {
         return lastResetAt;
+    }
+
+    public Instant getPlanUpdatedAt() {
+        return planUpdatedAt;
+    }
+
+    public void setPlanUpdatedAt(Instant planUpdatedAt) {
+        this.planUpdatedAt = planUpdatedAt;
     }
 }
 
