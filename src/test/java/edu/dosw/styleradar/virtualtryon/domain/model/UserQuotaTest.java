@@ -85,6 +85,11 @@ class UserQuotaTest {
         assertThat(quota.isRadarPlus()).isTrue();
         assertThat(quota.getMonthlyLimit()).isEqualTo(UserQuota.RADAR_PLUS_MONTHLY_LIMIT);
         assertThat(quota.getRemainingCount()).isEqualTo(50);
+
+        quota.downgradeToFreePlan();
+        assertThat(quota.isRadarPlus()).isFalse();
+        assertThat(quota.getMonthlyLimit()).isEqualTo(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT);
+        assertThat(quota.getRemainingCount()).isEqualTo(10);
     }
 
     @Test

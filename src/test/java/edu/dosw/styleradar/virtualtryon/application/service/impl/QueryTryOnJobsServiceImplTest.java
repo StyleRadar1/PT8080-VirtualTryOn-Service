@@ -1,6 +1,7 @@
 package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.dto.event.CatalogGarmentUpdatedEvent;
+import edu.dosw.styleradar.virtualtryon.application.dto.event.UserSubscriptionPlanEvent;
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
@@ -1452,6 +1453,126 @@ class QueryTryOnJobsServiceImplTest {
         assertThat(anonymousPort.storeRenderedResult(userId, jobId, new byte[]{1})).isNotNull();
         assertThat(anonymousPort.retrieveBlobBytes((SasSignedUrl) null)).isEmpty();
         anonymousPort.deleteBlob((SasSignedUrl) null);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24 / SR-RF-108: Eventos AMQP de ms-pagos actualizan a Radar+ al confirmar pago y revierten al suspender")
+    void shouldUpdateQuotaPlanFromPaymentAndSubscriptionEvents() throws Exception {
+        UUID userUuid = UserId.parseToUuid(12L);
+        java.util.concurrent.atomic.AtomicReference<UserQuotaJpaEntity> storedQuota =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
+        lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
+                .thenAnswer(inv -> {
+                    UserQuotaJpaEntity entity = inv.getArgument(0);
+                    storedQuota.set(entity);
+                    return entity;
+                });
+
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+                .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+
+        // 1. Pago confirmado de usuario comprador (Radar+, planId=2) -> activa Radar+ (50)
+        String paymentConfirmedJson = """
+                {
+                  "eventId": "%s",
+                  "eventType": "styleradar.pagos.pago.confirmado",
+                  "timestamp": "2026-11-21T19:00:00Z",
+                  "data": {
+                    "usuarioId": 12,
+                    "suscriptorId": "12",
+                    "tipoSuscriptor": "USER",
+                    "planId": 2,
+                    "estado": "APPROVED"
+                  }
+                }
+                """.formatted(UUID.randomUUID());
+
+        UserSubscriptionPlanEvent confirmedEvent = mapper.readValue(paymentConfirmedJson, UserSubscriptionPlanEvent.class);
+        eventListenerAdapter.onPaymentConfirmed(confirmedEvent);
+
+        assertNotNull(storedQuota.get());
+        assertTrue(storedQuota.get().isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
+
+        // 2. Pago de tienda (tipoSuscriptor=STORE, planId=3) -> ignorado limpiamente sin tocar cuotas
+        String storePaymentJson = """
+                {
+                  "eventType": "styleradar.pagos.pago.confirmado",
+                  "data": {
+                    "suscriptorId": "store-44",
+                    "tipoSuscriptor": "STORE",
+                    "planId": 3,
+                    "estado": "APPROVED"
+                  }
+                }
+                """;
+        UserSubscriptionPlanEvent storeEvent = mapper.readValue(storePaymentJson, UserSubscriptionPlanEvent.class);
+        eventListenerAdapter.onPaymentConfirmed(storeEvent);
+        eventListenerAdapter.onSubscriptionSuspended(storeEvent);
+        verify(quotaJpaRepository, org.mockito.Mockito.times(1)).save(any(UserQuotaJpaEntity.class));
+
+        // 3. Suscripción suspendida de usuario comprador -> revierte a plan gratuito (10)
+        String suspendedJson = """
+                {
+                  "eventId": "%s",
+                  "eventType": "styleradar.pagos.suscripcion.suspendida",
+                  "timestamp": "2026-11-21T19:10:00Z",
+                  "data": {
+                    "suscriptorId": "12",
+                    "tipoSuscriptor": "USER",
+                    "planId": 2
+                  }
+                }
+                """.formatted(UUID.randomUUID());
+
+        UserSubscriptionPlanEvent suspendedEvent = mapper.readValue(suspendedJson, UserSubscriptionPlanEvent.class);
+        eventListenerAdapter.onSubscriptionSuspended(suspendedEvent);
+
+        assertFalse(storedQuota.get().isRadarPlus());
+        assertEquals(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
+        verify(quotaJpaRepository, org.mockito.Mockito.times(2)).save(any(UserQuotaJpaEntity.class));
+
+        // 4. Pago no aprobado (REJECTED) -> no actualiza cuota
+        eventListenerAdapter.onPaymentConfirmed(new UserSubscriptionPlanEvent(
+                userUuid, "USER", 2L, "REJECTED", Instant.now()
+        ));
+        verify(quotaJpaRepository, org.mockito.Mockito.times(2)).save(any(UserQuotaJpaEntity.class));
+
+        // 5. Payloads inválidos (null o USER sin userId) -> DLQ
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class,
+                () -> eventListenerAdapter.onPaymentConfirmed(null));
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class,
+                () -> eventListenerAdapter.onPaymentConfirmed(new UserSubscriptionPlanEvent(
+                        null, "USER", 2L, "APPROVED", Instant.now()
+                )));
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class,
+                () -> eventListenerAdapter.onSubscriptionSuspended(null));
+        assertThrows(org.springframework.amqp.AmqpRejectAndDontRequeueException.class,
+                () -> eventListenerAdapter.onSubscriptionSuspended(new UserSubscriptionPlanEvent(
+                        null, "USER", 2L, null, Instant.now()
+                )));
+
+        // 6. Método default de GetUserQuotaUseCase.updateUserSubscriptionPlan delega en getUserQuota
+        edu.dosw.styleradar.virtualtryon.domain.port.in.GetUserQuotaUseCase defaultPort =
+                new edu.dosw.styleradar.virtualtryon.domain.port.in.GetUserQuotaUseCase() {
+                    @Override
+                    public UserQuota getUserQuota(UserId uid) {
+                        return UserQuota.createDefault(uid, BillingPeriod.current());
+                    }
+                    @Override
+                    public GarmentValidationResult validateGarmentEligibility(UserId uid, GarmentId gid, List<GarmentId> list) {
+                        return null;
+                    }
+                    @Override
+                    public CatalogGarment syncCatalogGarment(CatalogGarment g) {
+                        return g;
+                    }
+                };
+        assertEquals(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT,
+                defaultPort.updateUserSubscriptionPlan(UserId.of(userUuid), true).getMonthlyLimit());
     }
 }
 

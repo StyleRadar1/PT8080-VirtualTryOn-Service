@@ -106,6 +106,34 @@ class RabbitConfigTest {
         assertThat(moderationDlqBinding.getRoutingKey()).isEqualTo("test.moderation.dead");
         assertThat(moderationBinding.getRoutingKey()).isEqualTo("styleradar.catalogo.moderacion.cambiada");
 
+        TopicExchange paymentExchange = config.paymentEventsExchange("test.payment.events");
+        Queue paymentConfirmedDlq = config.paymentConfirmedDlq("test.payment.confirmed.dlq");
+        Binding paymentConfirmedDlqBinding = config.paymentConfirmedDlqBinding(paymentConfirmedDlq, dlx, "test.payment.confirmed.dead");
+        Queue paymentConfirmedQueue = config.paymentConfirmedQueue("test.payment.confirmed.q", "test.catalog.dlx", "test.payment.confirmed.dead");
+        Binding paymentConfirmedBinding = config.paymentConfirmedBinding(paymentConfirmedQueue, paymentExchange, "styleradar.pagos.pago.confirmado");
+
+        assertThat(paymentExchange.getName()).isEqualTo("test.payment.events");
+        assertThat(paymentConfirmedDlq.getName()).isEqualTo("test.payment.confirmed.dlq");
+        assertThat(paymentConfirmedDlqBinding.getRoutingKey()).isEqualTo("test.payment.confirmed.dead");
+        assertThat(paymentConfirmedQueue.getName()).isEqualTo("test.payment.confirmed.q");
+        assertThat(paymentConfirmedQueue.getArguments()).containsEntry("x-dead-letter-exchange", "test.catalog.dlx");
+        assertThat(paymentConfirmedQueue.getArguments()).containsEntry("x-dead-letter-routing-key", "test.payment.confirmed.dead");
+        assertThat(paymentConfirmedBinding.getDestination()).isEqualTo("test.payment.confirmed.q");
+        assertThat(paymentConfirmedBinding.getRoutingKey()).isEqualTo("styleradar.pagos.pago.confirmado");
+
+        Queue suspendedDlq = config.subscriptionSuspendedDlq("test.sub.suspended.dlq");
+        Binding suspendedDlqBinding = config.subscriptionSuspendedDlqBinding(suspendedDlq, dlx, "test.sub.suspended.dead");
+        Queue suspendedQueue = config.subscriptionSuspendedQueue("test.sub.suspended.q", "test.catalog.dlx", "test.sub.suspended.dead");
+        Binding suspendedBinding = config.subscriptionSuspendedBinding(suspendedQueue, paymentExchange, "styleradar.pagos.suscripcion.suspendida");
+
+        assertThat(suspendedDlq.getName()).isEqualTo("test.sub.suspended.dlq");
+        assertThat(suspendedDlqBinding.getRoutingKey()).isEqualTo("test.sub.suspended.dead");
+        assertThat(suspendedQueue.getName()).isEqualTo("test.sub.suspended.q");
+        assertThat(suspendedQueue.getArguments()).containsEntry("x-dead-letter-exchange", "test.catalog.dlx");
+        assertThat(suspendedQueue.getArguments()).containsEntry("x-dead-letter-routing-key", "test.sub.suspended.dead");
+        assertThat(suspendedBinding.getDestination()).isEqualTo("test.sub.suspended.q");
+        assertThat(suspendedBinding.getRoutingKey()).isEqualTo("styleradar.pagos.suscripcion.suspendida");
+
         assertThat(converter).isNotNull();
     }
 }
