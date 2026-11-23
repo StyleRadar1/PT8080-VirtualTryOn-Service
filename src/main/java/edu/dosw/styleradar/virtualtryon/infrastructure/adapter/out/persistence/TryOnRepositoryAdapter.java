@@ -29,7 +29,11 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.r
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.TryOnOutfitJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.UserQuotaJpaRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Collection;
 import java.util.List;
@@ -43,6 +47,8 @@ import java.util.UUID;
 @Component
 public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, UserQuotaRepositoryPort, TryOnJobRepositoryPort {
 
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(TryOnRepositoryAdapter.class);
+
     private final BiometricConsentJpaRepository consentJpaRepository;
     private final BiometricPhotoJpaRepository photoJpaRepository;
     private final UserQuotaJpaRepository quotaJpaRepository;
@@ -51,6 +57,7 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     private final JobAuditLogJpaRepository jobAuditLogJpaRepository;
     private final TryOnOutfitJpaRepository tryOnOutfitJpaRepository;
     private final TryOnPersistenceMapper persistenceMapper;
+    private final TransactionTemplate requiresNewTransactionTemplate;
 
     @Autowired
     public TryOnRepositoryAdapter(
@@ -61,7 +68,8 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
             TryOnJobJpaRepository tryOnJobJpaRepository,
             JobAuditLogJpaRepository jobAuditLogJpaRepository,
             TryOnOutfitJpaRepository tryOnOutfitJpaRepository,
-            TryOnPersistenceMapper persistenceMapper
+            TryOnPersistenceMapper persistenceMapper,
+            @Autowired(required = false) PlatformTransactionManager transactionManager
     ) {
         this.consentJpaRepository = consentJpaRepository;
         this.photoJpaRepository = photoJpaRepository;
@@ -71,6 +79,36 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
         this.jobAuditLogJpaRepository = jobAuditLogJpaRepository;
         this.tryOnOutfitJpaRepository = tryOnOutfitJpaRepository;
         this.persistenceMapper = persistenceMapper;
+        if (transactionManager != null) {
+            TransactionTemplate template = new TransactionTemplate(transactionManager);
+            template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            this.requiresNewTransactionTemplate = template;
+        } else {
+            this.requiresNewTransactionTemplate = null;
+        }
+    }
+
+    public TryOnRepositoryAdapter(
+            BiometricConsentJpaRepository consentJpaRepository,
+            BiometricPhotoJpaRepository photoJpaRepository,
+            UserQuotaJpaRepository quotaJpaRepository,
+            CatalogGarmentJpaRepository catalogGarmentJpaRepository,
+            TryOnJobJpaRepository tryOnJobJpaRepository,
+            JobAuditLogJpaRepository jobAuditLogJpaRepository,
+            TryOnOutfitJpaRepository tryOnOutfitJpaRepository,
+            TryOnPersistenceMapper persistenceMapper
+    ) {
+        this(
+                consentJpaRepository,
+                photoJpaRepository,
+                quotaJpaRepository,
+                catalogGarmentJpaRepository,
+                tryOnJobJpaRepository,
+                jobAuditLogJpaRepository,
+                tryOnOutfitJpaRepository,
+                persistenceMapper,
+                null
+        );
     }
 
     public TryOnRepositoryAdapter(
@@ -268,6 +306,61 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
                 persistenceMapper.toCatalogGarmentJpaEntity(garment)
         );
         return persistenceMapper.toCatalogGarmentDomain(saved);
+    }
+
+    @Override
+    public CatalogGarment upsertCatalogGarmentIfNewer(CatalogGarment garment) {
+        java.util.Objects.requireNonNull(garment, "La prenda de catálogo no puede ser nula");
+        CatalogGarmentJpaEntity incoming = persistenceMapper.toCatalogGarmentJpaEntity(garment);
+        UUID garmentUuid = incoming.getGarmentId();
+
+        Optional<CatalogGarmentJpaEntity> existingOpt = catalogGarmentJpaRepository.findByIdForUpdate(garmentUuid);
+        if (existingOpt.isEmpty() && requiresNewTransactionTemplate != null) {
+            insertRowIgnoringDuplicateKey(incoming);
+            existingOpt = catalogGarmentJpaRepository.findByIdForUpdate(garmentUuid);
+        }
+
+        if (existingOpt.isEmpty()) {
+            existingOpt = catalogGarmentJpaRepository.findById(garmentUuid);
+        }
+
+        if (existingOpt.isEmpty()) {
+            CatalogGarmentJpaEntity saved = catalogGarmentJpaRepository.save(incoming);
+            return persistenceMapper.toCatalogGarmentDomain(saved);
+        }
+
+        CatalogGarmentJpaEntity existing = existingOpt.get();
+        if (existing.getUpdatedAt() != null
+                && incoming.getUpdatedAt() != null
+                && !incoming.getUpdatedAt().isAfter(existing.getUpdatedAt())) {
+            return persistenceMapper.toCatalogGarmentDomain(existing);
+        }
+
+        existing.setName(incoming.getName());
+        existing.setCategory(incoming.getCategory());
+        existing.setImageUrl(incoming.getImageUrl());
+        existing.setVisible(incoming.isVisible());
+        existing.setAvailableSizes(incoming.getAvailableSizes());
+        existing.setUpdatedAt(incoming.getUpdatedAt());
+        CatalogGarmentJpaEntity updated = catalogGarmentJpaRepository.save(existing);
+        return persistenceMapper.toCatalogGarmentDomain(updated);
+    }
+
+    private void insertRowIgnoringDuplicateKey(CatalogGarmentJpaEntity incoming) {
+        try {
+            requiresNewTransactionTemplate.executeWithoutResult(status -> catalogGarmentJpaRepository.insertRow(
+                    incoming.getGarmentId(),
+                    incoming.getName(),
+                    incoming.getCategory(),
+                    incoming.getImageUrl(),
+                    incoming.isVisible(),
+                    incoming.getAvailableSizes(),
+                    incoming.getUpdatedAt()
+            ));
+        } catch (DataIntegrityViolationException ex) {
+            LOGGER.debug("Inserción concurrente detectada al hidratar prenda {}: {}",
+                    incoming.getGarmentId(), ex.getMessage());
+        }
     }
 
     @Override

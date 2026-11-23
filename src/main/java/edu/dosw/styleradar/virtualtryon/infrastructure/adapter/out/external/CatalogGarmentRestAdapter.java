@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import edu.dosw.styleradar.virtualtryon.application.dto.event.CatalogGarmentUpdatedEvent;
+import edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.CatalogGarmentLookupPort;
@@ -15,7 +16,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 import java.time.Duration;
 import java.util.List;
@@ -92,8 +97,39 @@ public class CatalogGarmentRestAdapter implements CatalogGarmentLookupPort {
                     normalized.updatedAt(),
                     normalized.availableSizes()
             ));
-        } catch (Exception ex) {
-            log.debug("No fue posible consultar prenda {} desde ms-catalogo ({}): {}",
+        } catch (HttpClientErrorException.NotFound ex) {
+            log.debug("Prenda {} confirmada como inexistente (404) en ms-catalogo ({})",
+                    garmentId.value(), baseUrl);
+            return Optional.empty();
+        } catch (HttpServerErrorException | ResourceAccessException ex) {
+            log.warn("Fallo temporal consultando prenda {} en ms-catalogo ({}): {}",
+                    garmentId.value(), baseUrl, ex.getMessage());
+            throw new CatalogServiceUnavailableException(
+                    "El servicio de catálogo no está disponible temporalmente. Intente nuevamente más tarde.",
+                    ex
+            );
+        } catch (HttpClientErrorException ex) {
+            int code = ex.getStatusCode().value();
+            if (code == 408 || code == 429 || code == 401 || code == 403) {
+                log.warn("Respuesta transitoria/autorización HTTP {} consultando prenda {} en ms-catalogo ({}): {}",
+                        code, garmentId.value(), baseUrl, ex.getMessage());
+                throw new CatalogServiceUnavailableException(
+                        "El servicio de catálogo no está disponible temporalmente. Intente nuevamente más tarde.",
+                        ex
+                );
+            }
+            log.debug("Error HTTP {} consultando prenda {} en ms-catalogo ({}): {}",
+                    code, garmentId.value(), baseUrl, ex.getMessage());
+            return Optional.empty();
+        } catch (RestClientException ex) {
+            log.warn("Error de comunicación REST consultando prenda {} en ms-catalogo ({}): {}",
+                    garmentId.value(), baseUrl, ex.getMessage());
+            throw new CatalogServiceUnavailableException(
+                    "El servicio de catálogo no está disponible temporalmente. Intente nuevamente más tarde.",
+                    ex
+            );
+        } catch (IllegalArgumentException ex) {
+            log.warn("Payload de prenda {} inválido o categoría no soportada desde ms-catalogo ({}): {}",
                     garmentId.value(), baseUrl, ex.getMessage());
             return Optional.empty();
         }

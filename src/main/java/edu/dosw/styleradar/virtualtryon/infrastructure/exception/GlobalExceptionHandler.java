@@ -1,6 +1,7 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.exception;
 
 import edu.dosw.styleradar.virtualtryon.domain.exception.AiProviderTimeoutException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.DomainException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
@@ -183,6 +184,21 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.GATEWAY_TIMEOUT, ex.getMessage());
         problem.setTitle("Tiempo de Espera de IA Agotado");
         problem.setType(URI.create(BASE_TYPE_URL + "ai-timeout"));
+        problem.setProperty("code", ex.getErrorCode());
+        problem.setProperty("errorCode", ex.getErrorCode());
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    /**
+     * Captura CatalogServiceUnavailableException -> HTTP 503 Service Unavailable
+     */
+    @ExceptionHandler(CatalogServiceUnavailableException.class)
+    public ProblemDetail handleCatalogServiceUnavailableException(CatalogServiceUnavailableException ex) {
+        log.warn("Servicio de catálogo temporalmente no disponible: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+        problem.setTitle("Servicio de Catálogo No Disponible");
+        problem.setType(URI.create(BASE_TYPE_URL + "catalog-service-unavailable"));
         problem.setProperty("code", ex.getErrorCode());
         problem.setProperty("errorCode", ex.getErrorCode());
         problem.setProperty("timestamp", Instant.now());

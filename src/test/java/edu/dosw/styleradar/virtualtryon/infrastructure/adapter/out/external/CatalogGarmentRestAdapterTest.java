@@ -1,5 +1,6 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.external;
 
+import edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
@@ -9,8 +10,10 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
+import java.net.SocketTimeoutException;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -115,6 +118,43 @@ class CatalogGarmentRestAdapterTest {
         assertTrue(adapter.findGarmentById(null).isEmpty());
         assertTrue(adapter.findGarmentById(missingId).isEmpty());
         assertTrue(adapter.findGarmentById(badCategoryId).isEmpty());
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("Distingue 404 (Optional.empty) de fallos temporales de Catálogo: 503, 429 y timeout lanzan CatalogServiceUnavailableException")
+    void shouldDistinguishNotFound404FromTemporaryFailures503RateLimitAndTimeout() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8220");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        CatalogGarmentRestAdapter adapter = new CatalogGarmentRestAdapter(builder.build(), "http://localhost:8220");
+
+        GarmentId notFoundId = GarmentId.of(UUID.randomUUID());
+        GarmentId unavailableId = GarmentId.of(UUID.randomUUID());
+        GarmentId rateLimitedId = GarmentId.of(UUID.randomUUID());
+        GarmentId timeoutId = GarmentId.of(UUID.randomUUID());
+
+        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + notFoundId.value()))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + unavailableId.value()))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+
+        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + rateLimitedId.value()))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+
+        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + timeoutId.value()))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(request -> {
+                    throw new ResourceAccessException("Read timed out", new SocketTimeoutException("connect timed out"));
+                });
+
+        assertTrue(adapter.findGarmentById(notFoundId).isEmpty(), "Un 404 debe devolver Optional.empty()");
+        assertThrows(CatalogServiceUnavailableException.class, () -> adapter.findGarmentById(unavailableId));
+        assertThrows(CatalogServiceUnavailableException.class, () -> adapter.findGarmentById(rateLimitedId));
+        assertThrows(CatalogServiceUnavailableException.class, () -> adapter.findGarmentById(timeoutId));
         server.verify();
     }
 }

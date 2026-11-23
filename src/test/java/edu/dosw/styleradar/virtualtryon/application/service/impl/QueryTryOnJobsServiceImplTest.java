@@ -2050,6 +2050,14 @@ class QueryTryOnJobsServiceImplTest {
         when(lookupPort.findGarmentById(missingRemoteId)).thenReturn(Optional.empty());
         assertThrows(InvalidGarmentException.class,
                 () -> serviceWithLookup.validateGarmentEligibility(userId, missingRemoteId, "M", List.of()));
+
+        GarmentId unavailableRemoteId = GarmentId.of(UUID.randomUUID());
+        when(catalogGarmentJpaRepository.findById(unavailableRemoteId.value())).thenReturn(Optional.empty());
+        when(lookupPort.findGarmentById(unavailableRemoteId))
+                .thenThrow(new edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException(
+                        "Catálogo 503"));
+        assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException.class,
+                () -> serviceWithLookup.validateGarmentEligibility(userId, unavailableRemoteId, "M", List.of()));
     }
 }
 

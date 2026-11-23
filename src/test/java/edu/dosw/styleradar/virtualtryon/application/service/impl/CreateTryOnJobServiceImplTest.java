@@ -823,5 +823,13 @@ class CreateTryOnJobServiceImplTest {
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
         verify(catalogGarmentJpaRepository).save(any(CatalogGarmentJpaEntity.class));
         verify(lookupPort).findGarmentById(garmentId);
+
+        GarmentId unavailableId = GarmentId.of(UUID.randomUUID());
+        when(catalogGarmentJpaRepository.findById(unavailableId.value())).thenReturn(Optional.empty());
+        when(lookupPort.findGarmentById(unavailableId))
+                .thenThrow(new edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException(
+                        "Catálogo temporalmente caído"));
+        assertThatThrownBy(() -> serviceWithLookup.createTryOnJob(userId, unavailableId, photoUrl, true))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException.class);
     }
 }

@@ -163,14 +163,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         if (remote.isEmpty()) {
             return Optional.empty();
         }
-        CatalogGarment fetched = remote.get();
-        try {
-            return Optional.of(syncCatalogGarment(fetched));
-        } catch (RuntimeException ex) {
-            log.warn("No fue posible persistir bajo demanda la prenda {} en catalog_garments: {}",
-                    garmentId.value(), ex.getMessage());
-            return Optional.of(fetched);
-        }
+        return Optional.of(quotaRepositoryPort.upsertCatalogGarmentIfNewer(remote.get()));
     }
 
     private BillingPeriod currentBillingPeriod() {
@@ -337,17 +330,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     @Override
     public CatalogGarment syncCatalogGarment(CatalogGarment garment) {
         java.util.Objects.requireNonNull(garment, "La prenda de catálogo no puede ser nula");
-        return quotaRepositoryPort.findCatalogGarmentById(garment.getGarmentId())
-                .map(existing -> {
-                    if (existing.getUpdatedAt() != null && garment.getUpdatedAt() != null
-                            && garment.getUpdatedAt().isBefore(existing.getUpdatedAt())) {
-                        log.warn("Descartando sincronización obsoleta para prenda {}: updatedAt entrante {} es anterior a existente {}",
-                                garment.getGarmentId().value(), garment.getUpdatedAt(), existing.getUpdatedAt());
-                        return existing;
-                    }
-                    return quotaRepositoryPort.saveCatalogGarment(garment);
-                })
-                .orElseGet(() -> quotaRepositoryPort.saveCatalogGarment(garment));
+        return quotaRepositoryPort.upsertCatalogGarmentIfNewer(garment);
     }
 
     @Override

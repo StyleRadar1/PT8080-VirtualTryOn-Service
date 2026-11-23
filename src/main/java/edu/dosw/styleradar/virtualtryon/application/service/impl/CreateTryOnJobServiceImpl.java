@@ -161,17 +161,27 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                 ? photoUrl.trim()
                 : ((userPhoto.getPhotoUrl() != null) ? userPhoto.getPhotoUrl().value() : null);
 
-        // 3. Validación de existencia real de la prenda en el catálogo
-        CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
-                .or(() -> hydrateCatalogGarmentFromRemote(garmentId))
-                .orElseThrow(() -> new InvalidGarmentException(
-                        "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
+        // 3. Resolución REST fuera de transacción si aún no existe en proyección local;
+        // los fallos de disponibilidad (5xx/timeout) se propagan como CatalogServiceUnavailableException (503).
+        CatalogGarment hydratedCandidate = quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                .isPresent()
+                ? null
+                : catalogGarmentLookupPort.findGarmentById(garmentId)
+                        .orElseThrow(() -> new InvalidGarmentException(
+                                "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
 
         BillingPeriod currentPeriod = BillingPeriod.current();
 
-        // 4. Creación atómica del TryOnJob, consumo de cuota y persistencia en Outbox dentro de la misma transacción JDBC
+        // 4. Creación atómica del TryOnJob: conserva la versión más reciente en BD (ante retiradas/moderaciones
+        // concurrentes recibidas por RabbitMQ), valida esa versión autoritativa, consume cuota y guarda Outbox.
         int[] updatedUsedCount = new int[1];
         TryOnJob savedQueuedJob = executeInTransaction(() -> {
+            CatalogGarment garment = (hydratedCandidate != null)
+                    ? quotaRepositoryPort.upsertCatalogGarmentIfNewer(hydratedCandidate)
+                    : quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                            .orElseThrow(() -> new InvalidGarmentException(
+                                    "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
+
             UserQuota quota = quotaRepositoryPort.findOrCreateQuotaForUpdate(userId, currentPeriod);
 
             TryOnValidationContext validationContext = new TryOnValidationContext(
@@ -224,22 +234,6 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         }
 
         return savedQueuedJob;
-    }
-
-    private java.util.Optional<CatalogGarment> hydrateCatalogGarmentFromRemote(GarmentId garmentId) {
-        java.util.Optional<CatalogGarment> remote = catalogGarmentLookupPort.findGarmentById(garmentId);
-        if (remote.isEmpty()) {
-            return java.util.Optional.empty();
-        }
-        CatalogGarment fetched = remote.get();
-        try {
-            return java.util.Optional.of(quotaRepositoryPort.saveCatalogGarment(fetched));
-        } catch (RuntimeException ex) {
-            log.warn("No fue posible guardar bajo demanda la prenda {} en catalog_garments: {}",
-                    garmentId.value(), ex.getMessage());
-            return quotaRepositoryPort.findCatalogGarmentById(garmentId)
-                    .or(() -> java.util.Optional.of(fetched));
-        }
     }
 
     private void syncQuotaCachePostCommit(UserId userId, BillingPeriod period, int usedCount) {
