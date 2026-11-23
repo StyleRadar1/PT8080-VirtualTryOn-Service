@@ -792,4 +792,41 @@ class DeleteBiometricDataServiceImplTest {
         verify(blobStoragePort).deleteBlob(SasSignedUrl.of("https://styleradarblob.blob.core.windows.net/render-job2.png"));
         verify(photoJpaRepository).deleteByUserId(ownerId.value());
     }
+
+    @Test
+    @DisplayName("HU SR-RF-27: Con transacción Spring activa, despacha outbox de forma asíncrona en afterCommit sin bloquear la respuesta HTTP")
+    void shouldDispatchOutboxAsynchronouslyAfterCommitWhenTransactionActive() {
+        UserId ownerId = UserId.of(UUID.randomUUID());
+        UUID jobId = UUID.randomUUID();
+        TryOnJob job = new TryOnJobBuilder()
+                .withId(jobId)
+                .withUserId(ownerId)
+                .withGarmentId(GarmentId.of(UUID.randomUUID()))
+                .withPhotoUrl("https://styleradarblob.blob.core.windows.net/biometric-silhouettes/silhouette.png?sr=b&sp=r&spr=https")
+                .build();
+        when(tryOnJobJpaRepository.findById(jobId)).thenReturn(Optional.of(mapper.toJobJpaEntity(job)));
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            deleteService.deleteBiometricPhoto(jobId, ownerId, false);
+
+            verify(outboxPublisherPort).saveOutboxEvent(
+                    eq(jobId),
+                    eq(PhotoPurgedDomainEvent.ROUTING_KEY),
+                    any(PhotoPurgedDomainEvent.class)
+            );
+            verify(outboxPublisherPort, never()).publishPendingEvents();
+
+            for (org.springframework.transaction.support.TransactionSynchronization sync :
+                    org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                sync.afterCommit();
+            }
+
+            verify(outboxPublisherPort, org.mockito.Mockito.timeout(2000)).publishPendingEvents();
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+    }
 }

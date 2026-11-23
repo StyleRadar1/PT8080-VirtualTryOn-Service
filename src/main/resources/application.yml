@@ -30,6 +30,7 @@ spring:
 
   # Configuración de RabbitMQ con Publisher Confirms para el Transactional Outbox
   rabbitmq:
+    connection-timeout: ${RABBITMQ_CONNECTION_TIMEOUT:5s}
     publisher-confirm-type: correlated
     publisher-returns: true
 

@@ -1992,5 +1992,64 @@ class QueryTryOnJobsServiceImplTest {
         assertEquals(newerTime, staleWinner.getPlanUpdatedAt());
         assertEquals(1, staleWinner.getUsedCount());
     }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Si la prenda no existe aún en BD local, hidrata desde CatalogGarmentLookupPort, persiste y valida elegibilidad")
+    void shouldHydrateCatalogGarmentFromRestFallbackWhenMissingInLocalDatabase() {
+        edu.dosw.styleradar.virtualtryon.domain.port.out.CatalogGarmentLookupPort lookupPort =
+                mock(edu.dosw.styleradar.virtualtryon.domain.port.out.CatalogGarmentLookupPort.class);
+        QueryTryOnJobsServiceImpl serviceWithLookup = new QueryTryOnJobsServiceImpl(
+                repositoryAdapter,
+                redisQuotaCacheAdapter,
+                biometricDataRepositoryPort,
+                repositoryAdapter,
+                blobStoragePort,
+                userMeasurementPort,
+                garmentSizeMeasurementPort,
+                lookupPort
+        );
+
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        GarmentId missingRemoteId = GarmentId.of(UUID.randomUUID());
+        BillingPeriod currentPeriod = BillingPeriod.current();
+
+        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.empty());
+        CatalogGarment remoteGarment = new CatalogGarment(
+                garmentId,
+                "Vestido largo negro",
+                GarmentCategory.ONE_PIECE,
+                "https://cdn.styleradar.co/vestido.jpg",
+                true,
+                Instant.now(),
+                Set.of("S", "M", "L")
+        );
+        when(lookupPort.findGarmentById(garmentId)).thenReturn(Optional.of(remoteGarment));
+        when(catalogGarmentJpaRepository.save(any(CatalogGarmentJpaEntity.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(new UserQuotaJpaEntity(
+                        UUID.randomUUID(), userId.value(), 10, 0, currentPeriod.getValue(), false, Instant.now()
+                )));
+        when(biometricDataRepositoryPort.findConsentByUserId(userId))
+                .thenReturn(Optional.of(new BiometricConsent(
+                        UUID.randomUUID(), userId, "v1.0", true, List.of("VIRTUAL_TRY_ON_INFERENCE"), Instant.now(), null, "127.0.0.1"
+                )));
+        when(garmentSizeMeasurementPort.findSizeChartByGarmentId(garmentId)).thenReturn(Optional.empty());
+        when(userMeasurementPort.findMeasurementsByUserId(userId)).thenReturn(Optional.empty());
+
+        GarmentValidationResult result = serviceWithLookup.validateGarmentEligibility(
+                userId, garmentId, "M", List.of()
+        );
+
+        assertTrue(result.eligibleForTryOn());
+        assertEquals(GarmentCategory.ONE_PIECE, result.garment().getCategory());
+        verify(catalogGarmentJpaRepository).save(any(CatalogGarmentJpaEntity.class));
+
+        when(catalogGarmentJpaRepository.findById(missingRemoteId.value())).thenReturn(Optional.empty());
+        when(lookupPort.findGarmentById(missingRemoteId)).thenReturn(Optional.empty());
+        assertThrows(InvalidGarmentException.class,
+                () -> serviceWithLookup.validateGarmentEligibility(userId, missingRemoteId, "M", List.of()));
+    }
 }
 

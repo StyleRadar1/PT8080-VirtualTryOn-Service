@@ -21,11 +21,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Implementación del servicio de aplicación para el Derecho al Olvido y eliminación física
@@ -230,17 +233,34 @@ public class DeleteBiometricDataServiceImpl implements DeleteBiometricDataServic
         PhotoPurgedDomainEvent purgeEvent = PhotoPurgedDomainEvent.of(jobId, userId);
         if (outboxPublisherPort != null) {
             outboxPublisherPort.saveOutboxEvent(aggregateId, PhotoPurgedDomainEvent.ROUTING_KEY, purgeEvent);
-            try {
-                outboxPublisherPort.publishPendingEvents();
-            } catch (Exception ex) {
-                log.warn("Fallo temporal al despachar evento outbox de purga inmediatamente: {}", ex.getMessage());
-            }
+            dispatchOutboxAfterCommit();
         } else if (eventPublisherPort != null) {
             try {
                 eventPublisherPort.publishPhotoPurgedEvent(purgeEvent);
             } catch (Exception ex) {
                 log.warn("Fallo al publicar evento de purga directo: {}", ex.getMessage());
             }
+        }
+    }
+
+    private void dispatchOutboxAfterCommit() {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    CompletableFuture.runAsync(DeleteBiometricDataServiceImpl.this::safePublishPendingEvents);
+                }
+            });
+        } else {
+            safePublishPendingEvents();
+        }
+    }
+
+    private void safePublishPendingEvents() {
+        try {
+            outboxPublisherPort.publishPendingEvents();
+        } catch (Exception ex) {
+            log.warn("Fallo temporal al despachar evento outbox de purga inmediatamente: {}", ex.getMessage());
         }
     }
 

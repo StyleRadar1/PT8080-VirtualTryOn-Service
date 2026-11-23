@@ -16,6 +16,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.CatalogGarmentLookupPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
@@ -65,6 +66,30 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
     private final TryOnValidatorHandler validationChain;
     private final TransactionTemplate transactionTemplate;
     private final OutboxPublisherPort outboxPublisherPort;
+    private final CatalogGarmentLookupPort catalogGarmentLookupPort;
+
+    public CreateTryOnJobServiceImpl(
+            TryOnJobRepositoryPort jobRepositoryPort,
+            UserQuotaRepositoryPort quotaRepositoryPort,
+            UserQuotaCachePort quotaCachePort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            List<AiInferenceStrategy> inferenceStrategies,
+            String configuredProviderName,
+            TransactionTemplate transactionTemplate,
+            OutboxPublisherPort outboxPublisherPort
+    ) {
+        this(
+                jobRepositoryPort,
+                quotaRepositoryPort,
+                quotaCachePort,
+                biometricDataRepositoryPort,
+                inferenceStrategies,
+                configuredProviderName,
+                transactionTemplate,
+                outboxPublisherPort,
+                null
+        );
+    }
 
     @Autowired
     public CreateTryOnJobServiceImpl(
@@ -75,7 +100,8 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             List<AiInferenceStrategy> inferenceStrategies,
             @Value("${styleradar.tryon.ai-provider:fashn}") String configuredProviderName,
             TransactionTemplate transactionTemplate,
-            OutboxPublisherPort outboxPublisherPort
+            OutboxPublisherPort outboxPublisherPort,
+            @Autowired(required = false) CatalogGarmentLookupPort catalogGarmentLookupPort
     ) {
         this.jobRepositoryPort = Objects.requireNonNull(jobRepositoryPort, "jobRepositoryPort no puede ser nulo");
         this.quotaRepositoryPort = Objects.requireNonNull(quotaRepositoryPort, "quotaRepositoryPort no puede ser nulo");
@@ -85,6 +111,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         this.configuredProvider = AiProvider.fromConfigValue(configuredProviderName);
         this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate es obligatorio para garantizar atomicidad transaccional");
         this.outboxPublisherPort = Objects.requireNonNull(outboxPublisherPort, "outboxPublisherPort es obligatorio para garantizar consistencia Dual-Write (Transactional Outbox)");
+        this.catalogGarmentLookupPort = catalogGarmentLookupPort != null ? catalogGarmentLookupPort : g -> java.util.Optional.empty();
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
@@ -136,6 +163,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
 
         // 3. Validación de existencia real de la prenda en el catálogo
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                .or(() -> hydrateCatalogGarmentFromRemote(garmentId))
                 .orElseThrow(() -> new InvalidGarmentException(
                         "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
 
@@ -196,6 +224,22 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         }
 
         return savedQueuedJob;
+    }
+
+    private java.util.Optional<CatalogGarment> hydrateCatalogGarmentFromRemote(GarmentId garmentId) {
+        java.util.Optional<CatalogGarment> remote = catalogGarmentLookupPort.findGarmentById(garmentId);
+        if (remote.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        CatalogGarment fetched = remote.get();
+        try {
+            return java.util.Optional.of(quotaRepositoryPort.saveCatalogGarment(fetched));
+        } catch (RuntimeException ex) {
+            log.warn("No fue posible guardar bajo demanda la prenda {} en catalog_garments: {}",
+                    garmentId.value(), ex.getMessage());
+            return quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                    .or(() -> java.util.Optional.of(fetched));
+        }
     }
 
     private void syncQuotaCachePostCommit(UserId userId, BillingPeriod period, int usedCount) {
