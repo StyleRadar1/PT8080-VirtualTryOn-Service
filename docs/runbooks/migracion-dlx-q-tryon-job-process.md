@@ -1,4 +1,4 @@
-# Runbook Operativo: Migración de `q.tryon.job.process` hacia `x-dead-letter-exchange=styleradar.dlx` sin pérdida de jobs
+# Runbook Operativo: Migración de `q.tryon.job.process` hacia `x-dead-letter-exchange=styleradar.dlx` sin pérdida ni duplicación de jobs
 
 ## 1. Contexto del cambio (PR #25)
 
@@ -27,42 +27,58 @@ En RabbitMQ, `x-dead-letter-exchange` es un argumento inmutable de la cola. Si l
 Con `rabbitmqctl` dentro del nodo RabbitMQ:
 
 ```bash
-rabbitmqctl list_queues -p / name messages consumers arguments
+rabbitmqctl list_queues -p / name consumers messages messages_ready messages_unacknowledged arguments
 ```
 
 O mediante HTTP Management API (donde esté habilitada):
 
 ```bash
 curl -s -u "<ADMIN_USER>:<ADMIN_PASSWORD>" \
-  "http://<RABBIT_HOST>:15672/api/queues/%2F/q.tryon.job.process" | jq '{name, messages, arguments}'
+  "http://<RABBIT_HOST>:15672/api/queues/%2F/q.tryon.job.process" | jq '{name, consumers, messages, arguments}'
 ```
 
 - Si responde **no encontrada** o si `"x-dead-letter-exchange": "styleradar.dlx"` y `"x-dead-letter-routing-key": "tryon.job.process.dead"`, **no se requiere migración** y el despliegue entra directo.
-- Si muestra `"x-dead-letter-exchange": "styleradar.tryon.dlx"`, ejecutar el procedimiento de la sección 4 **preservando los jobs pendientes** antes o durante la ventana de despliegue.
+- Si muestra `"x-dead-letter-exchange": "styleradar.tryon.dlx"`, ejecutar el procedimiento de la sección 4 **pausando el Outbox y los consumidores** para preservar los jobs existentes y evitar duplicados si entran nuevas solicitudes durante la ventana.
 
 ---
 
-## 4. Procedimiento de migración preservando jobs pendientes
+## 4. Procedimiento de migración preservando jobs pendientes (sin doble binding ni duplicados)
 
-> **Garantía adicional de la aplicación:** Todos los jobs creados en `PT8080-VirtualTryOn-Service` nacen primero persistidos en la tabla PostgreSQL `outbox_events` (*Transactional Outbox*), y además el drenaje AMQP de este procedimiento garantiza **cero pérdida** para jobs que ya estaban en tránsito dentro de `q.tryon.job.process`.
+> **Invariante clave:** Nunca deben coexistir `q.tryon.job.process` y la cola temporal enlazadas al mismo tiempo a la routing key `styleradar.tryon.job.created`. Al pausar el despacho del **Transactional Outbox** (`OUTBOX_DISPATCH_ENABLED=false`), las solicitudes HTTP nuevas (`POST /api/v1/try-on/jobs`) siguen aceptándose normalmente y quedan guardadas en PostgreSQL (`outbox_events`, `status = 'PENDING'`) hasta que `q.tryon.job.process` ya esté migrada, restaurada y sea la única cola enlazada.
 
-### Paso 1. Pausar consumidores en el servicio desplegado
-Establecer temporalmente `TRYON_AMQP_LISTENERS_ENABLED=false` (o escalar a 0 consumidores) para evitar carreras mientras se vacía `q.tryon.job.process`:
+### Paso 1. Pausar consumidores y despacho del Outbox en TODAS las instancias que publican `styleradar.tryon.job.created`
+- El único servicio que publica `styleradar.tryon.job.created` en el ecosistema es **`PT8080-VirtualTryOn-Service`** mediante `TransactionalOutboxPublisherAdapter`.
+- Deshabilitar **tanto los listeners AMQP como el despacho del Outbox** en **todas** las réplicas / slots de `PT8080-VirtualTryOn-Service` (y en cualquier otra instancia conectada al mismo broker/vhost, por ejemplo QA y PROD si comparten broker):
 
 ```bash
 az webapp config appsettings set -g styleradar-pt8080-rg -n <APP_SERVICE_NAME> \
-  --settings TRYON_AMQP_LISTENERS_ENABLED=false
+  --settings TRYON_AMQP_LISTENERS_ENABLED=false OUTBOX_DISPATCH_ENABLED=false
 ```
 
-*(Los jobs nuevos quedan pendientes de despacho seguro en PostgreSQL `outbox_events`, o serán recibidos por la cola temporal en el Paso 2).*
+*(Con `OUTBOX_DISPATCH_ENABLED=false`, tanto el `@Scheduled` cada `5000 ms` como el intento inmediato post-commit en `CreateTryOnJobServiceImpl` omiten publicar en RabbitMQ, dejando los eventos nuevos en `PENDING` dentro de `outbox_events`).*
 
-### Paso 2. Crear cola temporal `q.tryon.job.process.migration.tmp` y desviar nuevos mensajes
-1. Declarar la cola durable temporal `q.tryon.job.process.migration.tmp` (mismo prefijo `q.tryon.*`).
-2. Enlazar `q.tryon.job.process.migration.tmp` al exchange `styleradar.exchange` con la routing key `styleradar.tryon.job.created`.
-3. Desenlazar `q.tryon.job.process` de `styleradar.exchange` (`routing_key = styleradar.tryon.job.created`) para que deje de recibir nuevos eventos.
+### Paso 2. Confirmar que terminaron todos los envíos en curso del Outbox y consumos activos
+Esperar a que completen su reinicio todas las instancias con los flags en `false` y validar que no queda ningún envío en vuelo:
 
-### Paso 3. Drenar todos los jobs pendientes de `q.tryon.job.process` hacia la cola temporal
-Usar un traslado con confirmación de publicación (`publisher confirms`) **antes** del `basicAck` en origen (por ejemplo vía plugin **RabbitMQ Shovel** temporal con `ack-mode: on-confirm`, o el cliente AMQP ejecutando `basicGet(autoAck=false)` + `basicPublish("", "q.tryon.job.process.migration.tmp", persistent, body)` + `waitForConfirmsOrDie` + `basicAck`):
+1. **En PostgreSQL (`probador_db`):** confirmar que no haya eventos en `PROCESSING` (el lease máximo configurado en `TransactionalOutboxPublisherAdapter` es de `30 s`) y que `MAX(published_at)` no cambia entre dos lecturas separadas por > `10 s`:
+   ```sql
+   SELECT status, COUNT(*) AS total, MAX(published_at) AS ultimo_envio
+   FROM outbox_events
+   WHERE event_type IN ('styleradar.tryon.job.created', 'tryon.job.created')
+   GROUP BY status;
+   ```
+   Criterio de salida: **`0` filas con `status = 'PROCESSING'`** y `ultimo_envio` sin cambios.
+
+2. **En RabbitMQ:** confirmar que la cola ya no tiene consumidores ni mensajes sin confirmar (`messages_unacknowledged = 0`) y que el total de mensajes dejó de crecer:
+   ```bash
+   rabbitmqctl list_queues -p / name consumers messages_ready messages_unacknowledged arguments
+   ```
+   Criterio de salida: para `q.tryon.job.process`, **`consumers = 0`**, **`messages_unacknowledged = 0`** y `messages_ready` estable.
+
+### Paso 3. Desenlazar `q.tryon.job.process` y drenar jobs pendientes hacia una cola temporal SIN binding
+1. Declarar la cola durable temporal `q.tryon.job.process.migration.tmp` (mismo prefijo `q.tryon.*`) **sin crear ningún binding hacia `styleradar.exchange`**.
+2. Desenlazar `q.tryon.job.process` de `styleradar.exchange` (`routing_key = styleradar.tryon.job.created`).
+3. Drenar todos los mensajes pendientes desde `q.tryon.job.process` → `q.tryon.job.process.migration.tmp` usando confirmaciones de publicación (`publisher confirms` / `ack-mode: on-confirm`) **antes** del `basicAck` en origen:
 
 ```bash
 # Ejemplo con Shovel en Management API (opcional si shovel está habilitado):
@@ -83,41 +99,45 @@ curl -s -u "<USER>:<PASS>" -X PUT \
   }'
 ```
 
-Verificar antes del siguiente paso que `q.tryon.job.process` tenga **`messages = 0`** y **`messages_unacknowledged = 0`**:
-
-```bash
-rabbitmqctl list_queues -p / name messages messages_ready messages_unacknowledged arguments
-```
+Verificar antes del Paso 4 que `q.tryon.job.process` tenga **`messages = 0`** y **`messages_unacknowledged = 0`**, y que `q.tryon.job.process.migration.tmp` tenga el conteo exacto drenado.
 
 ### Paso 4. Recrear `q.tryon.job.process` con `x-dead-letter-exchange=styleradar.dlx`
-1. Eliminar la cola antigua **exigiendo que esté vacía** (`--if-empty` / `queueDelete(..., ifUnused=false, ifEmpty=true)` para impedir borrados accidentales si hubiera un mensaje residual):
+1. Eliminar la cola antigua **exigiendo que esté vacía** (`--if-empty` / `queueDelete(..., ifUnused=false, ifEmpty=true)`):
    ```bash
    rabbitmqctl delete_queue -p / q.tryon.job.process --if-empty
    ```
 2. Asegurar la existencia del exchange `styleradar.dlx` (`direct`, durable) y de la cola `q.tryon.job.process.dlq` enlazada a `styleradar.dlx` con routing key `tryon.job.process.dead`.
-3. Reactivar los listeners / desplegar la nueva versión del PR #25 (`TRYON_AMQP_LISTENERS_ENABLED=true`), o declarar explícitamente la nueva `q.tryon.job.process` durable con:
+3. Declarar la nueva `q.tryon.job.process` durable con:
    - `x-dead-letter-exchange`: `styleradar.dlx`
    - `x-dead-letter-routing-key`: `tryon.job.process.dead`
-   - Binding desde `styleradar.exchange` con routing key `styleradar.tryon.job.created`.
-4. Desenlazar `q.tryon.job.process.migration.tmp` de `styleradar.exchange`.
+   - Binding **único** desde `styleradar.exchange` con routing key `styleradar.tryon.job.created` (la cola temporal sigue sin estar enlazada al exchange).
 
-### Paso 5. Reinyectar los jobs preservados y limpiar la cola temporal
-Mover los mensajes desde `q.tryon.job.process.migration.tmp` directamente hacia `q.tryon.job.process` (exchange `""`, routing key `q.tryon.job.process`, con `on-confirm` / `waitForConfirmsOrDie` antes de `basicAck`), verificar que `q.tryon.job.process.migration.tmp` quedó en `0` y eliminarla con `--if-empty`:
+### Paso 5. Reinyectar los jobs restaurados y eliminar la cola temporal (aún con Outbox pausado)
+1. Mover todos los mensajes desde `q.tryon.job.process.migration.tmp` directamente hacia `q.tryon.job.process` (exchange por defecto `""`, routing key `q.tryon.job.process`, con `publisher confirms` / `on-confirm` antes del `basicAck`).
+2. Confirmar que `q.tryon.job.process.migration.tmp` quedó en `0` mensajes y eliminarla con `--if-empty`:
+   ```bash
+   rabbitmqctl delete_queue -p / q.tryon.job.process.migration.tmp --if-empty
+   ```
+3. Confirmar que solo `q.tryon.job.process` está enlazada a `styleradar.tryon.job.created` y que sus argumentos muestran `x-dead-letter-exchange=styleradar.dlx` y `x-dead-letter-routing-key=tryon.job.process.dead`.
+
+### Paso 6. Reanudar el despacho del Outbox y los consumidores, y validar
+**Únicamente después** de completar el Paso 5, desplegar/actualizar la imagen con el PR #25 y reactivar ambos flags en todas las instancias:
 
 ```bash
-rabbitmqctl delete_queue -p / q.tryon.job.process.migration.tmp --if-empty
+az webapp config appsettings set -g styleradar-pt8080-rg -n <APP_SERVICE_NAME> \
+  --settings OUTBOX_DISPATCH_ENABLED=true TRYON_AMQP_LISTENERS_ENABLED=true
 ```
 
-### Paso 6. Validación final
-1. Confirmar que `q.tryon.job.process` reporta:
-   - `x-dead-letter-exchange = styleradar.dlx`
-   - `x-dead-letter-routing-key = tryon.job.process.dead`
-2. Confirmar que los jobs preservados fueron procesados y que un rechazo permanente (`AmqpRejectAndDontRequeueException`, `defaultRequeueRejected=false`) aterriza en `q.tryon.job.process.dlq` con `exchange = styleradar.dlx` y `routingKey = tryon.job.process.dead`.
+Validación final:
+1. Los eventos que quedaron en `outbox_events` (`status = 'PENDING'`) durante la ventana pasan a `PUBLISHED` automáticamente y llegan **una sola vez** a `q.tryon.job.process`.
+2. Todos los jobs restaurados más los creados durante la pausa se procesan sin pérdida ni duplicación.
+3. Un job rechazado sin reencolar (`AmqpRejectAndDontRequeueException`, `defaultRequeueRejected=false`) aterriza en `q.tryon.job.process.dlq` con `exchange = styleradar.dlx` y `routingKey = tryon.job.process.dead`.
 
 ---
 
 ## 5. Prueba automatizada en broker real (Docker / Testcontainers)
 
-Todo este flujo de actualización (arranque con `styleradar.tryon.dlx` + jobs pendientes en cola → reproducción de `PRECONDITION_FAILED` → migración sin pérdida → verificación en RabbitMQ Management API / `rabbitmqctl` → procesamiento FIFO de jobs preservados + enrutamiento a DLQ vía `styleradar.dlx` / `tryon.job.process.dead`) está cubierto de forma reproducible en:
+Todo este flujo (arranque con `styleradar.tryon.dlx` + 2 jobs en cola → reproducción de `PRECONDITION_FAILED` → pausa del Outbox + creación de un job durante la pausa que permanece `PENDING` → drenaje sin doble binding hacia `q.tryon.job.process.migration.tmp` → recreación de `q.tryon.job.process` → reinyección → reanudación del Outbox verificando entrega **única** del job creado durante la pausa + enrutamiento de rechazo a `q.tryon.job.process.dlq` por `styleradar.dlx` / `tryon.job.process.dead`) está automatizado en:
 
 - `src/test/java/edu/dosw/styleradar/virtualtryon/infrastructure/adapter/in/amqp/TryOnJobRabbitUpgradeMigrationIntegrationTest.java`
+- `src/test/java/edu/dosw/styleradar/virtualtryon/infrastructure/adapter/out/messaging/TransactionalOutboxPublisherAdapterTest.java`

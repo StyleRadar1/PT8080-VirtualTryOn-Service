@@ -12,6 +12,10 @@ import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.port.in.ProcessTryOnJobUseCase;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.messaging.TransactionalOutboxPublisherAdapter;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.messaging.TryOnEventPublisherAdapter;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.entity.OutboxEventJpaEntity;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.OutboxEventJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.config.RabbitConfig;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -36,8 +40,11 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.rabbit.listener.adapter.MessageListenerAdapter;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.retry.interceptor.RetryOperationsInterceptor;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.Container;
 import org.testcontainers.containers.RabbitMQContainer;
@@ -50,6 +57,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -64,17 +72,19 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Prueba de integración real sobre RabbitMQ 3.13 (Management API + AMQP) que simula una actualización
  * desde una cola {@code q.tryon.job.process} preexistente con {@code x-dead-letter-exchange=styleradar.tryon.dlx}:
  * 1. Verifica PRECONDITION_FAILED al intentar redeclarar con styleradar.dlx y demuestra que ignoreDeclarationExceptions
  *    conserva la cola anterior sin perder mensajes.
- * 2. Ejecuta el procedimiento de migración sin pérdida de jobs pendientes hacia una cola temporal y recrea
+ * 2. Pausa el despacho del Transactional Outbox y crea un nuevo job durante la pausa (queda PENDING sin publicarse).
+ * 3. Ejecuta el procedimiento de migración sin doble binding ni pérdida de jobs hacia una cola temporal y recrea
  *    {@code q.tryon.job.process} con {@code x-dead-letter-exchange=styleradar.dlx}.
- * 3. Verifica vía Management API y {@code rabbitmqctl} que los nuevos argumentos quedaron activos, que todos los
- *    jobs previos se procesan en orden y que un job rechazado sin reencolar llega a {@code q.tryon.job.process.dlq}
- *    con routing key {@code tryon.job.process.dead}.
+ * 4. Reanuda el despacho del Outbox y valida vía Management API, {@code rabbitmqctl} y consumidor real que los 2 jobs
+ *    previos más el job creado durante la pausa llegan y se procesan una sola vez en la cola definitiva, y que un
+ *    job rechazado sin reencolar llega a {@code q.tryon.job.process.dlq} por {@code styleradar.dlx} / {@code tryon.job.process.dead}.
  */
 class TryOnJobRabbitUpgradeMigrationIntegrationTest {
 
@@ -134,11 +144,13 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-25 (Migración desde topología anterior): Migra q.tryon.job.process sin perder jobs y enruta rechazos a styleradar.dlx / tryon.job.process.dead")
-    void shouldMigrateLegacyQueueWithoutLosingPendingJobsAndRouteRejectedJobToSharedDlx() throws Exception {
+    @DisplayName("HU SR-RF-25 (Migración con Outbox pausado): Migra q.tryon.job.process sin duplicados y entrega una sola vez un job creado durante la pausa")
+    void shouldMigrateLegacyQueueWithoutDuplicatesAndDeliverPausedOutboxJobOnce() throws Exception {
         Assumptions.assumeTrue(isDockerAvailable(), "Docker no disponible; se omite prueba de migración RabbitMQ");
 
         RabbitConfig rabbitConfig = new RabbitConfig();
+        List<OutboxEventJpaEntity> storedOutbox = new CopyOnWriteArrayList<>();
+        TransactionalOutboxPublisherAdapter outboxPublisher = createRealOutboxPublisher(storedOutbox);
 
         // -----------------------------------------------------------------
         // FASE 1: Arrancar el broker con la configuración ANTERIOR (styleradar.tryon.dlx)
@@ -208,13 +220,25 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 2, 5_000L);
 
         // -----------------------------------------------------------------
-        // FASE 3: Procedimiento de migración preservando los 2 jobs pendientes
+        // FASE 3: Pausar Outbox, crear job durante la pausa y migrar SIN doble binding
         // -----------------------------------------------------------------
+        outboxPublisher.setDispatchEnabled(false);
+
+        UUID createdDuringPauseJobId = UUID.randomUUID();
+        outboxPublisher.saveOutboxEvent(
+                createdDuringPauseJobId,
+                TryOnJobDomainEvent.ROUTING_KEY_CREATED,
+                newJobCreatedEvent(createdDuringPauseJobId)
+        );
+        // Simula tanto el intento inmediato post-commit como el @Scheduled mientras OUTBOX_DISPATCH_ENABLED=false
+        outboxPublisher.publishPendingEvents();
+
+        assertThat(findOutboxStatus(storedOutbox, createdDuringPauseJobId)).isEqualTo("PENDING");
+        awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 2, 5_000L);
+
+        // La cola temporal NO se enlaza a styleradar.exchange para evitar doble enrutamiento
         Queue tempQueue = QueueBuilder.durable(TEMP_MIGRATION_QUEUE).build();
         legacyAdmin.declareQueue(tempQueue);
-        legacyAdmin.declareBinding(
-                BindingBuilder.bind(tempQueue).to(mainExchange).with(RabbitConfig.DEFAULT_TRYON_ROUTING_KEY_CREATED)
-        );
 
         int drainedToTemp;
         try (Connection dedicatedConn = connectionFactory.getRabbitConnectionFactory().newConnection();
@@ -260,11 +284,6 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         int restoredToTarget;
         try (Connection dedicatedConn = connectionFactory.getRabbitConnectionFactory().newConnection();
              Channel dedicatedChannel = dedicatedConn.createChannel()) {
-            dedicatedChannel.queueUnbind(
-                    TEMP_MIGRATION_QUEUE,
-                    RabbitConfig.DEFAULT_TRYON_EXCHANGE,
-                    RabbitConfig.DEFAULT_TRYON_ROUTING_KEY_CREATED
-            );
             restoredToTarget = moveAllMessagesWithConfirms(
                     dedicatedChannel,
                     TEMP_MIGRATION_QUEUE,
@@ -273,11 +292,19 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
             dedicatedChannel.queueDelete(TEMP_MIGRATION_QUEUE, false, true);
         }
         assertThat(restoredToTarget).isEqualTo(2);
+        awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 2, 5_000L);
+        assertThat(findOutboxStatus(storedOutbox, createdDuringPauseJobId)).isEqualTo("PENDING");
+
+        // Únicamente con la cola definitiva restaurada y enlazada, se reanuda el Outbox
+        outboxPublisher.setDispatchEnabled(true);
+        outboxPublisher.publishPendingEvents();
+
+        assertThat(findOutboxStatus(storedOutbox, createdDuringPauseJobId)).isEqualTo("PUBLISHED");
+        awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 3, 5_000L);
 
         // -----------------------------------------------------------------
-        // FASE 4: Evidencia real post-migración y enrutamiento de rechazo a DLQ
+        // FASE 4: Evidencia real post-migración, entrega única y enrutamiento a DLQ
         // -----------------------------------------------------------------
-        awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 2, 5_000L);
         JsonNode migratedQueueInfo = awaitQueueInManagementApi(
                 RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE,
                 RabbitConfig.DEFAULT_TRYON_DLX,
@@ -307,7 +334,7 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         TryOnJobRetryRecoverer recoverer = new TryOnJobRetryRecoverer(mockService);
 
         List<UUID> processedOrder = new CopyOnWriteArrayList<>();
-        CountDownLatch pendingProcessedLatch = new CountDownLatch(2);
+        CountDownLatch pendingProcessedLatch = new CountDownLatch(3);
         UUID rejectedJobId = UUID.randomUUID();
 
         doAnswer(invocation -> {
@@ -341,9 +368,20 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
 
         try {
             assertThat(pendingProcessedLatch.await(15, TimeUnit.SECONDS)).isTrue();
-            assertThat(processedOrder).containsExactly(pendingJob1, pendingJob2);
+            Thread.sleep(400L);
 
-            publishCreatedJob(rejectedJobId);
+            assertThat(processedOrder).containsExactly(pendingJob1, pendingJob2, createdDuringPauseJobId);
+            assertThat(Collections.frequency(processedOrder, createdDuringPauseJobId)).isEqualTo(1);
+            log.info("[EVIDENCIA MIGRACION AMQP] Jobs procesados tras reanudar Outbox => order={}, createdDuringPauseCount={}",
+                    processedOrder,
+                    Collections.frequency(processedOrder, createdDuringPauseJobId));
+
+            outboxPublisher.saveOutboxEvent(
+                    rejectedJobId,
+                    TryOnJobDomainEvent.ROUTING_KEY_CREATED,
+                    newJobCreatedEvent(rejectedJobId)
+            );
+            outboxPublisher.publishPendingEvents();
 
             Message deadLetterMsg = rabbitTemplate.receive(RabbitConfig.DEFAULT_TRYON_PROCESS_DLQ, 10_000L);
             assertThat(deadLetterMsg).isNotNull();
@@ -374,8 +412,74 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         }
     }
 
-    private void publishCreatedJob(UUID jobId) {
-        TryOnJobDomainEvent event = new TryOnJobDomainEvent(
+    private TransactionalOutboxPublisherAdapter createRealOutboxPublisher(
+            List<OutboxEventJpaEntity> storedOutbox
+    ) {
+        OutboxEventJpaRepository outboxRepo = mock(OutboxEventJpaRepository.class);
+        when(outboxRepo.save(any())).thenAnswer(inv -> {
+            OutboxEventJpaEntity entity = inv.getArgument(0);
+            storedOutbox.removeIf(existing -> existing.getId().equals(entity.getId()));
+            storedOutbox.add(entity);
+            return entity;
+        });
+        when(outboxRepo.saveAll(any())).thenAnswer(inv -> {
+            Iterable<OutboxEventJpaEntity> entities = inv.getArgument(0);
+            for (OutboxEventJpaEntity entity : entities) {
+                storedOutbox.removeIf(existing -> existing.getId().equals(entity.getId()));
+                storedOutbox.add(entity);
+            }
+            return entities;
+        });
+        when(outboxRepo.findClaimableEventsForUpdate(any(Instant.class), any())).thenAnswer(inv -> {
+            Instant now = inv.getArgument(0);
+            return storedOutbox.stream()
+                    .filter(e -> "PENDING".equals(e.getStatus())
+                            || ("PROCESSING".equals(e.getStatus())
+                            && e.getClaimExpiresAt() != null
+                            && e.getClaimExpiresAt().isBefore(now)))
+                    .toList();
+        });
+        when(outboxRepo.findById(any())).thenAnswer(inv -> {
+            UUID id = inv.getArgument(0);
+            return storedOutbox.stream()
+                    .filter(e -> e.getId().equals(id))
+                    .findFirst();
+        });
+
+        TransactionTemplate syncTx = mock(TransactionTemplate.class);
+        when(syncTx.execute(any())).thenAnswer(inv -> {
+            TransactionCallback<?> callback = inv.getArgument(0);
+            return callback.doInTransaction(null);
+        });
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("rabbitTemplate", rabbitTemplate);
+        TryOnEventPublisherAdapter eventPublisher = new TryOnEventPublisherAdapter(
+                beanFactory.getBeanProvider(RabbitTemplate.class),
+                RabbitConfig.DEFAULT_TRYON_EXCHANGE,
+                false
+        );
+
+        return new TransactionalOutboxPublisherAdapter(
+                outboxRepo,
+                eventPublisher,
+                objectMapper,
+                syncTx,
+                null,
+                true
+        );
+    }
+
+    private String findOutboxStatus(List<OutboxEventJpaEntity> storedOutbox, UUID jobId) {
+        return storedOutbox.stream()
+                .filter(e -> jobId.toString().equals(e.getAggregateId()))
+                .map(OutboxEventJpaEntity::getStatus)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private TryOnJobDomainEvent newJobCreatedEvent(UUID jobId) {
+        return new TryOnJobDomainEvent(
                 UUID.randomUUID(),
                 jobId,
                 UUID.randomUUID(),
@@ -385,10 +489,13 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
                 null,
                 Instant.now()
         );
+    }
+
+    private void publishCreatedJob(UUID jobId) {
         rabbitTemplate.convertAndSend(
                 RabbitConfig.DEFAULT_TRYON_EXCHANGE,
                 RabbitConfig.DEFAULT_TRYON_ROUTING_KEY_CREATED,
-                event
+                newJobCreatedEvent(jobId)
         );
     }
 

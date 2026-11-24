@@ -11,6 +11,7 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.r
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -21,6 +22,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Adaptador de infraestructura que implementa el patrón Transactional Outbox (SR-RF-25).
@@ -41,6 +43,7 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
     private final BlobStoragePort blobStoragePort;
+    private final AtomicBoolean dispatchEnabled;
 
     @Autowired
     public TransactionalOutboxPublisherAdapter(
@@ -48,13 +51,25 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
             TryOnEventPublisherPort tryOnEventPublisherPort,
             ObjectMapper objectMapper,
             TransactionTemplate transactionTemplate,
-            @Autowired(required = false) BlobStoragePort blobStoragePort
+            @Autowired(required = false) BlobStoragePort blobStoragePort,
+            @Value("${styleradar.tryon.outbox.dispatch-enabled:true}") boolean dispatchEnabled
     ) {
         this.outboxEventRepository = Objects.requireNonNull(outboxEventRepository, "outboxEventRepository no puede ser nulo");
         this.tryOnEventPublisherPort = Objects.requireNonNull(tryOnEventPublisherPort, "tryOnEventPublisherPort no puede ser nulo");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper no puede ser nulo");
         this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate no puede ser nulo");
         this.blobStoragePort = blobStoragePort;
+        this.dispatchEnabled = new AtomicBoolean(dispatchEnabled);
+    }
+
+    public TransactionalOutboxPublisherAdapter(
+            OutboxEventJpaRepository outboxEventRepository,
+            TryOnEventPublisherPort tryOnEventPublisherPort,
+            ObjectMapper objectMapper,
+            TransactionTemplate transactionTemplate,
+            BlobStoragePort blobStoragePort
+    ) {
+        this(outboxEventRepository, tryOnEventPublisherPort, objectMapper, transactionTemplate, blobStoragePort, true);
     }
 
     public TransactionalOutboxPublisherAdapter(
@@ -63,7 +78,15 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
             ObjectMapper objectMapper,
             TransactionTemplate transactionTemplate
     ) {
-        this(outboxEventRepository, tryOnEventPublisherPort, objectMapper, transactionTemplate, null);
+        this(outboxEventRepository, tryOnEventPublisherPort, objectMapper, transactionTemplate, null, true);
+    }
+
+    public boolean isDispatchEnabled() {
+        return dispatchEnabled.get();
+    }
+
+    public void setDispatchEnabled(boolean enabled) {
+        this.dispatchEnabled.set(enabled);
     }
 
     @Override
@@ -87,6 +110,10 @@ public class TransactionalOutboxPublisherAdapter implements OutboxPublisherPort 
     @Override
     @Scheduled(fixedDelayString = "${styleradar.tryon.outbox.poll-interval-ms:5000}")
     public void publishPendingEvents() {
+        if (!dispatchEnabled.get()) {
+            log.debug("Despacho del Transactional Outbox pausado (styleradar.tryon.outbox.dispatch-enabled=false); los eventos permanecen en PENDING en PostgreSQL");
+            return;
+        }
         // 1. Reclamación exclusiva concurrente con SELECT ... FOR UPDATE SKIP LOCKED
         List<OutboxEventJpaEntity> claimedEvents = transactionTemplate.execute(status -> {
             Instant now = Instant.now();
