@@ -1,6 +1,7 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.exception;
 
 import edu.dosw.styleradar.virtualtryon.domain.exception.AiProviderTimeoutException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.DomainException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
@@ -193,5 +194,17 @@ class GlobalExceptionHandlerTest {
         assertThat(pd.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
         assertThat(pd.getProperties().get("errorCode")).isEqualTo("VALIDATION_FAILED");
         assertThat(pd.getProperties()).containsKey("errors").doesNotContainKey("invalidFields");
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-24: Fallos temporales o timeouts de Catálogo (CatalogServiceUnavailableException) retornan 503 ProblemDetail")
+    void testCatalogServiceUnavailable() {
+        ProblemDetail pd = handler.handleCatalogServiceUnavailableException(
+                new CatalogServiceUnavailableException("Catálogo respondió 503", new RuntimeException("503"))
+        );
+
+        assertThat(pd.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE.value());
+        assertThat(pd.getTitle()).isEqualTo("Servicio de Catálogo No Disponible");
+        assertThat(pd.getProperties().get("errorCode")).isEqualTo("CATALOG_SERVICE_UNAVAILABLE");
     }
 }

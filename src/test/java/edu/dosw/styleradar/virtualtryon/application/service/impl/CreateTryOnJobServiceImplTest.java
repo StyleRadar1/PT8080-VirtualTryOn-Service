@@ -780,4 +780,56 @@ class CreateTryOnJobServiceImplTest {
         verify(failingCachePort, Mockito.never()).getCachedUsedCount(any(), any());
         verify(failingCachePort).evictQuota(userId, currentPeriod);
     }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Si la prenda no existe aún en BD local, createTryOnJob hidrata desde CatalogGarmentLookupPort, la persiste y encola el trabajo")
+    void shouldHydrateCatalogGarmentFromRestFallbackOnCreateTryOnJob() {
+        UserId userId = UserId.of(UUID.randomUUID());
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        mockActiveConsentAndPhoto(userId);
+
+        edu.dosw.styleradar.virtualtryon.domain.port.out.CatalogGarmentLookupPort lookupPort =
+                Mockito.mock(edu.dosw.styleradar.virtualtryon.domain.port.out.CatalogGarmentLookupPort.class);
+
+        when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.empty());
+        CatalogGarment remoteGarment = new CatalogGarment(
+                garmentId,
+                "Vestido largo negro",
+                GarmentCategory.ONE_PIECE,
+                "https://cdn.styleradar.co/vestido.jpg",
+                true,
+                Instant.now()
+        );
+        when(lookupPort.findGarmentById(garmentId)).thenReturn(Optional.of(remoteGarment));
+        when(catalogGarmentJpaRepository.save(any(CatalogGarmentJpaEntity.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        CreateTryOnJobServiceImpl serviceWithLookup = new CreateTryOnJobServiceImpl(
+                repositoryAdapter,
+                repositoryAdapter,
+                quotaCacheAdapter,
+                repositoryAdapter,
+                List.of(new MockAiStrategy(blobStoragePort)),
+                "mock",
+                transactionTemplate,
+                outboxPublisherPort,
+                lookupPort
+        );
+
+        String photoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
+        TryOnJob job = serviceWithLookup.createTryOnJob(userId, garmentId, photoUrl, true);
+
+        assertThat(job).isNotNull();
+        assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
+        verify(catalogGarmentJpaRepository).save(any(CatalogGarmentJpaEntity.class));
+        verify(lookupPort).findGarmentById(garmentId);
+
+        GarmentId unavailableId = GarmentId.of(UUID.randomUUID());
+        when(catalogGarmentJpaRepository.findById(unavailableId.value())).thenReturn(Optional.empty());
+        when(lookupPort.findGarmentById(unavailableId))
+                .thenThrow(new edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException(
+                        "Catálogo temporalmente caído"));
+        assertThatThrownBy(() -> serviceWithLookup.createTryOnJob(userId, unavailableId, photoUrl, true))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException.class);
+    }
 }

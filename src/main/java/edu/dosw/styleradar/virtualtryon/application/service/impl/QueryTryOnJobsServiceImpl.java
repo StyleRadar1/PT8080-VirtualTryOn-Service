@@ -19,6 +19,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.UserBodyMeasurements;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.CatalogGarmentLookupPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.GarmentSizeMeasurementPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserMeasurementPort;
@@ -64,6 +65,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     private final BlobStoragePort blobStoragePort;
     private final UserMeasurementPort userMeasurementPort;
     private final GarmentSizeMeasurementPort garmentSizeMeasurementPort;
+    private final CatalogGarmentLookupPort catalogGarmentLookupPort;
     private final TryOnValidatorHandler eligibilityValidationChain;
     private Supplier<BillingPeriod> billingPeriodSupplier = BillingPeriod::current;
 
@@ -75,7 +77,8 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
             TryOnJobRepositoryPort jobRepositoryPort,
             @Autowired(required = false) BlobStoragePort blobStoragePort,
             @Autowired(required = false) UserMeasurementPort userMeasurementPort,
-            @Autowired(required = false) GarmentSizeMeasurementPort garmentSizeMeasurementPort
+            @Autowired(required = false) GarmentSizeMeasurementPort garmentSizeMeasurementPort,
+            @Autowired(required = false) CatalogGarmentLookupPort catalogGarmentLookupPort
     ) {
         this.quotaRepositoryPort = quotaRepositoryPort;
         this.quotaCachePort = quotaCachePort;
@@ -84,11 +87,33 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         this.blobStoragePort = blobStoragePort;
         this.userMeasurementPort = userMeasurementPort != null ? userMeasurementPort : u -> Optional.empty();
         this.garmentSizeMeasurementPort = garmentSizeMeasurementPort != null ? garmentSizeMeasurementPort : g -> Optional.empty();
+        this.catalogGarmentLookupPort = catalogGarmentLookupPort != null ? catalogGarmentLookupPort : g -> Optional.empty();
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
         consentValidator.setNext(quotaValidator);
         this.eligibilityValidationChain = consentValidator;
+    }
+
+    public QueryTryOnJobsServiceImpl(
+            UserQuotaRepositoryPort quotaRepositoryPort,
+            UserQuotaCachePort quotaCachePort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            TryOnJobRepositoryPort jobRepositoryPort,
+            BlobStoragePort blobStoragePort,
+            UserMeasurementPort userMeasurementPort,
+            GarmentSizeMeasurementPort garmentSizeMeasurementPort
+    ) {
+        this(
+                quotaRepositoryPort,
+                quotaCachePort,
+                biometricDataRepositoryPort,
+                jobRepositoryPort,
+                blobStoragePort,
+                userMeasurementPort,
+                garmentSizeMeasurementPort,
+                null
+        );
     }
 
     public QueryTryOnJobsServiceImpl(
@@ -131,6 +156,14 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
 
     void setBillingPeriodSupplier(Supplier<BillingPeriod> billingPeriodSupplier) {
         this.billingPeriodSupplier = billingPeriodSupplier != null ? billingPeriodSupplier : BillingPeriod::current;
+    }
+
+    private Optional<CatalogGarment> hydrateCatalogGarmentFromRemote(GarmentId garmentId) {
+        Optional<CatalogGarment> remote = catalogGarmentLookupPort.findGarmentById(garmentId);
+        if (remote.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(quotaRepositoryPort.upsertCatalogGarmentIfNewer(remote.get()));
     }
 
     private BillingPeriod currentBillingPeriod() {
@@ -185,7 +218,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public GarmentValidationResult validateGarmentEligibility(
             UserId userId,
             GarmentId garmentId,
@@ -198,6 +231,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
         String normalizedSize = selectedSize.trim().toUpperCase(java.util.Locale.ROOT);
 
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                .or(() -> hydrateCatalogGarmentFromRemote(garmentId))
                 .orElseThrow(() -> new InvalidGarmentException(
                         "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"
                 ));
@@ -296,17 +330,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
     @Override
     public CatalogGarment syncCatalogGarment(CatalogGarment garment) {
         java.util.Objects.requireNonNull(garment, "La prenda de catálogo no puede ser nula");
-        return quotaRepositoryPort.findCatalogGarmentById(garment.getGarmentId())
-                .map(existing -> {
-                    if (existing.getUpdatedAt() != null && garment.getUpdatedAt() != null
-                            && garment.getUpdatedAt().isBefore(existing.getUpdatedAt())) {
-                        log.warn("Descartando sincronización obsoleta para prenda {}: updatedAt entrante {} es anterior a existente {}",
-                                garment.getGarmentId().value(), garment.getUpdatedAt(), existing.getUpdatedAt());
-                        return existing;
-                    }
-                    return quotaRepositoryPort.saveCatalogGarment(garment);
-                })
-                .orElseGet(() -> quotaRepositoryPort.saveCatalogGarment(garment));
+        return quotaRepositoryPort.upsertCatalogGarmentIfNewer(garment);
     }
 
     @Override

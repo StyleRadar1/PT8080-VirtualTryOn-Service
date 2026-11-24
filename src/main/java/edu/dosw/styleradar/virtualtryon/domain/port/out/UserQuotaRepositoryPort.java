@@ -35,6 +35,14 @@ public interface UserQuotaRepositoryPort {
 
     CatalogGarment saveCatalogGarment(CatalogGarment garment);
 
+    /**
+     * Persiste una prenda solo si no existe o si su {@code updatedAt} es estrictamente
+     * más reciente que el registro ya almacenado, devolviendo la versión autoritativa en base de datos.
+     */
+    default CatalogGarment upsertCatalogGarmentIfNewer(CatalogGarment garment) {
+        return saveCatalogGarment(garment);
+    }
+
     Optional<CatalogGarment> findCatalogGarmentById(GarmentId garmentId);
 
     /**
