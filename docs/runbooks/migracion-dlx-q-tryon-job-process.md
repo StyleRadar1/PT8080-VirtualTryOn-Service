@@ -42,40 +42,59 @@ curl -s -u "<ADMIN_USER>:<ADMIN_PASSWORD>" \
 
 ---
 
-## 4. Procedimiento de migración preservando jobs pendientes (sin doble binding ni duplicados)
+## 4. Procedimiento de migración preservando jobs pendientes (sin réplicas antiguas ni doble binding)
 
-> **Invariante clave:** Nunca deben coexistir `q.tryon.job.process` y la cola temporal enlazadas al mismo tiempo a la routing key `styleradar.tryon.job.created`. Al pausar el despacho del **Transactional Outbox** (`OUTBOX_DISPATCH_ENABLED=false`), las solicitudes HTTP nuevas (`POST /api/v1/try-on/jobs`) siguen aceptándose normalmente y quedan guardadas en PostgreSQL (`outbox_events`, `status = 'PENDING'`) hasta que `q.tryon.job.process` ya esté migrada, restaurada y sea la única cola enlazada.
+> **Invariantes clave:**
+> 1. **Desplegar antes de desenlazar:** Las versiones anteriores al PR #25 no reconocen `OUTBOX_DISPATCH_ENABLED`. Por ello, primero se despliega la imagen del PR #25 con la pausa configurada en **todas** las réplicas, slots y ambientes que comparten el mismo broker/vhost, **manteniendo `q.tryon.job.process` enlazada** hasta confirmar que no queda ninguna réplica antigua viva publicando ni envíos en curso.
+> 2. **Sin doble binding:** Nunca coexisten `q.tryon.job.process` y la cola temporal enlazadas a la routing key `styleradar.tryon.job.created`. Con el Outbox pausado (`OUTBOX_DISPATCH_ENABLED=false`), las solicitudes HTTP nuevas (`POST /api/v1/try-on/jobs`) siguen persistiendo en PostgreSQL (`outbox_events`, `status = 'PENDING'`) hasta que `q.tryon.job.process` ya esté recreada, restaurada y enlazada en solitario.
 
-### Paso 1. Pausar consumidores y despacho del Outbox en TODAS las instancias que publican `styleradar.tryon.job.created`
-- El único servicio que publica `styleradar.tryon.job.created` en el ecosistema es **`PT8080-VirtualTryOn-Service`** mediante `TransactionalOutboxPublisherAdapter`.
-- Deshabilitar **tanto los listeners AMQP como el despacho del Outbox** en **todas** las réplicas / slots de `PT8080-VirtualTryOn-Service` (y en cualquier otra instancia conectada al mismo broker/vhost, por ejemplo QA y PROD si comparten broker):
+### Paso 1. Registrar los valores actuales del Outbox y de los listeners por ambiente y slot
+El único servicio que publica `styleradar.tryon.job.created` en el ecosistema es **`PT8080-VirtualTryOn-Service`** (`TransactionalOutboxPublisherAdapter`). Antes de tocar configuración alguna, consultar y anotar los valores vigentes (`OUTBOX_DISPATCH_ENABLED`, `TRYON_AMQP_LISTENERS_ENABLED`, número de réplicas/slots activos y commit en `/actuator/info`) en **cada ambiente y slot** conectado al mismo broker y vhost:
 
 ```bash
-az webapp config appsettings set -g styleradar-pt8080-rg -n <APP_SERVICE_NAME> \
-  --settings TRYON_AMQP_LISTENERS_ENABLED=false OUTBOX_DISPATCH_ENABLED=false
+# Repetir por cada App Service y cada deployment slot (agregando --slot <SLOT> si aplica)
+az webapp config appsettings list -g styleradar-pt8080-rg -n <APP_SERVICE_NAME> \
+  --query "[?name=='OUTBOX_DISPATCH_ENABLED' || name=='TRYON_AMQP_LISTENERS_ENABLED' || name=='RABBITMQ_HOST' || name=='RABBITMQ_VHOST'].{name:name, value:value}" -o table
+
+curl -s https://<APP_SERVICE_HOST>/actuator/info
 ```
 
-*(Con `OUTBOX_DISPATCH_ENABLED=false`, tanto el `@Scheduled` cada `5000 ms` como el intento inmediato post-commit en `CreateTryOnJobServiceImpl` omiten publicar en RabbitMQ, dejando los eventos nuevos en `PENDING` dentro de `outbox_events`).*
+Guardar la tabla de respaldo para el Paso 6 (ejemplo con los valores observados en la sección 2):
 
-### Paso 2. Confirmar que terminaron todos los envíos en curso del Outbox y consumos activos
-Esperar a que completen su reinicio todas las instancias con los flags en `false` y validar que no queda ningún envío en vuelo:
+| Ambiente / Slot | `OUTBOX_DISPATCH_ENABLED` original | `TRYON_AMQP_LISTENERS_ENABLED` original |
+|---|---|---|
+| `styleradar-virtualtryon-qa` (`production` / principal) | *(no definido -> valor por defecto `true`)* | `true` |
+| `styleradar-virtualtryon-prod` (`production` / principal) | *(no definido -> valor por defecto `true`)* | `false` |
 
-1. **En PostgreSQL (`probador_db`):** confirmar que no haya eventos en `PROCESSING` (el lease máximo configurado en `TransactionalOutboxPublisherAdapter` es de `30 s`) y que `MAX(published_at)` no cambia entre dos lecturas separadas por > `10 s`:
-   ```sql
-   SELECT status, COUNT(*) AS total, MAX(published_at) AS ultimo_envio
-   FROM outbox_events
-   WHERE event_type IN ('styleradar.tryon.job.created', 'tryon.job.created')
-   GROUP BY status;
-   ```
-   Criterio de salida: **`0` filas con `status = 'PROCESSING'`** y `ultimo_envio` sin cambios.
+### Paso 2. Configurar la pausa, desplegar la imagen con `OUTBOX_DISPATCH_ENABLED` en todas las réplicas y confirmar fin de envíos en curso
+**Importante:** Mantener `q.tryon.job.process` enlazada a `styleradar.exchange` (`styleradar.tryon.job.created`) durante todo este paso. Poner `OUTBOX_DISPATCH_ENABLED=false` sobre la versión vieja del binario no impide que una réplica anterior despache nuevas solicitudes ni garantiza que deje de hacerlo aunque los contadores parezcan quietos por unos segundos.
 
-2. **En RabbitMQ:** confirmar que la cola ya no tiene consumidores ni mensajes sin confirmar (`messages_unacknowledged = 0`) y que el total de mensajes dejó de crecer:
+1. Configurar la pausa en **todos** los ambientes y slots que publiquen al mismo broker y vhost:
    ```bash
-   rabbitmqctl list_queues -p / name consumers messages_ready messages_unacknowledged arguments
+   az webapp config appsettings set -g styleradar-pt8080-rg -n <APP_SERVICE_NAME> \
+     --settings OUTBOX_DISPATCH_ENABLED=false TRYON_AMQP_LISTENERS_ENABLED=false
    ```
-   Criterio de salida: para `q.tryon.job.process`, **`consumers = 0`**, **`messages_unacknowledged = 0`** y `messages_ready` estable.
+   *(Si existe un slot adicional en el mismo App Service, repetir con `--slot <SLOT>`).*
+2. **Desplegar la imagen que ya incluye el PR #25** (con soporte de `OUTBOX_DISPATCH_ENABLED` e `ignoreDeclarationExceptions=true` para convivir sin crash-loop mientras exista la cola legada) en **todas** las réplicas, slots y ambientes conectados al mismo broker/vhost.
+3. **Confirmar que terminó el despliegue al 100 % y no queda ninguna réplica antigua activa:**
+   - Verificar que el workflow/rollout finalizó sin instancias antiguas drenando tráfico y que `GET /actuator/info` en cada ambiente/slot reporta ya el commit nuevo del PR #25.
+   - *(Con `OUTBOX_DISPATCH_ENABLED=false` efectivo en la imagen nueva, tanto el `@Scheduled` cada `5000 ms` como el intento inmediato post-commit en `CreateTryOnJobServiceImpl` omiten publicar en RabbitMQ).*
+4. **Confirmar que terminaron todos los envíos en curso del Outbox y consumos activos:**
+   - **En PostgreSQL (`probador_db` de cada ambiente):** confirmar `0` filas con `status = 'PROCESSING'` (lease máximo `30 s`) y `MAX(published_at)` estable entre dos lecturas separadas por > `10 s`:
+     ```sql
+     SELECT status, COUNT(*) AS total, MAX(published_at) AS ultimo_envio
+     FROM outbox_events
+     WHERE event_type IN ('styleradar.tryon.job.created', 'tryon.job.created')
+     GROUP BY status;
+     ```
+   - **En RabbitMQ:** confirmar `consumers = 0`, `messages_unacknowledged = 0` y `messages_ready` estable en `q.tryon.job.process`:
+     ```bash
+     rabbitmqctl list_queues -p / name consumers messages_ready messages_unacknowledged arguments
+     ```
 
 ### Paso 3. Desenlazar `q.tryon.job.process` y drenar jobs pendientes hacia una cola temporal SIN binding
+Con la pausa efectiva en todas las réplicas desplegadas y cero envíos en curso:
+
 1. Declarar la cola durable temporal `q.tryon.job.process.migration.tmp` (mismo prefijo `q.tryon.*`) **sin crear ningún binding hacia `styleradar.exchange`**.
 2. Desenlazar `q.tryon.job.process` de `styleradar.exchange` (`routing_key = styleradar.tryon.job.created`).
 3. Drenar todos los mensajes pendientes desde `q.tryon.job.process` → `q.tryon.job.process.migration.tmp` usando confirmaciones de publicación (`publisher confirms` / `ack-mode: on-confirm`) **antes** del `basicAck` en origen:
@@ -120,17 +139,25 @@ Verificar antes del Paso 4 que `q.tryon.job.process` tenga **`messages = 0`** y 
    ```
 3. Confirmar que solo `q.tryon.job.process` está enlazada a `styleradar.tryon.job.created` y que sus argumentos muestran `x-dead-letter-exchange=styleradar.dlx` y `x-dead-letter-routing-key=tryon.job.process.dead`.
 
-### Paso 6. Reanudar el despacho del Outbox y los consumidores, y validar
-**Únicamente después** de completar el Paso 5, desplegar/actualizar la imagen con el PR #25 y reactivar ambos flags en todas las instancias:
+### Paso 6. Restablecer los valores originales de cada ambiente y slot, y validar
+**Únicamente después** de completar el Paso 5, restablecer en cada ambiente y slot los valores exactos registrados en el Paso 1 (**no** habilitar listeners donde estaban apagados):
 
 ```bash
-az webapp config appsettings set -g styleradar-pt8080-rg -n <APP_SERVICE_NAME> \
-  --settings OUTBOX_DISPATCH_ENABLED=true TRYON_AMQP_LISTENERS_ENABLED=true
+# Aplicar en cada ambiente/slot usando exactamente sus valores del Paso 1:
+# - Ejemplo QA (listeners originalmente activos):
+az webapp config appsettings set -g styleradar-pt8080-rg -n styleradar-virtualtryon-qa \
+  --settings OUTBOX_DISPATCH_ENABLED=<VALOR_ORIGINAL_OUTBOX_QA> TRYON_AMQP_LISTENERS_ENABLED=true
+
+# - Ejemplo PROD (si PROD tenía TRYON_AMQP_LISTENERS_ENABLED=false, DEBE seguir en false):
+az webapp config appsettings set -g styleradar-pt8080-rg -n styleradar-virtualtryon-prod \
+  --settings OUTBOX_DISPATCH_ENABLED=<VALOR_ORIGINAL_OUTBOX_PROD> TRYON_AMQP_LISTENERS_ENABLED=false
 ```
+
+*(Si `<VALOR_ORIGINAL_OUTBOX_*>` no existía antes del Paso 1, restablecerlo a `true` o eliminar el override explícito).*
 
 Validación final:
 1. Los eventos que quedaron en `outbox_events` (`status = 'PENDING'`) durante la ventana pasan a `PUBLISHED` automáticamente y llegan **una sola vez** a `q.tryon.job.process`.
-2. Todos los jobs restaurados más los creados durante la pausa se procesan sin pérdida ni duplicación.
+2. Todos los jobs restaurados más los creados durante la pausa se procesan sin pérdida ni duplicación en los ambientes con listeners habilitados.
 3. Un job rechazado sin reencolar (`AmqpRejectAndDontRequeueException`, `defaultRequeueRejected=false`) aterriza en `q.tryon.job.process.dlq` con `exchange = styleradar.dlx` y `routingKey = tryon.job.process.dead`.
 
 ---
