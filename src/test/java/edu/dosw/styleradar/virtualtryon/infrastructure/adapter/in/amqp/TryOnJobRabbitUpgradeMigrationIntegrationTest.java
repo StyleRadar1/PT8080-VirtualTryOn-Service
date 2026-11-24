@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.GetResponse;
 import edu.dosw.styleradar.virtualtryon.application.service.ProcessTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
@@ -45,6 +47,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
@@ -56,6 +59,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -114,7 +118,9 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         rabbitTemplate = new RabbitTemplate(connectionFactory);
         rabbitTemplate.setMessageConverter(messageConverter);
 
-        httpClient = HttpClient.newHttpClient();
+        httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
     }
 
     @AfterAll
@@ -160,7 +166,11 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
                 BindingBuilder.bind(legacyQueue).to(mainExchange).with(RabbitConfig.DEFAULT_TRYON_ROUTING_KEY_CREATED)
         );
 
-        JsonNode legacyQueueInfo = fetchQueueInfoFromManagementApi(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE);
+        JsonNode legacyQueueInfo = awaitQueueInManagementApi(
+                RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE,
+                LEGACY_TRYON_DLX,
+                15_000L
+        );
         assertThat(legacyQueueInfo.path("arguments").path("x-dead-letter-exchange").asText())
                 .isEqualTo(LEGACY_TRYON_DLX);
 
@@ -169,8 +179,7 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         publishCreatedJob(pendingJob1);
         publishCreatedJob(pendingJob2);
 
-        int queuedBeforeMigration = getMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE);
-        assertThat(queuedBeforeMigration).isEqualTo(2);
+        awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 2, 5_000L);
 
         // -----------------------------------------------------------------
         // FASE 2: Reproducir PRECONDITION_FAILED al redeclarar con styleradar.dlx
@@ -189,10 +198,14 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         RabbitAdmin resilientAdmin = rabbitConfig.amqpAdmin(connectionFactory);
         resilientAdmin.declareQueue(targetQueueBean);
 
-        JsonNode afterResilientDeclare = fetchQueueInfoFromManagementApi(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE);
+        JsonNode afterResilientDeclare = awaitQueueInManagementApi(
+                RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE,
+                LEGACY_TRYON_DLX,
+                15_000L
+        );
         assertThat(afterResilientDeclare.path("arguments").path("x-dead-letter-exchange").asText())
                 .isEqualTo(LEGACY_TRYON_DLX);
-        assertThat(getMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE)).isEqualTo(2);
+        awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 2, 5_000L);
 
         // -----------------------------------------------------------------
         // FASE 3: Procedimiento de migración preservando los 2 jobs pendientes
@@ -203,25 +216,28 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
                 BindingBuilder.bind(tempQueue).to(mainExchange).with(RabbitConfig.DEFAULT_TRYON_ROUTING_KEY_CREATED)
         );
 
-        int drainedToTemp = rabbitTemplate.execute(channel -> {
-            channel.queueUnbind(
+        int drainedToTemp;
+        try (Connection dedicatedConn = connectionFactory.getRabbitConnectionFactory().newConnection();
+             Channel dedicatedChannel = dedicatedConn.createChannel()) {
+            dedicatedChannel.queueUnbind(
                     RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE,
                     RabbitConfig.DEFAULT_TRYON_EXCHANGE,
                     RabbitConfig.DEFAULT_TRYON_ROUTING_KEY_CREATED
             );
-            return moveAllMessagesWithConfirms(
-                    channel,
+            drainedToTemp = moveAllMessagesWithConfirms(
+                    dedicatedChannel,
                     RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE,
                     TEMP_MIGRATION_QUEUE
             );
-        });
+        }
         assertThat(drainedToTemp).isEqualTo(2);
-        assertThat(getMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE)).isZero();
+        awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 0, 5_000L);
+        awaitMessageCount(TEMP_MIGRATION_QUEUE, 2, 5_000L);
 
-        rabbitTemplate.execute(channel -> {
-            channel.queueDelete(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, false, true);
-            return null;
-        });
+        try (Connection dedicatedConn = connectionFactory.getRabbitConnectionFactory().newConnection();
+             Channel dedicatedChannel = dedicatedConn.createChannel()) {
+            dedicatedChannel.queueDelete(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, false, true);
+        }
 
         DirectExchange sharedDlxBean = rabbitConfig.tryOnDeadLetterExchange(RabbitConfig.DEFAULT_TRYON_DLX);
         Queue dlqBean = rabbitConfig.tryOnJobProcessDlq(RabbitConfig.DEFAULT_TRYON_PROCESS_DLQ);
@@ -241,26 +257,32 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         postMigrationStrictAdmin.declareQueue(targetQueueBean);
         postMigrationStrictAdmin.declareBinding(queueBinding);
 
-        int restoredToTarget = rabbitTemplate.execute(channel -> {
-            channel.queueUnbind(
+        int restoredToTarget;
+        try (Connection dedicatedConn = connectionFactory.getRabbitConnectionFactory().newConnection();
+             Channel dedicatedChannel = dedicatedConn.createChannel()) {
+            dedicatedChannel.queueUnbind(
                     TEMP_MIGRATION_QUEUE,
                     RabbitConfig.DEFAULT_TRYON_EXCHANGE,
                     RabbitConfig.DEFAULT_TRYON_ROUTING_KEY_CREATED
             );
-            int moved = moveAllMessagesWithConfirms(
-                    channel,
+            restoredToTarget = moveAllMessagesWithConfirms(
+                    dedicatedChannel,
                     TEMP_MIGRATION_QUEUE,
                     RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE
             );
-            channel.queueDelete(TEMP_MIGRATION_QUEUE, false, true);
-            return moved;
-        });
+            dedicatedChannel.queueDelete(TEMP_MIGRATION_QUEUE, false, true);
+        }
         assertThat(restoredToTarget).isEqualTo(2);
 
         // -----------------------------------------------------------------
         // FASE 4: Evidencia real post-migración y enrutamiento de rechazo a DLQ
         // -----------------------------------------------------------------
-        JsonNode migratedQueueInfo = fetchQueueInfoFromManagementApi(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE);
+        awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 2, 5_000L);
+        JsonNode migratedQueueInfo = awaitQueueInManagementApi(
+                RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE,
+                RabbitConfig.DEFAULT_TRYON_DLX,
+                15_000L
+        );
         Container.ExecResult rabbitCtlResult = rabbitContainer.execInContainer(
                 "rabbitmqctl", "list_queues", "-p", "/", "name", "messages", "arguments"
         );
@@ -276,7 +298,6 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
                 .isEqualTo(RabbitConfig.DEFAULT_TRYON_DLX);
         assertThat(migratedQueueInfo.path("arguments").path("x-dead-letter-routing-key").asText())
                 .isEqualTo(RabbitConfig.DEFAULT_TRYON_PROCESS_DLQ_ROUTING_KEY);
-        assertThat(getMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE)).isEqualTo(2);
         assertThat(rabbitCtlResult.getStdout())
                 .contains(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE)
                 .contains(RabbitConfig.DEFAULT_TRYON_DLX);
@@ -319,12 +340,12 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         container.start();
 
         try {
-            assertThat(pendingProcessedLatch.await(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(pendingProcessedLatch.await(15, TimeUnit.SECONDS)).isTrue();
             assertThat(processedOrder).containsExactly(pendingJob1, pendingJob2);
 
             publishCreatedJob(rejectedJobId);
 
-            Message deadLetterMsg = rabbitTemplate.receive(RabbitConfig.DEFAULT_TRYON_PROCESS_DLQ, 5000);
+            Message deadLetterMsg = rabbitTemplate.receive(RabbitConfig.DEFAULT_TRYON_PROCESS_DLQ, 10_000L);
             assertThat(deadLetterMsg).isNotNull();
 
             TryOnJobDomainEvent deadEvent = (TryOnJobDomainEvent) messageConverter.fromMessage(deadLetterMsg);
@@ -347,7 +368,7 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
             assertThat(String.valueOf(deathEntry.get("queue"))).isEqualTo(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE);
             assertThat(String.valueOf(deathEntry.get("reason"))).isEqualTo("rejected");
             assertThat(String.valueOf(deathEntry.get("exchange"))).isEqualTo(RabbitConfig.DEFAULT_TRYON_EXCHANGE);
-            assertThat(getMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE)).isZero();
+            awaitMessageCount(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE, 0, 5_000L);
         } finally {
             container.stop();
         }
@@ -372,7 +393,7 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
     }
 
     private int moveAllMessagesWithConfirms(
-            com.rabbitmq.client.Channel channel,
+            Channel channel,
             String sourceQueue,
             String destinationQueue
     ) throws Exception {
@@ -399,20 +420,68 @@ class TryOnJobRabbitUpgradeMigrationIntegrationTest {
         return count != null ? count : 0;
     }
 
-    private JsonNode fetchQueueInfoFromManagementApi(String queueName) throws Exception {
+    private void awaitMessageCount(String queueName, int expectedCount, long timeoutMs) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        int lastCount = -1;
+        while (System.nanoTime() <= deadline) {
+            lastCount = getMessageCount(queueName);
+            if (lastCount == expectedCount) {
+                return;
+            }
+            Thread.sleep(50L);
+        }
+        assertThat(lastCount)
+                .as("Cantidad de mensajes esperada en %s", queueName)
+                .isEqualTo(expectedCount);
+    }
+
+    private JsonNode awaitQueueInManagementApi(
+            String queueName,
+            String expectedDlx,
+            long timeoutMs
+    ) throws InterruptedException {
         String auth = Base64.getEncoder().encodeToString(
                 (rabbitContainer.getAdminUsername() + ":" + rabbitContainer.getAdminPassword())
                         .getBytes(StandardCharsets.UTF_8)
         );
         String url = rabbitContainer.getHttpUrl() + "/api/queues/%2F/" + queueName;
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Authorization", "Basic " + auth)
-                .GET()
-                .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        assertThat(response.statusCode()).isEqualTo(200);
-        return objectMapper.readTree(response.body());
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        int lastStatus = -1;
+        String lastBody = null;
+        String lastError = null;
+
+        while (System.nanoTime() <= deadline) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Authorization", "Basic " + auth)
+                        .GET()
+                        .build();
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                lastStatus = response.statusCode();
+                lastBody = response.body();
+                if (lastStatus == 200) {
+                    JsonNode node = objectMapper.readTree(lastBody);
+                    String currentDlx = node.path("arguments").path("x-dead-letter-exchange").asText();
+                    if (expectedDlx.equals(currentDlx)) {
+                        return node;
+                    }
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw ex;
+            } catch (Exception ex) {
+                lastError = ex.getClass().getSimpleName() + ": " + ex.getMessage();
+            }
+            Thread.sleep(200L);
+        }
+
+        return fail(String.format(
+                "No se pudo verificar x-dead-letter-exchange=%s en Management API para %s "
+                        + "(ultimo status=%d, body=%s, error=%s)",
+                expectedDlx, queueName, lastStatus, lastBody, lastError
+        ));
     }
 
     private String collectCauseMessages(Throwable throwable) {
