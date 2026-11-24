@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.ExchangeBuilder;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.Queue;
@@ -90,7 +91,7 @@ class TryOnJobRabbitIntegrationTest {
         rabbitAdmin = new RabbitAdmin(connectionFactory);
 
         // Declarar topología DLX y DLQ
-        TopicExchange dlx = ExchangeBuilder.topicExchange(RabbitConfig.DEFAULT_TRYON_DLX).durable(true).build();
+        DirectExchange dlx = ExchangeBuilder.directExchange(RabbitConfig.DEFAULT_TRYON_DLX).durable(true).build();
         rabbitAdmin.declareExchange(dlx);
 
         Queue dlq = QueueBuilder.durable(RabbitConfig.DEFAULT_TRYON_PROCESS_DLQ).build();

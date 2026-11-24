@@ -299,4 +299,49 @@ class TransactionalOutboxPublisherAdapterTest {
         assertThat(entity.getRetryCount()).isEqualTo(1);
         assertThat(entity.getErrorMessage()).contains("BlobStoragePort no está disponible");
     }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Pausar el despacho Outbox retiene eventos en PENDING hasta reanudar y luego los despacha una sola vez")
+    void shouldPauseAndResumeOutboxDispatchWithoutLosingPendingEvents() throws Exception {
+        TransactionalOutboxPublisherAdapter pausableAdapter = new TransactionalOutboxPublisherAdapter(
+                outboxEventRepository,
+                tryOnEventPublisherPort,
+                objectMapper,
+                transactionTemplate,
+                blobStoragePort,
+                false
+        );
+
+        assertThat(pausableAdapter.isDispatchEnabled()).isFalse();
+
+        UUID jobId = UUID.randomUUID();
+        TryOnJobDomainEvent domainEvent = new TryOnJobDomainEvent(
+                UUID.randomUUID(), jobId, UUID.randomUUID(), UUID.randomUUID(), JobStatus.QUEUED, null, null, Instant.now()
+        );
+        String jsonPayload = objectMapper.writeValueAsString(domainEvent);
+
+        pausableAdapter.saveOutboxEvent(jobId, TryOnJobDomainEvent.ROUTING_KEY_CREATED, domainEvent);
+        ArgumentCaptor<OutboxEventJpaEntity> savedCaptor = ArgumentCaptor.forClass(OutboxEventJpaEntity.class);
+        verify(outboxEventRepository).save(savedCaptor.capture());
+        assertThat(savedCaptor.getValue().getStatus()).isEqualTo("PENDING");
+
+        pausableAdapter.publishPendingEvents();
+        verify(outboxEventRepository, never()).findClaimableEventsForUpdate(any(), any());
+        verify(tryOnEventPublisherPort, never()).publishJobEvent(any());
+
+        OutboxEventJpaEntity pendingEntity = OutboxEventJpaEntity.pending(
+                UUID.randomUUID(), "TRY_ON_JOB", jobId.toString(), TryOnJobDomainEvent.ROUTING_KEY_CREATED, jsonPayload
+        );
+        when(outboxEventRepository.findClaimableEventsForUpdate(any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(pendingEntity));
+        when(outboxEventRepository.findById(pendingEntity.getId()))
+                .thenReturn(Optional.of(pendingEntity));
+
+        pausableAdapter.setDispatchEnabled(true);
+        assertThat(pausableAdapter.isDispatchEnabled()).isTrue();
+        pausableAdapter.publishPendingEvents();
+
+        verify(tryOnEventPublisherPort, times(1)).publishJobEvent(any(TryOnJobDomainEvent.class));
+        assertThat(pendingEntity.getStatus()).isEqualTo("PUBLISHED");
+    }
 }

@@ -30,6 +30,7 @@ services:
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
       FLYWAY_ENABLED: ${FLYWAY_ENABLED:-true}
       TRYON_AMQP_LISTENERS_ENABLED: ${TRYON_AMQP_LISTENERS_ENABLED:-true}
+      OUTBOX_DISPATCH_ENABLED: ${OUTBOX_DISPATCH_ENABLED:-true}
       CATALOG_EXCHANGE: ${CATALOG_EXCHANGE:-styleradar.exchange}
       CATALOG_GARMENT_QUEUE: ${CATALOG_GARMENT_QUEUE:-styleradar.probador.prenda-publicada.q}
       CATALOG_GARMENT_ROUTING_KEY: ${CATALOG_GARMENT_ROUTING_KEY:-styleradar.catalogo.prenda.publicada}
@@ -46,7 +47,7 @@ services:
       CATALOG_GARMENT_DLQ_ROUTING_KEY: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:-styleradar.probador.dlq}
       TRYON_EXCHANGE: ${TRYON_EXCHANGE:-styleradar.exchange}
       TRYON_PROCESS_QUEUE: ${TRYON_PROCESS_QUEUE:-q.tryon.job.process}
-      TRYON_DLX: ${TRYON_DLX:-styleradar.tryon.dlx}
+      TRYON_DLX: ${TRYON_DLX:-styleradar.dlx}
       TRYON_PROCESS_DLQ: ${TRYON_PROCESS_DLQ:-q.tryon.job.process.dlq}
       JPA_DDL_AUTO: ${JPA_DDL_AUTO:-validate}
       TRYON_AI_PROVIDER: ${TRYON_AI_PROVIDER:-mock}
