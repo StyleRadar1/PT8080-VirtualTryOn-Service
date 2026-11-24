@@ -101,5 +101,5 @@ styleradar:
       catalog-garment-dlq-routing-key: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:styleradar.probador.dlq}
       exchange: ${TRYON_EXCHANGE:styleradar.exchange}
       process-queue: ${TRYON_PROCESS_QUEUE:q.tryon.job.process}
-      dlx: ${TRYON_DLX:styleradar.tryon.dlx}
+      dlx: ${TRYON_DLX:styleradar.dlx}
       process-dlq: ${TRYON_PROCESS_DLQ:q.tryon.job.process.dlq}

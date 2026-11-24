@@ -46,7 +46,7 @@ services:
       CATALOG_GARMENT_DLQ_ROUTING_KEY: ${CATALOG_GARMENT_DLQ_ROUTING_KEY:-styleradar.probador.dlq}
       TRYON_EXCHANGE: ${TRYON_EXCHANGE:-styleradar.exchange}
       TRYON_PROCESS_QUEUE: ${TRYON_PROCESS_QUEUE:-q.tryon.job.process}
-      TRYON_DLX: ${TRYON_DLX:-styleradar.tryon.dlx}
+      TRYON_DLX: ${TRYON_DLX:-styleradar.dlx}
       TRYON_PROCESS_DLQ: ${TRYON_PROCESS_DLQ:-q.tryon.job.process.dlq}
       JPA_DDL_AUTO: ${JPA_DDL_AUTO:-validate}
       TRYON_AI_PROVIDER: ${TRYON_AI_PROVIDER:-mock}

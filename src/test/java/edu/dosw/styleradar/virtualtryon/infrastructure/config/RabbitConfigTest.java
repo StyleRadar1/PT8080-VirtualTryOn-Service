@@ -14,11 +14,15 @@ import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.TopicExchange;
+import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.support.ListenerExecutionFailedException;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.retry.RetryContext;
 import org.springframework.retry.interceptor.RetryOperationsInterceptor;
 import org.springframework.retry.policy.SimpleRetryPolicy;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.UUID;
 
@@ -73,14 +77,17 @@ class RabbitConfigTest {
         assertThat(binding.getRoutingKey()).isEqualTo("test.catalog.routing.key");
 
         TopicExchange tryOnExchange = config.tryOnEventsExchange("test.tryon.events");
-        TopicExchange tryOnDlx = config.tryOnDeadLetterExchange("test.tryon.dlx");
+        DirectExchange tryOnDlx = config.tryOnDeadLetterExchange("test.tryon.dlx");
         Queue tryOnDlq = config.tryOnJobProcessDlq("test.tryon.process.dlq");
         Binding tryOnDlqBinding = config.tryOnJobProcessDlqBinding(tryOnDlq, tryOnDlx, "test.tryon.process.dead");
         Queue tryOnQueue = config.tryOnJobProcessQueue("test.tryon.process.queue", "test.tryon.dlx", "test.tryon.process.dead");
         Binding tryOnBinding = config.tryOnJobProcessBinding(tryOnQueue, tryOnExchange, "styleradar.tryon.job.created");
 
+        assertThat(RabbitConfig.DEFAULT_TRYON_DLX).isEqualTo("styleradar.dlx");
         assertThat(tryOnExchange.getName()).isEqualTo("test.tryon.events");
         assertThat(tryOnDlx.getName()).isEqualTo("test.tryon.dlx");
+        assertThat(tryOnDlx.isDurable()).isTrue();
+        assertThat(tryOnDlx.getType()).isEqualTo("direct");
         assertThat(tryOnDlq.getName()).isEqualTo("test.tryon.process.dlq");
         assertThat(tryOnDlqBinding.getDestination()).isEqualTo("test.tryon.process.dlq");
         assertThat(tryOnQueue.getName()).isEqualTo("test.tryon.process.queue");
@@ -178,5 +185,27 @@ class RabbitConfigTest {
         }
         retryPolicy.registerThrowable(transientCtx, new ListenerExecutionFailedException("wrapped", new RuntimeException("timeout")));
         assertThat(retryPolicy.canRetry(transientCtx)).isFalse();
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25: Dado RabbitConfig resiliente, Cuando se crean RabbitAdmin y ContainerFactory, Entonces ignoran errores de declaración y colas faltantes no son fatales")
+    void shouldConfigureResilientAmqpAdminAndListenerContainerFactory() {
+        RabbitConfig config = new RabbitConfig();
+        ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
+        MessageConverter converter = config.jackson2JsonMessageConverter(new ObjectMapper());
+        TryOnJobRetryRecoverer recoverer = new TryOnJobRetryRecoverer(mock(ProcessTryOnJobService.class));
+        RetryOperationsInterceptor interceptor = config.tryOnRetryInterceptor(recoverer, 4, 100L, 2.0, 1000L);
+
+        RabbitAdmin amqpAdmin = config.amqpAdmin(connectionFactory);
+        assertThat(ReflectionTestUtils.getField(amqpAdmin, "ignoreDeclarationExceptions")).isEqualTo(Boolean.TRUE);
+
+        SimpleRabbitListenerContainerFactory factory = config.rabbitListenerContainerFactory(
+                connectionFactory,
+                converter,
+                interceptor
+        );
+        assertThat(ReflectionTestUtils.getField(factory, "missingQueuesFatal")).isEqualTo(Boolean.FALSE);
+        assertThat(ReflectionTestUtils.getField(factory, "defaultRequeueRejected")).isEqualTo(Boolean.FALSE);
+        assertThat(factory.createListenerContainer()).isNotNull();
     }
 }

@@ -16,6 +16,7 @@ import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -48,7 +49,7 @@ public class RabbitConfig {
     public static final String DEFAULT_TRYON_EXCHANGE = "styleradar.exchange";
     public static final String DEFAULT_TRYON_PROCESS_QUEUE = "q.tryon.job.process";
     public static final String DEFAULT_TRYON_ROUTING_KEY_CREATED = "styleradar.tryon.job.created";
-    public static final String DEFAULT_TRYON_DLX = "styleradar.tryon.dlx";
+    public static final String DEFAULT_TRYON_DLX = "styleradar.dlx";
     public static final String DEFAULT_TRYON_PROCESS_DLQ = "q.tryon.job.process.dlq";
     public static final String DEFAULT_TRYON_PROCESS_DLQ_ROUTING_KEY = "tryon.job.process.dead";
 
@@ -102,8 +103,8 @@ public class RabbitConfig {
 
     @Bean
     public Binding catalogGarmentUpdatedDlqBinding(
-            Queue catalogGarmentUpdatedDlq,
-            DirectExchange catalogDeadLetterExchange,
+            @Qualifier("catalogGarmentUpdatedDlq") Queue catalogGarmentUpdatedDlq,
+            @Qualifier("catalogDeadLetterExchange") DirectExchange catalogDeadLetterExchange,
             @Value("${styleradar.tryon.amqp.catalog-garment-dlq-routing-key:" + DEFAULT_CATALOG_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
     ) {
         return BindingBuilder.bind(catalogGarmentUpdatedDlq).to(catalogDeadLetterExchange).with(dlqRoutingKey);
@@ -123,8 +124,8 @@ public class RabbitConfig {
 
     @Bean
     public Binding catalogGarmentUpdatedBinding(
-            Queue catalogGarmentUpdatedQueue,
-            TopicExchange catalogEventsExchange,
+            @Qualifier("catalogGarmentUpdatedQueue") Queue catalogGarmentUpdatedQueue,
+            @Qualifier("catalogEventsExchange") TopicExchange catalogEventsExchange,
             @Value("${styleradar.tryon.amqp.catalog-garment-routing-key:" + DEFAULT_CATALOG_ROUTING_KEY + "}") String routingKey
     ) {
         return BindingBuilder.bind(catalogGarmentUpdatedQueue).to(catalogEventsExchange).with(routingKey);
@@ -212,10 +213,10 @@ public class RabbitConfig {
     }
 
     @Bean
-    public TopicExchange tryOnDeadLetterExchange(
+    public DirectExchange tryOnDeadLetterExchange(
             @Value("${styleradar.tryon.amqp.dlx:" + DEFAULT_TRYON_DLX + "}") String dlxName
     ) {
-        return ExchangeBuilder.topicExchange(dlxName).durable(true).build();
+        return ExchangeBuilder.directExchange(dlxName).durable(true).build();
     }
 
     @Bean
@@ -227,8 +228,8 @@ public class RabbitConfig {
 
     @Bean
     public Binding tryOnJobProcessDlqBinding(
-            Queue tryOnJobProcessDlq,
-            TopicExchange tryOnDeadLetterExchange,
+            @Qualifier("tryOnJobProcessDlq") Queue tryOnJobProcessDlq,
+            @Qualifier("tryOnDeadLetterExchange") DirectExchange tryOnDeadLetterExchange,
             @Value("${styleradar.tryon.amqp.process-dlq-routing-key:" + DEFAULT_TRYON_PROCESS_DLQ_ROUTING_KEY + "}") String dlqRoutingKey
     ) {
         return BindingBuilder.bind(tryOnJobProcessDlq).to(tryOnDeadLetterExchange).with(dlqRoutingKey);
@@ -248,8 +249,8 @@ public class RabbitConfig {
 
     @Bean
     public Binding tryOnJobProcessBinding(
-            Queue tryOnJobProcessQueue,
-            TopicExchange tryOnEventsExchange,
+            @Qualifier("tryOnJobProcessQueue") Queue tryOnJobProcessQueue,
+            @Qualifier("tryOnEventsExchange") TopicExchange tryOnEventsExchange,
             @Value("${styleradar.tryon.amqp.created-routing-key:" + DEFAULT_TRYON_ROUTING_KEY_CREATED + "}") String routingKey
     ) {
         return BindingBuilder.bind(tryOnJobProcessQueue).to(tryOnEventsExchange).with(routingKey);
@@ -294,8 +295,8 @@ public class RabbitConfig {
 
     @Bean
     public Binding userAccountDeletedBinding(
-            Queue userAccountDeletedQueue,
-            TopicExchange userEventsExchange,
+            @Qualifier("userAccountDeletedQueue") Queue userAccountDeletedQueue,
+            @Qualifier("userEventsExchange") TopicExchange userEventsExchange,
             @Value("${styleradar.tryon.amqp.user-account-deleted-routing-key:" + DEFAULT_USER_ACCOUNT_DELETED_ROUTING_KEY + "}") String routingKey
     ) {
         return BindingBuilder.bind(userAccountDeletedQueue).to(userEventsExchange).with(routingKey);
@@ -425,6 +426,14 @@ public class RabbitConfig {
         return buildTryOnRetryInterceptor(recoverer, maxAttempts, initialInterval, multiplier, maxInterval);
     }
 
+    @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnBean(ConnectionFactory.class)
+    public RabbitAdmin amqpAdmin(ConnectionFactory connectionFactory) {
+        RabbitAdmin rabbitAdmin = new RabbitAdmin(connectionFactory);
+        rabbitAdmin.setIgnoreDeclarationExceptions(true);
+        return rabbitAdmin;
+    }
+
     @Bean(name = "rabbitListenerContainerFactory")
     @org.springframework.boot.autoconfigure.condition.ConditionalOnBean(ConnectionFactory.class)
     public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
@@ -436,6 +445,7 @@ public class RabbitConfig {
         factory.setConnectionFactory(connectionFactory);
         factory.setMessageConverter(messageConverter);
         factory.setDefaultRequeueRejected(false);
+        factory.setMissingQueuesFatal(false);
         factory.setAdviceChain(tryOnRetryInterceptor);
         return factory;
     }
