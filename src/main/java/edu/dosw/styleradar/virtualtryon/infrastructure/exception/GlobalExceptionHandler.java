@@ -1,30 +1,40 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.exception;
 
 import edu.dosw.styleradar.virtualtryon.domain.exception.AiProviderTimeoutException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.DomainException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentSizeUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
-import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.TryOnSelectionIncompleteException;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.net.URI;
 import java.time.Instant;
@@ -42,187 +52,173 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
     private static final String BASE_TYPE_URL = "https://styleradar.dosw.edu/errors/";
 
-    /**
-     * Captura BiometricPhotoNotFoundException -> HTTP 404 Not Found
-     */
     @ExceptionHandler(BiometricPhotoNotFoundException.class)
     public ProblemDetail handleBiometricPhotoNotFoundException(BiometricPhotoNotFoundException ex) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
-        problem.setTitle("Fotografía Biométrica No Encontrada");
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now().toString());
-        return problem;
+        return buildProblem(
+                HttpStatus.NOT_FOUND,
+                "Fotografía Biométrica No Encontrada",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                null
+        );
     }
 
-    /**
-     * Captura JobNotFoundException -> HTTP 404 Not Found
-     */
+    @ExceptionHandler(GarmentNotFoundException.class)
+    public ProblemDetail handleGarmentNotFoundException(GarmentNotFoundException ex) {
+        log.warn("Prenda no encontrada: {}", ex.getMessage());
+        return buildProblem(
+                HttpStatus.NOT_FOUND,
+                "Prenda No Encontrada",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "garment-not-found"
+        );
+    }
+
     @ExceptionHandler(JobNotFoundException.class)
     public ProblemDetail handleJobNotFoundException(JobNotFoundException ex) {
         log.warn("Recurso no encontrado: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
-        problem.setTitle("Trabajo de Probador Virtual No Encontrado");
-        problem.setType(URI.create(BASE_TYPE_URL + "job-not-found"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.NOT_FOUND,
+                "Trabajo de Probador Virtual No Encontrado",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "job-not-found"
+        );
     }
 
-    /**
-     * Captura QuotaExceededException -> HTTP 429 Too Many Requests
-     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ProblemDetail handleNoResourceFoundException(NoResourceFoundException ex) {
+        log.warn("Ruta o recurso HTTP no encontrado: {}", ex.getResourcePath());
+        return buildProblem(
+                HttpStatus.NOT_FOUND,
+                "Recurso No Encontrado",
+                "El recurso solicitado no existe.",
+                "RESOURCE_NOT_FOUND",
+                BASE_TYPE_URL + "not-found"
+        );
+    }
+
     @ExceptionHandler(QuotaExceededException.class)
     public ProblemDetail handleQuotaExceededException(QuotaExceededException ex) {
         log.warn("Límite de cuota excedido: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage());
-        problem.setTitle("Cuota Mensual Excedida");
-        problem.setType(URI.create(BASE_TYPE_URL + "quota-exceeded"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Cuota Mensual Excedida",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "quota-exceeded"
+        );
     }
 
-    /**
-     * Captura InvalidPhotoException -> HTTP 422 Unprocessable Entity
-     */
     @ExceptionHandler(InvalidPhotoException.class)
     public ProblemDetail handleInvalidPhotoException(InvalidPhotoException ex) {
         log.warn("Fotografía inválida: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
-        problem.setTitle("Fotografía No Procesable");
-        problem.setType(URI.create(BASE_TYPE_URL + "invalid-photo"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "Fotografía No Procesable",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "invalid-photo"
+        );
     }
 
-    /**
-     * Captura ConsentRequiredException -> HTTP 400 Bad Request
-     */
     @ExceptionHandler(ConsentRequiredException.class)
     public ProblemDetail handleConsentRequiredException(ConsentRequiredException ex) {
         log.warn("Falta consentimiento legal: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
-        problem.setTitle("Consentimiento Legal Requerido");
-        problem.setType(URI.create(BASE_TYPE_URL + "consent-required"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Consentimiento Legal Requerido",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "consent-required"
+        );
     }
 
-    /**
-     * Captura GarmentNotEligibleException -> HTTP 422 Unprocessable Entity (FA-04 · SR-RF-24)
-     */
     @ExceptionHandler(GarmentNotEligibleException.class)
     public ProblemDetail handleGarmentNotEligibleException(GarmentNotEligibleException ex) {
         log.warn("Prenda no disponible o no elegible para prueba virtual: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
-        problem.setTitle("Prenda No Elegible");
-        problem.setType(URI.create(BASE_TYPE_URL + "garment-not-eligible"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "Prenda No Elegible",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "garment-not-eligible"
+        );
     }
 
-    /**
-     * Captura TryOnSelectionIncompleteException -> HTTP 400 Bad Request (FA-01 · SR-RF-24)
-     */
     @ExceptionHandler(TryOnSelectionIncompleteException.class)
     public ProblemDetail handleTryOnSelectionIncompleteException(TryOnSelectionIncompleteException ex) {
         log.warn("Selección incompleta para prueba virtual: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
-        problem.setTitle("Selección Incompleta");
-        problem.setType(URI.create(BASE_TYPE_URL + "tryon-selection-incomplete"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Selección Incompleta",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "tryon-selection-incomplete"
+        );
     }
 
-    /**
-     * Captura GarmentSizeUnavailableException -> HTTP 400 Bad Request (RN-07 · SR-RF-24)
-     */
     @ExceptionHandler(GarmentSizeUnavailableException.class)
     public ProblemDetail handleGarmentSizeUnavailableException(GarmentSizeUnavailableException ex) {
         log.warn("Talla no disponible para la prenda: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
-        problem.setTitle("Talla No Disponible");
-        problem.setType(URI.create(BASE_TYPE_URL + "size-unavailable"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Talla No Disponible",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "size-unavailable"
+        );
     }
 
-    /**
-     * Captura InvalidGarmentException -> HTTP 400 Bad Request (SR-RF-24)
-     */
     @ExceptionHandler(InvalidGarmentException.class)
     public ProblemDetail handleInvalidGarmentException(InvalidGarmentException ex) {
         log.warn("Prenda incompatible o inválida: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
-        problem.setTitle("Prenda Incompatible para Prueba Virtual");
-        problem.setType(URI.create(BASE_TYPE_URL + "invalid-garment"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Prenda Incompatible para Prueba Virtual",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "invalid-garment"
+        );
     }
 
-    /**
-     * Captura AiProviderTimeoutException -> HTTP 504 Gateway Timeout (SR-RF-25)
-     */
     @ExceptionHandler(AiProviderTimeoutException.class)
     public ProblemDetail handleAiProviderTimeoutException(AiProviderTimeoutException ex) {
         log.warn("Timeout en motor de IA: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.GATEWAY_TIMEOUT, ex.getMessage());
-        problem.setTitle("Tiempo de Espera de IA Agotado");
-        problem.setType(URI.create(BASE_TYPE_URL + "ai-timeout"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.GATEWAY_TIMEOUT,
+                "Tiempo de Espera de IA Agotado",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "ai-timeout"
+        );
     }
 
-    /**
-     * Captura CatalogServiceUnavailableException -> HTTP 503 Service Unavailable
-     */
     @ExceptionHandler(CatalogServiceUnavailableException.class)
     public ProblemDetail handleCatalogServiceUnavailableException(CatalogServiceUnavailableException ex) {
         log.warn("Servicio de catálogo temporalmente no disponible: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
-        problem.setTitle("Servicio de Catálogo No Disponible");
-        problem.setType(URI.create(BASE_TYPE_URL + "catalog-service-unavailable"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "Servicio de Catálogo No Disponible",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "catalog-service-unavailable"
+        );
     }
 
-    /**
-     * Captura cualquier otra excepción genérica de dominio -> HTTP 400 Bad Request
-     */
     @ExceptionHandler(DomainException.class)
     public ProblemDetail handleGenericDomainException(DomainException ex) {
         log.warn("Error de regla de dominio: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
-        problem.setTitle("Regla de Negocio Incumplida");
-        problem.setType(URI.create(BASE_TYPE_URL + "domain-violation"));
-        problem.setProperty("code", ex.getErrorCode());
-        problem.setProperty("errorCode", ex.getErrorCode());
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Regla de Negocio Incumplida",
+                ex.getMessage(),
+                ex.getErrorCode(),
+                BASE_TYPE_URL + "domain-violation"
+        );
     }
 
-    /**
-     * Captura errores de validación de Bean Validation (@Valid, @NotNull, etc.) -> HTTP 400 Bad Request
-     */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ProblemDetail handleValidationException(MethodArgumentNotValidException ex) {
         log.warn("Error de validación en parámetros de entrada");
@@ -231,97 +227,199 @@ public class GlobalExceptionHandler {
             fieldErrors.put(fieldError.getField(), fieldError.getDefaultMessage());
         }
 
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+        ProblemDetail problem = buildProblem(
                 HttpStatus.BAD_REQUEST,
-                "Uno o más campos de la petición no cumplen con las validaciones requeridas."
+                "Error de Validación de Entrada",
+                "Uno o más campos de la petición no cumplen con las validaciones requeridas.",
+                "VALIDATION_FAILED",
+                BASE_TYPE_URL + "validation-error"
         );
-        problem.setTitle("Error de Validación de Entrada");
-        problem.setType(URI.create(BASE_TYPE_URL + "validation-error"));
-        problem.setProperty("code", "VALIDATION_FAILED");
-        problem.setProperty("errorCode", "VALIDATION_FAILED");
         problem.setProperty("errors", fieldErrors);
-        problem.setProperty("timestamp", Instant.now());
         return problem;
     }
 
-    /**
-     * Captura ausencia de partes multipart o parámetros obligatorios -> HTTP 400 Bad Request (SR-RF-23)
-     */
-    @ExceptionHandler({MissingServletRequestPartException.class, MissingServletRequestParameterException.class})
-    public ProblemDetail handleMissingMultipartOrParamException(Exception ex) {
-        log.warn("Falta parte multipart o parámetro requerido: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
-        problem.setTitle("Parámetro o Archivo Multipart Faltante");
-        problem.setType(URI.create(BASE_TYPE_URL + "missing-request-part"));
-        problem.setProperty("code", "MISSING_REQUEST_PART");
-        problem.setProperty("errorCode", "MISSING_REQUEST_PART");
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ProblemDetail handleMethodArgumentTypeMismatchException(MethodArgumentTypeMismatchException ex) {
+        String paramName = (ex.getName() != null && !ex.getName().isBlank()) ? ex.getName() : "parámetro";
+        log.warn("Parámetro '{}' con formato inválido: {}", paramName, ex.getMessage());
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Parámetro de Entrada Inválido",
+                "El parámetro '" + paramName + "' tiene un formato inválido.",
+                "INVALID_PARAMETER",
+                BASE_TYPE_URL + "invalid-parameter"
+        );
     }
 
-    /**
-     * Captura archivos multipart que exceden el límite del contenedor -> HTTP 413 Payload Too Large (SR-RF-23)
-     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ProblemDetail handleIllegalArgumentException(IllegalArgumentException ex) {
+        log.warn("Argumento inválido en solicitud: {}", ex.getMessage());
+        String detail = sanitizeClientMessage(
+                ex.getMessage(),
+                "Uno de los parámetros enviados tiene un formato inválido."
+        );
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Solicitud Inválida",
+                detail,
+                "BAD_REQUEST",
+                BASE_TYPE_URL + "bad-request"
+        );
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ProblemDetail handleHttpMessageNotReadableException(HttpMessageNotReadableException ex) {
+        log.warn("Cuerpo JSON malformado o no legible: {}", ex.getMessage());
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Cuerpo de Solicitud Inválido",
+                "El cuerpo de la solicitud JSON está malformado o contiene tipos inválidos.",
+                "MALFORMED_REQUEST_BODY",
+                BASE_TYPE_URL + "malformed-request-body"
+        );
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ProblemDetail handleHttpRequestMethodNotSupportedException(HttpRequestMethodNotSupportedException ex) {
+        log.warn("Método HTTP no soportado: {}", ex.getMethod());
+        String method = ex.getMethod() != null ? ex.getMethod() : "";
+        return buildProblem(
+                HttpStatus.METHOD_NOT_ALLOWED,
+                "Método HTTP No Permitido",
+                "El método HTTP '" + method + "' no está soportado para este recurso.",
+                "METHOD_NOT_ALLOWED",
+                BASE_TYPE_URL + "method-not-allowed"
+        );
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ProblemDetail handleHttpMediaTypeNotSupportedException(HttpMediaTypeNotSupportedException ex) {
+        log.warn("Tipo de contenido no soportado: {}", ex.getContentType());
+        return buildProblem(
+                HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                "Tipo de Contenido No Soportado",
+                "El tipo de contenido enviado no es compatible con este recurso.",
+                "UNSUPPORTED_MEDIA_TYPE",
+                BASE_TYPE_URL + "unsupported-media-type"
+        );
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ProblemDetail handleMissingServletRequestPartException(MissingServletRequestPartException ex) {
+        log.warn("Falta parte multipart requerida: {}", ex.getRequestPartName());
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Parámetro o Archivo Multipart Faltante",
+                "Falta la parte requerida '" + ex.getRequestPartName() + "' en la solicitud.",
+                "MISSING_REQUEST_PART",
+                BASE_TYPE_URL + "missing-request-part"
+        );
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ProblemDetail handleMissingServletRequestParameterException(MissingServletRequestParameterException ex) {
+        log.warn("Falta parámetro requerido: {}", ex.getParameterName());
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Parámetro o Archivo Multipart Faltante",
+                "Falta el parámetro requerido '" + ex.getParameterName() + "' en la solicitud.",
+                "MISSING_REQUEST_PART",
+                BASE_TYPE_URL + "missing-request-part"
+        );
+    }
+
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ProblemDetail handleMaxUploadSizeExceededException(MaxUploadSizeExceededException ex) {
         log.warn("Archivo cargado excede el tamaño máximo permitido: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+        return buildProblem(
                 HttpStatus.PAYLOAD_TOO_LARGE,
-                "La fotografía supera el límite máximo permitido de 5 MB."
+                "Archivo Demasiado Grande",
+                "La fotografía supera el límite máximo permitido de 5 MB.",
+                "PAYLOAD_TOO_LARGE",
+                BASE_TYPE_URL + "payload-too-large"
         );
-        problem.setTitle("Archivo Demasiado Grande");
-        problem.setType(URI.create(BASE_TYPE_URL + "payload-too-large"));
-        problem.setProperty("code", "PAYLOAD_TOO_LARGE");
-        problem.setProperty("errorCode", "PAYLOAD_TOO_LARGE");
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
     }
 
-    /**
-     * Captura fallos de autenticación (401 Unauthorized) en endpoints protegidos (SR-RF-23)
-     */
+    @ExceptionHandler(MultipartException.class)
+    public ProblemDetail handleMultipartException(MultipartException ex) {
+        log.warn("Solicitud multipart inválida o incompleta: {}", ex.getMessage());
+        return buildProblem(
+                HttpStatus.BAD_REQUEST,
+                "Solicitud Multipart Inválida",
+                "La solicitud multipart está incompleta o tiene un formato inválido.",
+                "INVALID_MULTIPART_REQUEST",
+                BASE_TYPE_URL + "invalid-multipart-request"
+        );
+    }
+
     @ExceptionHandler(AuthenticationException.class)
     public ProblemDetail handleAuthenticationException(AuthenticationException ex) {
         log.warn("Fallo de autenticación en solicitud: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());
-        problem.setTitle("Autenticación Requerida o Inválida");
-        problem.setType(URI.create(BASE_TYPE_URL + "unauthorized"));
-        problem.setProperty("code", "UNAUTHORIZED");
-        problem.setProperty("errorCode", "UNAUTHORIZED");
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.UNAUTHORIZED,
+                "Autenticación Requerida o Inválida",
+                ex.getMessage(),
+                "UNAUTHORIZED",
+                BASE_TYPE_URL + "unauthorized"
+        );
     }
 
-    /**
-     * Captura accesos denegados por rol o titularidad de datos biométricos y probador virtual (403 Forbidden) (SR-RF-23, SR-RF-26)
-     */
-    @ExceptionHandler({AccessDeniedException.class, edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException.class})
+    @ExceptionHandler({AccessDeniedException.class, JobAccessDeniedException.class})
     public ProblemDetail handleAccessDeniedException(Exception ex) {
         log.warn("Acceso denegado a recurso biométrico o probador virtual: {}", ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
-        problem.setTitle("Acceso Denegado");
-        problem.setType(URI.create(BASE_TYPE_URL + "forbidden"));
-        problem.setProperty("code", "FORBIDDEN");
-        problem.setProperty("errorCode", "FORBIDDEN");
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
+        return buildProblem(
+                HttpStatus.FORBIDDEN,
+                "Acceso Denegado",
+                ex.getMessage(),
+                "FORBIDDEN",
+                BASE_TYPE_URL + "forbidden"
+        );
     }
 
-    /**
-     * Fallback para cualquier excepción no controlada -> HTTP 500 Internal Server Error
-     */
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleUncaughtException(Exception ex) {
         log.error("Error no controlado en el servidor: ", ex);
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+        return buildProblem(
                 HttpStatus.INTERNAL_SERVER_ERROR,
-                "Ha ocurrido un error interno en el servidor. Por favor, contacte al soporte de StyleRadar."
+                "Error Interno del Servidor",
+                "Ha ocurrido un error interno en el servidor. Por favor, contacte al soporte de StyleRadar.",
+                "INTERNAL_SERVER_ERROR",
+                BASE_TYPE_URL + "internal-server-error"
         );
-        problem.setTitle("Error Interno del Servidor");
-        problem.setType(URI.create(BASE_TYPE_URL + "internal-server-error"));
-        problem.setProperty("code", "INTERNAL_SERVER_ERROR");
-        problem.setProperty("errorCode", "INTERNAL_SERVER_ERROR");
-        problem.setProperty("timestamp", Instant.now());
+    }
+
+    private ProblemDetail buildProblem(
+            HttpStatus status,
+            String title,
+            String detail,
+            String errorCode,
+            String typeUri
+    ) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
+        problem.setTitle(title);
+        if (typeUri != null) {
+            problem.setType(URI.create(typeUri));
+        }
+        problem.setProperty("code", errorCode);
+        problem.setProperty("errorCode", errorCode);
+        problem.setProperty("timestamp", Instant.now().toString());
+        String correlationId = MDC.get(CorrelationIdFilter.CORRELATION_ID_MDC_KEY);
+        if (correlationId != null && !correlationId.isBlank()) {
+            problem.setProperty("correlationId", correlationId);
+        }
         return problem;
+    }
+
+    private static String sanitizeClientMessage(String rawMessage, String fallback) {
+        if (rawMessage == null || rawMessage.isBlank()) {
+            return fallback;
+        }
+        if (rawMessage.contains("Invalid UUID string")
+                || rawMessage.contains("java.")
+                || rawMessage.contains("org.springframework")
+                || rawMessage.contains("No enum constant")) {
+            return fallback;
+        }
+        return rawMessage;
     }
 }

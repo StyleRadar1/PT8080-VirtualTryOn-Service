@@ -7,6 +7,7 @@ import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobServic
 import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentSizeUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
@@ -401,7 +402,7 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
-    @DisplayName("HU SR-RF-24: Dada prenda inexistente o cuota agotada, Cuando se envía GET /api/v1/try-on/garments/{garmentId}/validate, Entonces responde 400 Bad Request o 429 Too Many Requests con ProblemDetail")
+    @DisplayName("HU SR-RF-24: Dada prenda inexistente (404), formato inválido (400) o cuota agotada (429), Cuando se envía GET /api/v1/try-on/garments/{garmentId}/validate, Entonces responde con el código HTTP correspondiente")
     void testValidateGarmentForTryOnFailures() throws Exception {
         UUID userId = UUID.randomUUID();
         UUID missingGarmentId = UUID.randomUUID();
@@ -409,12 +410,20 @@ class VirtualTryOnRestControllerTest {
 
         when(queryTryOnJobsService.validateGarmentEligibility(
                 eq(UserId.of(userId)), eq(GarmentId.of(missingGarmentId)), eq("M"), any()))
-                .thenThrow(new InvalidGarmentException(missingGarmentId, "La prenda no existe en el catálogo"));
+                .thenThrow(new GarmentNotFoundException(missingGarmentId));
         when(queryTryOnJobsService.validateGarmentEligibility(
                 eq(UserId.of(userId)), eq(GarmentId.of(quotaExhaustedGarmentId)), eq("M"), any()))
                 .thenThrow(new QuotaExceededException(userId, 10, 10));
 
         mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", missingGarmentId)
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .param("userId", userId.toString())
+                        .param("selectedSize", "M"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode", is("GARMENT_NOT_FOUND")))
+                .andExpect(jsonPath("$.code", is("GARMENT_NOT_FOUND")));
+
+        mockMvc.perform(get("/api/v1/try-on/garments/{garmentId}/validate", "   ")
                         .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
                         .param("userId", userId.toString())
                         .param("selectedSize", "M"))

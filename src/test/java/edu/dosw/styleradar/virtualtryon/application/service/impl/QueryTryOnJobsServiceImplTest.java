@@ -5,6 +5,7 @@ import edu.dosw.styleradar.virtualtryon.application.dto.event.UserSubscriptionPl
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentSizeUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
@@ -495,7 +496,7 @@ class QueryTryOnJobsServiceImplTest {
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
 
         when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.empty());
-        assertThrows(InvalidGarmentException.class,
+        assertThrows(GarmentNotFoundException.class,
                 () -> queryTryOnJobsService.validateGarmentEligibility(userId, garmentId, "M", List.of()));
 
         CatalogGarmentJpaEntity garmentEntity = new CatalogGarmentJpaEntity(
@@ -2048,7 +2049,7 @@ class QueryTryOnJobsServiceImplTest {
 
         when(catalogGarmentJpaRepository.findById(missingRemoteId.value())).thenReturn(Optional.empty());
         when(lookupPort.findGarmentById(missingRemoteId)).thenReturn(Optional.empty());
-        assertThrows(InvalidGarmentException.class,
+        assertThrows(GarmentNotFoundException.class,
                 () -> serviceWithLookup.validateGarmentEligibility(userId, missingRemoteId, "M", List.of()));
 
         GarmentId unavailableRemoteId = GarmentId.of(UUID.randomUUID());

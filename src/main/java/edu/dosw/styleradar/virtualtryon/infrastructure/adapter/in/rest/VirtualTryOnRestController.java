@@ -8,6 +8,7 @@ import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMap
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
+import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.TryOnSelectionIncompleteException;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
@@ -173,7 +174,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
         UUID targetUserId = resolveAndVerifyCallerUserId(userId);
         UUID garmentUuid = GarmentId.parseToUuid(garmentId);
         if (garmentUuid == null) {
-            throw new IllegalArgumentException("El identificador de la prenda no es válido: " + garmentId);
+            throw new InvalidGarmentException("El identificador de la prenda no es válido");
         }
         List<GarmentId> selectedGarments = (selectedGarmentIds == null || selectedGarmentIds.isEmpty())
                 ? List.of()

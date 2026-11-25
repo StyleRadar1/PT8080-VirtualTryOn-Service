@@ -34,7 +34,7 @@ public record UserSubscriptionPlanEvent(
             @JsonProperty("subscriberType") @JsonAlias({"tipoSuscriptor"}) String subscriberType,
             @JsonProperty("planId") @JsonAlias({"plan"}) Object rawPlanId,
             @JsonProperty("status") @JsonAlias({"estado"}) String status,
-            @JsonProperty("timestamp") @JsonAlias({"occurredAt", "fechaEvento"}) Object rawTimestamp
+            @JsonProperty("timestamp") @JsonAlias({"occurredAt", "fechaEvento", "updatedAt", "fecha", "eventDate"}) Object rawTimestamp
     ) {
         Object resolvedUserId = firstNonNull(
                 rawUserId,
@@ -54,14 +54,14 @@ public record UserSubscriptionPlanEvent(
         );
         Object resolvedTimestamp = firstNonNull(
                 rawTimestamp,
-                data != null ? firstPresent(data, "timestamp", "occurredAt", "fechaEvento") : null
+                data != null ? firstPresent(data, "timestamp", "occurredAt", "fechaEvento", "updatedAt", "fecha", "eventDate") : null
         );
 
         UUID parsedUserId = UserId.parseToUuid(resolvedUserId);
         Long parsedPlanId = parsePlanId(resolvedPlan);
         Instant parsedTimestamp = resolvedTimestamp != null
                 ? CatalogGarmentUpdatedEvent.parseFlexibleInstant(resolvedTimestamp)
-                : null;
+                : Instant.now();
 
         return new UserSubscriptionPlanEvent(
                 parsedUserId,

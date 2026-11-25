@@ -36,7 +36,7 @@ public class CatalogGarment {
         }
         this.name = name.trim();
         this.category = Objects.requireNonNull(category, "La categoría de la prenda no puede ser nula");
-        this.imageUrl = (imageUrl == null || imageUrl.isBlank()) ? null : imageUrl.trim();
+        this.imageUrl = sanitizeImageUrl(imageUrl);
         this.visible = visible;
         this.updatedAt = Objects.requireNonNull(updatedAt, "La fecha de actualización no puede ser nula");
         this.availableSizes = availableSizes != null ? Set.copyOf(availableSizes) : Set.of();
@@ -51,6 +51,13 @@ public class CatalogGarment {
             Instant updatedAt
     ) {
         this(garmentId, name, category, imageUrl, visible, updatedAt, Set.of());
+    }
+
+    public static String sanitizeImageUrl(String rawUrl) {
+        if (rawUrl == null || rawUrl.isBlank()) {
+            return null;
+        }
+        return rawUrl.trim().replace(" ", "%20");
     }
 
     public boolean hasValidImage() {

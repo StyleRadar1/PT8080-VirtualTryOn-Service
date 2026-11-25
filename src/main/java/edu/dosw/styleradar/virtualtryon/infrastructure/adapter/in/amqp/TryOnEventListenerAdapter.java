@@ -219,7 +219,7 @@ public class TryOnEventListenerAdapter {
                 GarmentId.of(event.garmentId()),
                 event.name(),
                 category,
-                event.imageUrl(),
+                CatalogGarment.sanitizeImageUrl(event.imageUrl()),
                 visible,
                 updatedAt,
                 event.availableSizes()

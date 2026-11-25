@@ -441,5 +441,34 @@ class UserIdAndContractsIntegrationTest {
                 """, UserSubscriptionPlanEvent.class);
         assertTrue(flatStoreByName.isStoreSubscription());
         assertFalse(flatStoreByName.isRadarPlusSubscription());
+        assertNotNull(flatStoreByName.occurredAt(), "Cuando falta timestamp en JSON debe usar fallback Instant.now()");
+
+        UserSubscriptionPlanEvent updatedAtEvent = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","updatedAt":"2026-11-22T10:00:00Z"}
+                """, UserSubscriptionPlanEvent.class);
+        assertEquals(Instant.parse("2026-11-22T10:00:00Z"), updatedAtEvent.occurredAt());
+
+        UserSubscriptionPlanEvent fechaEvent = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","data":{"fecha":"2026-11-22T11:00:00Z"}}
+                """, UserSubscriptionPlanEvent.class);
+        assertEquals(Instant.parse("2026-11-22T11:00:00Z"), fechaEvent.occurredAt());
+
+        UserSubscriptionPlanEvent eventDateEvent = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","eventDate":"2026-11-22T12:00:00Z"}
+                """, UserSubscriptionPlanEvent.class);
+        assertEquals(Instant.parse("2026-11-22T12:00:00Z"), eventDateEvent.occurredAt());
+    }
+
+    @Test
+    @DisplayName("BUG-019: CatalogGarment.sanitizeImageUrl normaliza espacios a %20 y recorta extremos")
+    void shouldSanitizeCatalogGarmentImageUrls() {
+        assertEquals(
+                "https://styleradar.blob.core.windows.net/catalog/camisa%20azul%20claro.png",
+                edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment.sanitizeImageUrl(
+                        "  https://styleradar.blob.core.windows.net/catalog/camisa azul claro.png  "
+                )
+        );
+        assertNull(edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment.sanitizeImageUrl("   "));
+        assertNull(edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment.sanitizeImageUrl(null));
     }
 }

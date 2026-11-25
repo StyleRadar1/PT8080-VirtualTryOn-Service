@@ -74,7 +74,7 @@ public class CatalogGarmentRestAdapter implements CatalogGarmentLookupPort {
                 return Optional.empty();
             }
 
-            String resolvedImageUrl = resolvePrimaryImageUrl(dto);
+            String resolvedImageUrl = CatalogGarment.sanitizeImageUrl(resolvePrimaryImageUrl(dto));
             CatalogGarmentUpdatedEvent normalized = CatalogGarmentUpdatedEvent.fromJson(
                     dto.id() != null ? dto.id() : garmentId.value(),
                     dto.nombre(),
@@ -139,11 +139,11 @@ public class CatalogGarmentRestAdapter implements CatalogGarmentLookupPort {
         if (dto.fotografias() != null) {
             for (String candidate : dto.fotografias()) {
                 if (candidate != null && !candidate.isBlank()) {
-                    return candidate.trim();
+                    return CatalogGarment.sanitizeImageUrl(candidate);
                 }
             }
         }
-        return (dto.imageUrl() == null || dto.imageUrl().isBlank()) ? null : dto.imageUrl().trim();
+        return CatalogGarment.sanitizeImageUrl(dto.imageUrl());
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
