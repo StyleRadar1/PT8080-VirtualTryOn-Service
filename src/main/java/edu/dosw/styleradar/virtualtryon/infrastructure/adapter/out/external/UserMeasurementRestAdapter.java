@@ -24,7 +24,7 @@ import java.util.Optional;
 
 /**
  * Adaptador de salida REST que consulta las medidas corporales autorizadas del usuario
- * en ms-usuarios (por defecto {@code GET /api/v1/internal/usuarios/{userId}/medidas})
+ * en ms-usuarios (por defecto {@code GET /api/v1/internal/users/{userId}/measurements})
  * para la evaluación de talla (SR-RF-24).
  * Autentica preferentemente mediante HTTP Basic Auth ({@code USUARIOS_INTERNAL_AUTH_USERNAME} y
  * {@code USUARIOS_INTERNAL_AUTH_PASSWORD}) o, en ausencia de credenciales internas, reenvía el
@@ -36,7 +36,7 @@ import java.util.Optional;
 public class UserMeasurementRestAdapter implements UserMeasurementPort {
 
     private static final Logger log = LoggerFactory.getLogger(UserMeasurementRestAdapter.class);
-    public static final String DEFAULT_MEASUREMENTS_PATH = "/api/v1/internal/usuarios/{userId}/medidas";
+    public static final String DEFAULT_MEASUREMENTS_PATH = "/api/v1/internal/users/{userId}/measurements";
 
     private final RestClient restClient;
     private final String baseUrl;

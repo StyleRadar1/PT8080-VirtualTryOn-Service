@@ -20,10 +20,10 @@ El proyecto exige una cobertura de código mínima del **85%** verificada autom�
 
 ### Métricas Actuales de Cobertura en el Repositorio
 
-* **Pruebas Totales Ejecutadas:** **288 pruebas automatizadas** (unitarias de dominio, servicios de aplicación, adaptadores JPA/Redis/RabbitMQ/Azure Blob Storage/FASHN AI y pruebas de contrato MockMvc con seguridad JWT real).
-* **Fallos y Errores:** 0 fallos, 0 errores.
-* **Cobertura de Líneas en Código Nuevo:** **98.68%** (89/89 líneas, 60/62 ramas en SonarCloud Quality Gate A).
-* **Cobertura General de Líneas:** **≥ 92%** (supera con holgura el umbral mínimo del 85%).
+* **Pruebas Totales en el Repositorio:** **369 pruebas automatizadas** (360 ejecutadas con `BUILD SUCCESS` en entorno local sin Docker + 9 pruebas basadas en Docker/Testcontainers que corren en el pipeline de GitHub Actions; unitarias de dominio, servicios de aplicación, adaptadores REST/JPA/Redis/RabbitMQ/Azure Blob Storage/FASHN AI y pruebas de contrato MockMvc con seguridad JWT real).
+* **Fallos y Errores en Ejecución Local (sin Docker):** 0 fallos, 0 errores (`-Dtest=!UserQuotaConcurrencyIntegrationTest`).
+* **Cobertura JaCoCo Verificada Localmente:** **93.37%** en líneas (`4099/4390`), **94.46%** en instrucciones (`18052/19111`) y **82.8%** en ramas (`1589/1919`), superando los umbrales exigidos ($\ge 85\%$ líneas).
+* **Última Ejecución Verificada en GitHub Actions (`develop`):** [CI Pipeline #45519168166](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/runs/45519168166) (`completed / success` — [Historial completo de Actions](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci.yml)).
 * **Documentación de Seguridad y OWASP Top 10:2025:** [`../security/SR_PT8080_Seguridad_y_OWASP_2025.md`](../security/SR_PT8080_Seguridad_y_OWASP_2025.md).
 * **Resultado del Build:** `BUILD SUCCESS`.
 

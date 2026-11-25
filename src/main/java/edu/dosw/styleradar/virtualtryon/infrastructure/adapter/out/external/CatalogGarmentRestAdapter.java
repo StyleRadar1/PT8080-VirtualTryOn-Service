@@ -28,7 +28,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Adaptador REST de respaldo hacia ms-item-catalogo ({@code GET /api/v1/prendas/{garmentId}})
+ * Adaptador REST de respaldo hacia ms-item-catalogo ({@code GET /api/v1/garments/{garmentId}})
  * para hidratar prendas publicadas previamente que aún no estén en {@code catalog_garments}.
  */
 @Component
@@ -65,7 +65,7 @@ public class CatalogGarmentRestAdapter implements CatalogGarmentLookupPort {
         }
         try {
             CatalogGarmentDto dto = restClient.get()
-                    .uri("/api/v1/prendas/{garmentId}", garmentId.value())
+                    .uri("/api/v1/garments/{garmentId}", garmentId.value())
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
                     .body(CatalogGarmentDto.class);
