@@ -282,7 +282,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ProblemDetail handleHttpRequestMethodNotSupportedException(HttpRequestMethodNotSupportedException ex) {
         log.warn("Método HTTP no soportado: {}", ex.getMethod());
-        String method = ex.getMethod() != null ? ex.getMethod() : "";
+        String method = ex.getMethod();
         return buildProblem(
                 HttpStatus.METHOD_NOT_ALLOWED,
                 "Método HTTP No Permitido",
