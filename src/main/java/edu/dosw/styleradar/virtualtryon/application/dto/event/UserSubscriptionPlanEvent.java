@@ -61,7 +61,7 @@ public record UserSubscriptionPlanEvent(
         Long parsedPlanId = parsePlanId(resolvedPlan);
         Instant parsedTimestamp = resolvedTimestamp != null
                 ? CatalogGarmentUpdatedEvent.parseFlexibleInstant(resolvedTimestamp)
-                : Instant.now();
+                : null;
 
         return new UserSubscriptionPlanEvent(
                 parsedUserId,

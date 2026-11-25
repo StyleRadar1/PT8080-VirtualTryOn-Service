@@ -93,3 +93,16 @@
 10. [Ramas y cómo contribuir](docs/secciones/10-ramas-y-como-contribuir.md)
 11. [Seguridad, Habeas Data y análisis OWASP Top 10](docs/secciones/11-seguridad-y-owasp.md)
 12. [Equipo, responsables y enlace a la épica en Jira](docs/secciones/12-equipo-responsables-y-epica-jira.md)
+
+---
+
+## 13. REMEDIACIÓN Y AUDITORÍA TÉCNICA (PR #28 - FEEDBACK LÍDER TÉCNICO)
+
+En atención a la revisión técnica del líder de equipo sobre el PR #28, se consolidaron los siguientes ajustes rigurosos de arquitectura y contratos:
+
+* **BUG-032 (Retorno 404 en Fallos de Existencia de Prenda):** Unificación estricta del manejo de errores cuando una prenda no existe en el catálogo. Tanto el endpoint de validación (`GET /api/v1/try-on/garments/{garmentId}/validate`) como el de creación de trabajos (`POST /api/v1/try-on/jobs`) lanzan `GarmentNotFoundException` mapeada a HTTP 404 con código de error RFC 7807 `GARMENT_NOT_FOUND`.
+* **BUG-009 (Diferenciación de Identificadores Malformados vs. Inexistentes):** Refactorización de `GarmentId.parseToUuid`. Cualquier cadena malformada o no conforme (ej. cadenas arbitrarias de texto) retorna `null` y genera HTTP 400 Bad Request (`INVALID_GARMENT`), diferenciándose limpiamente de un UUID sintácticamente válido pero no registrado en la base de datos (HTTP 404). Se mantienen de forma determinista los formatos históricos numéricos (`1001` y `styleradar-garment-1001`).
+* **BUG-019 (Sanitización Específica de URL de Imágenes y Migración V11):** Corrección definitiva de la URL corrupta del inventario maestro `JUANNICOLASA%20Frontend-Style-Radar` $\rightarrow$ `JUANNICOLASA/Frontend-Style-Radar` tanto en el modelo de dominio `CatalogGarment.sanitizeImageUrl` como en el script de migración SQL Flyway `V11__sanitize_catalog_garment_image_urls.sql`, además de normalizar espacios a `%20`.
+* **RabbitMQ e Idempotencia de Cuotas (Timestamp Versioning):** En `UserSubscriptionPlanEvent`, se preserva `timestamp == null` cuando el mensaje externo carece de fecha de ocurrencia. El servicio `QueryTryOnJobsServiceImpl` descarta eventos no versionados o desactualizados sin alterar el plan activo (`Radar+` o cuotas vigentes), protegiendo contra reentregas o mensajes desordenados.
+* **BUG-031 (Trazabilidad y Observabilidad Saliente):** Inclusión de interceptores `ClientHttpRequestInterceptor` en `CatalogGarmentRestAdapter` y `CatalogGarmentMeasurementRestAdapter` para propagar automáticamente `X-Correlation-Id` y `X-Request-Id` desde el `MDC` hacia los microservicios externos (`ms-item-catalogo`).
+* **Observabilidad Transversal Pendiente:** Se documenta a nivel de arquitectura la necesidad de articular de forma homogénea en los 14 servicios los exportadores OTLP (OpenTelemetry Collector), agregador de logs distribuido (Loki/Elasticsearch) y la recopilación de métricas de latencia de inferencia en el API Gateway.

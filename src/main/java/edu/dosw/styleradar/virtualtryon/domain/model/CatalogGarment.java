@@ -57,7 +57,11 @@ public class CatalogGarment {
         if (rawUrl == null || rawUrl.isBlank()) {
             return null;
         }
-        return rawUrl.trim().replace(" ", "%20");
+        String sanitized = rawUrl.trim();
+        // BUG-019: Corregir URL corrupta específica del inventario maestro (espacio codificado como %20 en lugar de /)
+        sanitized = sanitized.replace("JUANNICOLASA%20Frontend-Style-Radar", "JUANNICOLASA/Frontend-Style-Radar")
+                             .replace("JUANNICOLASA Frontend-Style-Radar", "JUANNICOLASA/Frontend-Style-Radar");
+        return sanitized.replace(" ", "%20");
     }
 
     public boolean hasValidImage() {

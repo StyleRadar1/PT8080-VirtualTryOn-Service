@@ -250,4 +250,33 @@ class GarmentValidationModelAndDtoTest {
                 List.of()
         ));
     }
+
+    @Test
+    @DisplayName("BUG-019: CatalogGarment.sanitizeImageUrl corrige URL corrupta específica JUANNICOLASA y normaliza espacios")
+    void shouldSanitizeCorruptJuanNicolasaUrlAndSpaces() {
+        // Caso 1: URL específica corrupta con %20 en lugar de separador de ruta /
+        String corruptUrl1 = "https://raw.githubusercontent.com/JUANNICOLASA%20Frontend-Style-Radar/main/assets/img.png";
+        String fixed1 = CatalogGarment.sanitizeImageUrl(corruptUrl1);
+        assertEquals("https://raw.githubusercontent.com/JUANNICOLASA/Frontend-Style-Radar/main/assets/img.png", fixed1);
+
+        // Caso 2: URL con espacio literal en JUANNICOLASA Frontend-Style-Radar
+        String corruptUrl2 = "https://raw.githubusercontent.com/JUANNICOLASA Frontend-Style-Radar/main/assets/img.png";
+        String fixed2 = CatalogGarment.sanitizeImageUrl(corruptUrl2);
+        assertEquals("https://raw.githubusercontent.com/JUANNICOLASA/Frontend-Style-Radar/main/assets/img.png", fixed2);
+
+        // Caso 3: URL normal con espacios en el nombre del archivo
+        String urlWithSpaces = "https://cdn.styleradar.co/prendas/camiseta azul marino.png";
+        String fixed3 = CatalogGarment.sanitizeImageUrl(urlWithSpaces);
+        assertEquals("https://cdn.styleradar.co/prendas/camiseta%20azul%20marino.png", fixed3);
+
+        // Caso 4: URL corrupta y además con espacios en el archivo
+        String mixedUrl = "https://raw.githubusercontent.com/JUANNICOLASA%20Frontend-Style-Radar/main/vestido rojo.png";
+        String fixed4 = CatalogGarment.sanitizeImageUrl(mixedUrl);
+        assertEquals("https://raw.githubusercontent.com/JUANNICOLASA/Frontend-Style-Radar/main/vestido%20rojo.png", fixed4);
+
+        // Casos nulos o vacíos
+        assertNull(CatalogGarment.sanitizeImageUrl(null));
+        assertNull(CatalogGarment.sanitizeImageUrl("   "));
+        assertNull(CatalogGarment.sanitizeImageUrl(""));
+    }
 }

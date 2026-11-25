@@ -157,4 +157,44 @@ class CatalogGarmentRestAdapterTest {
         assertThrows(CatalogServiceUnavailableException.class, () -> adapter.findGarmentById(timeoutId));
         server.verify();
     }
+
+    @Test
+    @DisplayName("BUG-031: Propaga X-Correlation-Id y X-Request-Id desde MDC hacia ms-catalogo en llamadas REST salientes")
+    void shouldPropagateCorrelationIdAndRequestIdHeaders() {
+        RestClient.Builder builder = RestClient.builder()
+                .baseUrl("http://localhost:8220")
+                .requestInterceptor(CatalogGarmentRestAdapter.createTracingInterceptor());
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        CatalogGarmentRestAdapter adapter = new CatalogGarmentRestAdapter(builder.build(), "http://localhost:8220");
+
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        String jsonResponse = """
+                {
+                    "id": "%s",
+                    "nombre": "Vestido con Trazabilidad",
+                    "tipo": "Vestido",
+                    "fotografias": ["https://cdn.styleradar.co/vestido.jpg"],
+                    "estado": "APROBADA",
+                    "disponible": true
+                }
+                """.formatted(garmentId.value());
+
+        org.slf4j.MDC.put(edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter.CORRELATION_ID_MDC_KEY, "corr-test-123");
+        org.slf4j.MDC.put(edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter.REQUEST_ID_MDC_KEY, "req-test-456");
+
+        try {
+            server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentId.value()))
+                    .andExpect(method(HttpMethod.GET))
+                    .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.header("X-Correlation-Id", "corr-test-123"))
+                    .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.header("X-Request-Id", "req-test-456"))
+                    .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
+
+            Optional<CatalogGarment> result = adapter.findGarmentById(garmentId);
+
+            server.verify();
+            assertTrue(result.isPresent());
+        } finally {
+            org.slf4j.MDC.clear();
+        }
+    }
 }

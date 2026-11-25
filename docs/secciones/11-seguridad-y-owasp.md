@@ -28,6 +28,14 @@ El microservicio `PT8080-VirtualTryOn-Service` implementa las directrices oficia
    * Cliente HTTP hacia FASHN AI protegido con timeouts acotados y Circuit Breakers de Resilience4j.
    * Manejo normalizado de fallos bajo el estándar RFC 7807 (Problem Details).
 
+5. **Trazabilidad Distribuida y Observabilidad Transversal (BUG-031):**
+   * **Inyección en MDC:** El filtro `CorrelationIdFilter` extrae `X-Correlation-Id` y `X-Request-Id` de las peticiones entrantes (o genera UUIDs únicos en caso de ausencia), registrándolos en el `MDC` de SLF4J junto con la duración del ciclo de vida HTTP.
+   * **Propagación Saliente:** Los adaptadores REST externos `CatalogGarmentRestAdapter` y `CatalogGarmentMeasurementRestAdapter` incluyen interceptores HTTP (`ClientHttpRequestInterceptor`) que leen los identificadores desde el `MDC` e inyectan las cabeceras `X-Correlation-Id` y `X-Request-Id` en todas las consultas salientes hacia `ms-item-catalogo`.
+   * **Observabilidad Transversal Pendiente:**
+     - Integración de exportadores OpenTelemetry (OTLP) transversales para recolectar trazas distribuidas unificadas en un colector central (Jaeger / Grafana Tempo).
+     - Centralización del agente de logs hacia Loki o Elasticsearch.
+     - Unificación de métricas en Prometheus scraping centralizado a nivel del API Gateway (Spring Cloud Gateway) para medir latencias de inferencia de IA end-to-end.
+
 ---
 
 [⬅ Volver al README Principal](../../README.md)

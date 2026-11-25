@@ -64,25 +64,33 @@ class UserIdAndContractsIntegrationTest {
     }
 
     @Test
-    @DisplayName("GarmentId: Convierte determinísticamente IDs numéricos y UUIDs de Catálogo")
+    @DisplayName("GarmentId: Distingue identificadores malformados (BUG-009) de IDs numéricos y UUIDs válidos de Catálogo")
     void shouldConvertGarmentIdsDeterministically() {
         UUID originalUuid = UUID.randomUUID();
         assertEquals(originalUuid, GarmentId.parseToUuid(originalUuid));
         assertEquals(originalUuid, GarmentId.parseToUuid(originalUuid.toString()));
         assertEquals(originalUuid, GarmentId.fromString(originalUuid.toString()).value());
 
+        // Identificadores numéricos soportados históricamente
         UUID fromLong = GarmentId.parseToUuid(1001L);
         UUID fromString = GarmentId.parseToUuid("1001");
         UUID fromPrefixed = GarmentId.parseToUuid("styleradar-garment-1001");
-        UUID fromArbitrary = GarmentId.parseToUuid("polo-casual-slim");
 
         assertNotNull(fromLong);
         assertEquals(fromLong, fromString);
         assertEquals(fromLong, fromPrefixed);
-        assertNotNull(fromArbitrary);
 
+        // BUG-009: Identificadores malformados o arbitrarios retornan null en parseToUuid y fallan en fromString
+        assertNull(GarmentId.parseToUuid("polo-casual-slim"));
+        assertNull(GarmentId.parseToUuid("invalid-id-format"));
+        assertNull(GarmentId.parseToUuid("123-abc"));
+        assertNull(GarmentId.parseToUuid("styleradar-garment-xyz"));
         assertNull(GarmentId.parseToUuid(null));
         assertNull(GarmentId.parseToUuid("   "));
+
+        assertThrows(IllegalArgumentException.class, () -> GarmentId.fromString("polo-casual-slim"));
+        assertThrows(IllegalArgumentException.class, () -> GarmentId.fromString("invalid-id-format"));
+        assertThrows(NullPointerException.class, () -> GarmentId.fromString(null));
 
         // fromFlexible y branches de GarmentId
         GarmentId gObj = GarmentId.of(originalUuid);
@@ -91,6 +99,7 @@ class UserIdAndContractsIntegrationTest {
         assertEquals(gObj, GarmentId.fromFlexible(originalUuid));
         assertEquals(gObj, GarmentId.fromFlexible(gObj));
         assertEquals(fromLong, GarmentId.fromFlexible("1001").value());
+        assertNull(GarmentId.fromFlexible("polo-casual-slim"));
         assertNull(GarmentId.fromFlexible(null));
         assertNull(GarmentId.fromFlexible("   "));
     }
@@ -441,7 +450,7 @@ class UserIdAndContractsIntegrationTest {
                 """, UserSubscriptionPlanEvent.class);
         assertTrue(flatStoreByName.isStoreSubscription());
         assertFalse(flatStoreByName.isRadarPlusSubscription());
-        assertNotNull(flatStoreByName.occurredAt(), "Cuando falta timestamp en JSON debe usar fallback Instant.now()");
+        assertNull(flatStoreByName.occurredAt(), "Cuando falta timestamp en JSON debe preservar null para evitar sobreescribir planes vigentes (Point 4 líder)");
 
         UserSubscriptionPlanEvent updatedAtEvent = objectMapper.readValue("""
                 {"usuarioId":"12","planId":2,"estado":"APPROVED","updatedAt":"2026-11-22T10:00:00Z"}

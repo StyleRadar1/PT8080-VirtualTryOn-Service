@@ -822,7 +822,13 @@ class QueryTryOnJobsServiceImplTest {
                 {"itemId":"legacy-slug-id","approved":false,"fechaPublicacion":"2026-11-15T10:00:00Z"}
                 """, CatalogGarmentUpdatedEvent.class);
         assertFalse(legacySlugEvent.visible());
-        assertThat(legacySlugEvent.garmentId()).isNotNull();
+        assertThat(legacySlugEvent.garmentId()).isNull();
+
+        CatalogGarmentUpdatedEvent legacyNumericEvent = mapper.readValue("""
+                {"itemId":"1001","approved":false,"fechaPublicacion":"2026-11-15T10:00:00Z"}
+                """, CatalogGarmentUpdatedEvent.class);
+        assertFalse(legacyNumericEvent.visible());
+        assertThat(legacyNumericEvent.garmentId()).isNotNull();
 
         CatalogGarmentUpdatedEvent via6ArgFactory = CatalogGarmentUpdatedEvent.fromJson(
                 null, "Camisa", "TOP", "https://img/camisa.png", false, Instant.parse("2026-11-15T10:00:00Z")
@@ -1670,6 +1676,55 @@ class QueryTryOnJobsServiceImplTest {
         assertEquals(UserQuota.DEFAULT_FREE_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
         assertEquals(suspensionTime, storedQuota.get().getPlanUpdatedAt());
         verify(quotaJpaRepository, org.mockito.Mockito.times(2)).save(any(UserQuotaJpaEntity.class));
+    }
+
+    @Test
+    @DisplayName("RabbitMQ y cuotas: Un evento sin timestamp no modifica una suscripción activa más reciente")
+    void shouldNotModifyActiveSubscriptionWhenEventLacksTimestamp() {
+        UUID userUuid = UserId.parseToUuid(55L);
+        java.util.concurrent.atomic.AtomicReference<UserQuotaJpaEntity> storedQuota =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
+        lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
+                .thenAnswer(inv -> {
+                    UserQuotaJpaEntity entity = inv.getArgument(0);
+                    storedQuota.set(entity);
+                    return entity;
+                });
+
+        Instant validPaymentTime = Instant.parse("2026-11-25T10:00:00Z");
+
+        // 1. Usuario adquiere Radar+ con timestamp válido
+        eventListenerAdapter.onPaymentConfirmed(new UserSubscriptionPlanEvent(
+                userUuid, "USER", 2L, "APPROVED", validPaymentTime
+        ));
+        assertNotNull(storedQuota.get());
+        assertTrue(storedQuota.get().isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
+        assertEquals(validPaymentTime, storedQuota.get().getPlanUpdatedAt());
+
+        // 2. Llega un evento antiguo o reentregado SIN timestamp (null) que intenta suspender el plan
+        UserSubscriptionPlanEvent unversionedEvent = new UserSubscriptionPlanEvent(
+                userUuid, "USER", 2L, "SUSPENDED", null
+        );
+        eventListenerAdapter.onSubscriptionSuspended(unversionedEvent);
+
+        // 3. La suscripción activa DEBE conservarse intacta (Radar+, límite 50, planUpdatedAt preservado)
+        assertTrue(storedQuota.get().isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
+        assertEquals(validPaymentTime, storedQuota.get().getPlanUpdatedAt());
+
+        // 4. Mismo comportamiento si llega un evento de pago sin timestamp intentando alterar
+        UserSubscriptionPlanEvent unversionedPayment = new UserSubscriptionPlanEvent(
+                userUuid, "USER", 1L, "APPROVED", null
+        );
+        eventListenerAdapter.onPaymentConfirmed(unversionedPayment);
+        assertTrue(storedQuota.get().isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
     }
 
     @Test

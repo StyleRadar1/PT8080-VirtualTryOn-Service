@@ -3,6 +3,7 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.QuotaExceededException;
@@ -320,11 +321,11 @@ class CreateTryOnJobServiceImplTest {
 
         String validUserPhotoUrl = "https://styleradarblob.blob.core.windows.net/biometric-silhouettes/" + userId.value() + "/silhouette-test.png";
 
-        // 5. Prenda no encontrada en el catálogo
+        // 5. Prenda no encontrada en el catálogo (BUG-032: retorna 404 / GarmentNotFoundException)
         when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.empty());
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, validUserPhotoUrl, true
-        )).isInstanceOf(InvalidGarmentException.class);
+        )).isInstanceOf(GarmentNotFoundException.class);
 
         // 6. Prendas no compatibles (FOOTWEAR y OUTERWEAR según RN-01)
         mockCatalogGarment(garmentId, GarmentCategory.FOOTWEAR, true);

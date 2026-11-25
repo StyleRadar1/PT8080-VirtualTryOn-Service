@@ -258,6 +258,32 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
+    @DisplayName("BUG-032: Dada una prenda inexistente en el catálogo, Cuando se envía POST /api/v1/try-on/jobs, Entonces responde 404 Not Found con GARMENT_NOT_FOUND")
+    void testStartTryOnGarmentNotFoundReturns404() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID missingGarmentId = UUID.randomUUID();
+        String validPhotoUrl = "https://styleradarblob.blob.core.windows.net/photos/user-test.jpg";
+
+        when(createTryOnJobService.createTryOnJob(
+                eq(UserId.of(userId)),
+                eq(GarmentId.of(missingGarmentId)),
+                eq(validPhotoUrl),
+                eq(true)
+        )).thenThrow(new GarmentNotFoundException(missingGarmentId));
+
+        StartTryOnRequest request = new StartTryOnRequest(userId, missingGarmentId, validPhotoUrl, true);
+
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode", is("GARMENT_NOT_FOUND")))
+                .andExpect(jsonPath("$.code", is("GARMENT_NOT_FOUND")))
+                .andExpect(jsonPath("$.status", is(404)));
+    }
+
+    @Test
     @DisplayName("HU SR-RF-26 (V05): Dado un jobId existente de un job completado o historial del usuario, Cuando se envía GET /api/v1/try-on/jobs/{id} y GET /api/v1/try-on/jobs, Entonces responde 200 OK con estado COMPLETED y URL temporal firmada SAS")
     void testGetTryOnJob() throws Exception {
         UUID userId = UUID.randomUUID();
