@@ -34,14 +34,14 @@ La documentación interactiva OpenAPI 3.0 y los contratos de ejecución se encue
 | `GET` | `/api/v1/try-on/garments/{garmentId}/validate` | Valida compatibilidad de categoría, superposición y ajuste orientativo de talla (`selectedSize` obligatoria) (`SR-RF-24`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `400`, `401`, `403`, `422`, `429` |
 | `POST` | `/api/v1/try-on/jobs` | Inicia y procesa un trabajo de prueba virtual con IA (`FashnAiStrategy` / `MockAiStrategy`) (`SR-RF-25`) | `COMPRADOR`, `USER`, `ADMIN` | `202`, `400`, `401`, `403`, `422`, `429`, `504` |
 | `GET` | `/api/v1/try-on/jobs/{jobId}` | Consulta el estado o resultado renderizado con URL SAS renovada (`SR-RF-26`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403`, `404` |
-| `GET` | `/api/v1/try-on/jobs` | Consulta el historial de trabajos de prueba virtual del usuario (`SR-RF-109`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
+| `GET` | `/api/v1/try-on/jobs` | Consulta la lista cronológica (historial) de trabajos de prueba virtual del usuario (`SR-RF-109`) | `COMPRADOR`, `USER`, `ADMIN` | `200`, `401`, `403` |
 | `DELETE` | `/api/v1/try-on/personal-photos/{jobId}` | Elimina irreversiblemente silueta y resultado por Derecho al Olvido (Ley 1581) (`SR-RF-27`) | `COMPRADOR`, `USER`, `ADMIN` | `204`, `401`, `403`, `404` |
 | `GET` | `/actuator/health` | Health Check y estado operativo de BD, Redis y RabbitMQ | Público | `200` |
 
 > [!NOTE]
-> **Dependencias Externas de SR-RF-24 (Contratos Abiertos con otros Squads):**
-> * **`ms-usuarios` (`UserMeasurementPort` / `UserMeasurementRestAdapter`):** Consulta `GET /api/v1/usuarios/{userId}/medidas` para obtener medidas antropométricas autorizadas (estatura, pecho/torso, cintura, cadera). Si el servicio no está disponible o el perfil carece de datos, el flujo degrada de forma segura retornando `sizeEligible = null` y mensaje de medidas insuficientes (FA-02).
-> * **`ms-catalogo` (`GarmentSizeMeasurementPort` / `CatalogGarmentMeasurementRestAdapter`):** Consulta `GET /api/v1/catalogo/items/{garmentId}/tallas-medidas` para obtener tallas ofertadas y rangos de medidas por talla. Si la prenda no ofrece la talla solicitada se rechaza con HTTP 400 (`TRYON_SIZE_UNAVAILABLE`, RN-07); si la prenda no cuenta con tabla de medidas en Catálogo, el servicio responde HTTP 200 con `sizeEligible = null` (FA-02).
+> **Dependencias Externas de SR-RF-24:**
+> * **`ms-usuarios` (`UserMeasurementPort` / `UserMeasurementRestAdapter`):** Consulta `GET /api/v1/internal/users/{userId}/measurements` (configurable vía `USUARIOS_MEASUREMENTS_PATH`, con soporte de Basic Auth interno) para obtener medidas antropométricas autorizadas (estatura, pecho/torso, cintura, cadera). Si el servicio no está disponible o el perfil carece de datos, el flujo degrada de forma segura retornando `sizeEligible = null` y mensaje de medidas insuficientes (FA-02).
+> * **`ms-catalogo` (`CatalogGarmentLookupPort` / `CatalogGarmentRestAdapter` y `GarmentSizeMeasurementPort` / `CatalogGarmentMeasurementRestAdapter`):** Consulta `GET /api/v1/garments/{garmentId}` como respaldo para hidratar prendas y `GET /api/v1/garments/{garmentId}/size-guide` para obtener tallas ofertadas y rangos de medidas por talla. Si la prenda no ofrece la talla solicitada se rechaza con HTTP 400 (`TRYON_SIZE_UNAVAILABLE`, RN-07); si la prenda no cuenta con tabla de medidas en Catálogo, el servicio responde HTTP 200 con `sizeEligible = null` (FA-02).
 
 <details>
 <summary><b>Click para ver Ejemplos Interactivos de Request y Response JSON (Payloads)</b></summary>
@@ -73,7 +73,7 @@ curl -X POST "http://localhost:8500/api/v1/try-on/jobs" \
   "garmentId": "f1e2d3c4-b5a6-7890-1234-567890abcdef",
   "status": "QUEUED",
   "resultImageUrl": null,
-  "executionTimeMs": null,
+  "executionDurationMs": null,
   "createdAt": "2026-11-02T12:00:00Z"
 }
 ```

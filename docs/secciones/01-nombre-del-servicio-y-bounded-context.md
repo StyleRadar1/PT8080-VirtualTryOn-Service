@@ -23,7 +23,7 @@ Este microservicio encapsula exclusivamente la lógica de negocio correspondient
 | • Consulta y administra cuotas mensuales y disponibles de pruebas virtuales en PostgreSQL y Redis (`SR-RF-108`). | • NO envía correos, SMS ni notificaciones push directas al usuario final (delegado a `ms-notificaciones` en `:8091`). |
 | • Genera visualizaciones aproximadas de prueba virtual orquestando inferencia asíncrona (`202 Accepted` + `jobId`) (`SR-RF-25`). | • NO calcula recomendaciones de estilo ni feeds sociales (delegado a `ms-recomendaciones` en `:8087`). |
 | • Consulta y entrega resultados renderizados con URLs firmadas SAS seguras de caducidad controlada (`SR-RF-26`). | • NO almacena datos maestros de usuarios ni credenciales (delegado a `ms-usuarios` / `ms-auth`). |
-| • Consulta el historial cronológico paginado de pruebas virtuales del usuario (`SR-RF-109`). | • NO realiza inferencia de IA en el hilo HTTP sincrónico (delegado a worker asíncrono / proveedor FASHN AI). |
+| • Consulta la lista cronológica (historial) de pruebas virtuales del usuario (`SR-RF-109`). | • NO realiza inferencia de IA en el hilo HTTP sincrónico (delegado a worker asíncrono / proveedor FASHN AI). |
 | • Elimina fotografías biométricas y trabajos renderizados garantizando Derecho al Olvido (`SR-RF-27`). | • NO accede directamente a bases de datos de otros microservicios bajo el principio *Database-per-Service*. |
 
 ### Catálogo de Requerimientos Funcionales Oficiales (Versión 5.0)

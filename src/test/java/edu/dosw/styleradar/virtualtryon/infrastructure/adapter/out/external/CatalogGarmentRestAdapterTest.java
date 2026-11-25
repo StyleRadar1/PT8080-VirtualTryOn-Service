@@ -27,7 +27,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 class CatalogGarmentRestAdapterTest {
 
     @Test
-    @DisplayName("Cuando ms-catalogo responde 200 con contrato real de /api/v1/prendas/{id}, mapea CatalogGarment elegible")
+    @DisplayName("Cuando ms-catalogo responde 200 con contrato real de /api/v1/garments/{garmentId}, mapea CatalogGarment elegible")
     void shouldMapRealCatalogoResponseToCatalogGarment() {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8220");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -48,7 +48,7 @@ class CatalogGarmentRestAdapterTest {
                 }
                 """.formatted(garmentId.value());
 
-        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + garmentId.value()))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentId.value()))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
 
@@ -85,7 +85,7 @@ class CatalogGarmentRestAdapterTest {
                 }
                 """.formatted(garmentId.value());
 
-        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + garmentId.value()))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentId.value()))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
 
@@ -106,12 +106,12 @@ class CatalogGarmentRestAdapterTest {
         CatalogGarmentRestAdapter adapter = new CatalogGarmentRestAdapter(builder.build(), "http://localhost:8220");
 
         GarmentId missingId = GarmentId.of(UUID.randomUUID());
-        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + missingId.value()))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + missingId.value()))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withStatus(HttpStatus.NOT_FOUND));
 
         GarmentId badCategoryId = GarmentId.of(UUID.randomUUID());
-        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + badCategoryId.value()))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + badCategoryId.value()))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess("{\"nombre\":\"Item\",\"tipo\":\"DESCONOCIDA\"}", MediaType.APPLICATION_JSON));
 
@@ -133,19 +133,19 @@ class CatalogGarmentRestAdapterTest {
         GarmentId rateLimitedId = GarmentId.of(UUID.randomUUID());
         GarmentId timeoutId = GarmentId.of(UUID.randomUUID());
 
-        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + notFoundId.value()))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + notFoundId.value()))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withStatus(HttpStatus.NOT_FOUND));
 
-        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + unavailableId.value()))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + unavailableId.value()))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
 
-        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + rateLimitedId.value()))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + rateLimitedId.value()))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
 
-        server.expect(requestTo("http://localhost:8220/api/v1/prendas/" + timeoutId.value()))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + timeoutId.value()))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(request -> {
                     throw new ResourceAccessException("Read timed out", new SocketTimeoutException("connect timed out"));

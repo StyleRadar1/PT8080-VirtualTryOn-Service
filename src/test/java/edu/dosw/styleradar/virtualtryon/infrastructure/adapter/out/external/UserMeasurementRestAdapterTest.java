@@ -27,7 +27,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 class UserMeasurementRestAdapterTest {
 
     @Test
-    @DisplayName("Cuando ms-usuarios responde 200 en ruta interna /api/v1/internal/usuarios/{id}/medidas, retorna UserBodyMeasurements")
+    @DisplayName("Cuando ms-usuarios responde 200 en ruta interna /api/v1/internal/users/{id}/measurements, retorna UserBodyMeasurements")
     void shouldReturnMeasurementsWhenUsuariosResponds200() {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8120");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -43,7 +43,7 @@ class UserMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/" + userId.value() + "/medidas"))
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/users/" + userId.value() + "/measurements"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(headerDoesNotExist(HttpHeaders.AUTHORIZATION))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
@@ -89,7 +89,7 @@ class UserMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/12/medidas"))
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/users/12/measurements"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header(HttpHeaders.AUTHORIZATION, expectedBasicHeader))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
@@ -112,7 +112,7 @@ class UserMeasurementRestAdapterTest {
     }
 
     @Test
-    @DisplayName("Sin credenciales internas, envía ID numérico a /api/v1/internal/usuarios/12/medidas y reenvía Bearer Authorization")
+    @DisplayName("Sin credenciales internas, envía ID numérico a /api/v1/internal/users/12/measurements y reenvía Bearer Authorization")
     void shouldForwardBearerAuthorizationWhenInternalCredentialsAreAbsent() {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8120");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -130,7 +130,7 @@ class UserMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/12/medidas"))
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/users/12/measurements"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer jwt-prueba-ms-auth"))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
@@ -163,7 +163,7 @@ class UserMeasurementRestAdapterTest {
                 "   "
         );
 
-        serverUserOnly.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/15/medidas"))
+        serverUserOnly.expect(requestTo("http://localhost:8120/api/v1/internal/users/15/measurements"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer jwt-fallback"))
                 .andRespond(withSuccess("{\"chestCm\": 95.0}", MediaType.APPLICATION_JSON));
@@ -190,7 +190,7 @@ class UserMeasurementRestAdapterTest {
                 randomSecret
         );
 
-        serverSecretOnly.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/16/medidas"))
+        serverSecretOnly.expect(requestTo("http://localhost:8120/api/v1/internal/users/16/measurements"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(headerDoesNotExist(HttpHeaders.AUTHORIZATION))
                 .andRespond(withSuccess("{\"chestCm\": 90.0}", MediaType.APPLICATION_JSON));
@@ -240,7 +240,7 @@ class UserMeasurementRestAdapterTest {
                 null
         );
 
-        blankPathServer.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/22/medidas"))
+        blankPathServer.expect(requestTo("http://localhost:8120/api/v1/internal/users/22/measurements"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess("{\"heightCm\": 165.0}", MediaType.APPLICATION_JSON));
 
@@ -259,7 +259,7 @@ class UserMeasurementRestAdapterTest {
 
         UserId userId = UserId.of(UUID.randomUUID());
 
-        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/" + userId.value() + "/medidas"))
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/users/" + userId.value() + "/measurements"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess());
 
@@ -279,11 +279,11 @@ class UserMeasurementRestAdapterTest {
         UserId userId1 = UserId.of(UUID.randomUUID());
         UserId userId2 = UserId.of(UUID.randomUUID());
 
-        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/" + userId1.value() + "/medidas"))
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/users/" + userId1.value() + "/measurements"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withStatus(HttpStatus.NOT_FOUND));
 
-        server.expect(requestTo("http://localhost:8120/api/v1/internal/usuarios/" + userId2.value() + "/medidas"))
+        server.expect(requestTo("http://localhost:8120/api/v1/internal/users/" + userId2.value() + "/measurements"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withStatus(HttpStatus.FORBIDDEN));
 

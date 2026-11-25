@@ -27,7 +27,7 @@ import java.util.Set;
 
 /**
  * Adaptador de salida REST que consulta las tallas disponibles y la tabla de medidas de una prenda
- * en ms-catalogo (GET /api/v1/catalogo/items/{garmentId}/tallas-medidas) para la evaluación de talla (SR-RF-24).
+ * en ms-catalogo (GET /api/v1/garments/{garmentId}/size-guide) para la evaluación de talla (SR-RF-24).
  * Si el microservicio de catálogo no está disponible, no responde en tiempo o no expone tabla de medidas,
  * degrada de manera segura retornando Optional.empty() según FA-02.
  */
@@ -65,7 +65,7 @@ public class CatalogGarmentMeasurementRestAdapter implements GarmentSizeMeasurem
         }
         try {
             GarmentSizeChartDto dto = restClient.get()
-                    .uri("/api/v1/catalogo/items/{garmentId}/tallas-medidas", garmentId.value())
+                    .uri("/api/v1/garments/{garmentId}/size-guide", garmentId.value())
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
                     .body(GarmentSizeChartDto.class);

@@ -48,7 +48,7 @@ class CatalogGarmentMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentId.value() + "/tallas-medidas"))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentId.value() + "/size-guide"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
 
@@ -81,7 +81,7 @@ class CatalogGarmentMeasurementRestAdapterTest {
 
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
 
-        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentId.value() + "/tallas-medidas"))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentId.value() + "/size-guide"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withStatus(HttpStatus.NOT_FOUND));
 
@@ -131,7 +131,7 @@ class CatalogGarmentMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentId.value() + "/tallas-medidas"))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentId.value() + "/size-guide"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
 
@@ -167,7 +167,7 @@ class CatalogGarmentMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentId.value() + "/tallas-medidas"))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentId.value() + "/size-guide"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
 
@@ -197,7 +197,7 @@ class CatalogGarmentMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentIdEmpty.value() + "/tallas-medidas"))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentIdEmpty.value() + "/size-guide"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(jsonEmptySizes, MediaType.APPLICATION_JSON));
 
@@ -226,7 +226,7 @@ class CatalogGarmentMeasurementRestAdapterTest {
                 }
                 """;
 
-        server.expect(requestTo("http://localhost:8220/api/v1/catalogo/items/" + garmentIdAbsent.value() + "/tallas-medidas"))
+        server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentIdAbsent.value() + "/size-guide"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(jsonAbsentSizes, MediaType.APPLICATION_JSON));
 

@@ -289,7 +289,7 @@ Este diagrama de secuencia detalla las interacciones dinámicas en el tiempo ent
 
 * **Escenario 2: Polling de Resultado (`200 OK`) y Derecho al Olvido / Purga Biométrica (`204 No Content` · Ley 1581):**
   1. El cliente consulta periódicamente el progreso del renderizado enviando `GET /api/v1/try-on/jobs/{jobId}`.
-  2. El controlador recupera el estado desde la base de datos relacional o caché Redis, retornando **`HTTP 200 OK`** con el payload `TryOnJobResponse` (`status = COMPLETED`, `resultImageUrl = SAS_URL`, `executionTimeMs = 2100`). La URL incluye un token SAS de Azure Blob Storage de corta duración (15 minutos).
+  2. El controlador recupera el estado desde la base de datos relacional o caché Redis, retornando **`HTTP 200 OK`** con el payload `TryOnJobResponse` (`status = COMPLETED`, `resultImageUrl = SAS_URL`, `executionDurationMs = 2100`). La URL incluye un token SAS de Azure Blob Storage de corta duración (15 minutos).
   3. Posteriormente, el usuario ejerce su derecho al olvido enviando `DELETE /api/v1/try-on/personal-photos/{jobId}`.
   4. `DeleteBiometricDataService` ejecuta la purga física del blob en Azure Blob Storage y actualiza en base de datos `photo_purged = true`.
   5. El servicio responde al cliente con **`HTTP 204 No Content`**, confirmando la destrucción física de la fotografía sin eliminar la traza transaccional de auditoría.
