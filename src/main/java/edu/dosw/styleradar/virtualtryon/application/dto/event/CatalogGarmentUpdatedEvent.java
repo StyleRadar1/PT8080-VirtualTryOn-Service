@@ -103,12 +103,33 @@ public record CatalogGarmentUpdatedEvent(
     }
 
     /**
-     * Parsea marcas de tiempo flexibles para prendas de catálogo, retornando Instant.now()
-     * únicamente como fallback seguro para catalog_garments si no se especificó marca de tiempo.
+     * Parsea marcas de tiempo flexibles para prendas de catálogo:
+     * soporta Instant ISO-8601 con 'Z', LocalDateTime sin zona (p. ej. RabbitMQPublisherAdapter de Catálogo)
+     * y OffsetDateTime. Si es nulo o vacío devuelve Instant.now().
+     * Si la fecha es malformada, propaga DateTimeParseException para evitar procesar eventos corruptos
+     * o sobreescribir proyecciones recientes con marcas de tiempo generadas artificialmente.
      */
     public static Instant parseFlexibleInstant(Object raw) {
-        Instant parsed = parseFlexibleInstantOrNull(raw);
-        return parsed != null ? parsed : Instant.now();
+        if (raw == null) {
+            return Instant.now();
+        }
+        if (raw instanceof Instant instant) {
+            return instant;
+        }
+        String text = raw.toString().trim();
+        if (text.isEmpty()) {
+            return Instant.now();
+        }
+        try {
+            return Instant.parse(text);
+        } catch (Exception ignored) {
+            // Intenta LocalDateTime sin zona (formato enviado por ms-item-catalogo: evento.fecha().toString())
+            try {
+                return LocalDateTime.parse(text).toInstant(ZoneOffset.UTC);
+            } catch (Exception ignoredLocal) {
+                return OffsetDateTime.parse(text).toInstant();
+            }
+        }
     }
 
     public static CatalogGarmentUpdatedEvent fromJson(

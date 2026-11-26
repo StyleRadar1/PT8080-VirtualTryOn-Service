@@ -495,6 +495,19 @@ class UserIdAndContractsIntegrationTest {
     }
 
     @Test
+    @DisplayName("Catálogo: parseFlexibleInstant lanza DateTimeParseException ante fechas malformadas para evitar sobreescritura errónea")
+    void shouldThrowExceptionWhenCatalogTimestampIsMalformed() {
+        assertThrows(java.time.format.DateTimeParseException.class, () ->
+                CatalogGarmentUpdatedEvent.parseFlexibleInstant("fecha-invalida-xyz"));
+        assertThrows(java.time.format.DateTimeParseException.class, () ->
+                CatalogGarmentUpdatedEvent.parseFlexibleInstant("2026-99-99T99:99:99Z"));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant(null));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant(""));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant("   "));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant("2026-11-25T19:00:00Z"));
+    }
+
+    @Test
     @DisplayName("BUG-019: CatalogGarment.sanitizeImageUrl normaliza espacios a %20 y recorta extremos")
     void shouldSanitizeCatalogGarmentImageUrls() {
         assertEquals(
