@@ -131,7 +131,11 @@ jobs:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:prod-${{ github.sha }}
 
-      - name: Smoke Test en Azure PROD (Health, Swagger y Commit SHA)
+      # Por directriz de seguridad OWASP A5 (Security Misconfiguration), Swagger/OpenAPI UI
+      # se deshabilita intencionalmente en Producción (springdoc.api-docs.enabled: false).
+      # El Smoke Test en PROD valida que Health y Actuator Info respondan 200 con el Commit SHA,
+      # y corrobora explícitamente que la documentación Swagger permanezca restringida (HTTP 404/403/401).
+      - name: Smoke Test en Azure PROD (Health, Commit SHA y Swagger Restringido)
         run: |
           HEALTH_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/actuator/health"
           SWAGGER_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/v3/api-docs"
@@ -142,14 +146,15 @@ jobs:
             HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
             SWAGGER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SWAGGER_URL" || true)
             INFO_BODY=$(curl -s "$INFO_URL" || true)
-            echo "Intento $i: Health HTTP $HEALTH_STATUS | Swagger HTTP $SWAGGER_STATUS | Actuator Info: $INFO_BODY"
-            if [ "$HEALTH_STATUS" = "200" ] && [ "$SWAGGER_STATUS" = "200" ] && echo "$INFO_BODY" | grep -q "$EXPECTED_SHA"; then
-              echo "Smoke Test exitoso: Health 200 OK, Swagger 200 OK y commit SHA verificado ($EXPECTED_SHA)"
-              exit 0
+            echo "Intento $i: Health HTTP $HEALTH_STATUS | Swagger HTTP $SWAGGER_STATUS (restringido en PROD) | Actuator Info: $INFO_BODY"
+            if [ "$HEALTH_STATUS" = "200" ] && echo "$INFO_BODY" | grep -q "$EXPECTED_SHA"; then
+              if [ "$SWAGGER_STATUS" = "404" ] || [ "$SWAGGER_STATUS" = "403" ] || [ "$SWAGGER_STATUS" = "401" ]; then
+                echo "Smoke Test PROD exitoso: Health 200 OK, Commit SHA verificado ($EXPECTED_SHA) y Swagger restringido por seguridad (HTTP $SWAGGER_STATUS)"
+                exit 0
+              fi
             fi
             sleep 15
           done
-          echo "Error en Smoke Test: Health, Swagger o Commit SHA ($EXPECTED_SHA) no respondieron satisfactoriamente tras 30 intentos"
-          exit 1
+          echo "Error en Smoke Test PROD: Health, Commit SHA ($EXPECTED_SHA) o restricción de Swagger no respondieron satisfactoriamente tras 30 intentos"
           exit 1
 

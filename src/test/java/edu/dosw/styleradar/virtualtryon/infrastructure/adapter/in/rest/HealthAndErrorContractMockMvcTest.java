@@ -4,8 +4,10 @@ import edu.dosw.styleradar.virtualtryon.application.mapper.in.VirtualTryOnDtoMap
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
+import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtAuthenticationFilter;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.JwtTokenProvider;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.SecurityProblemHandler;
@@ -117,5 +119,20 @@ class HealthAndErrorContractMockMvcTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.type").value("https://api.styleradar.com/errors/job-not-found"))
                 .andExpect(jsonPath("$.errorCode").value("JOB_NOT_FOUND"));
+    }
+
+    @Test
+    @DisplayName("Contrato RFC 7807: Violación de titularidad o permisos retorna 403 con type https://api.styleradar.com/errors/forbidden")
+    void shouldReturnHomologatedErrorTypeOnForbidden() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        when(queryTryOnJobsService.getTryOnJob(any(UUID.class), any(), any(Boolean.class)))
+                .thenThrow(new JobAccessDeniedException("No tiene permisos para acceder a este trabajo"));
+
+        mockMvc.perform(get("/api/v1/try-on/jobs/" + jobId)
+                        .header(HttpHeaders.AUTHORIZATION, buyerToken(userId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.type").value("https://api.styleradar.com/errors/forbidden"))
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
     }
 }
