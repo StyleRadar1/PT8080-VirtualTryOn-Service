@@ -73,18 +73,18 @@ public record CatalogGarmentUpdatedEvent(
     /**
      * Parsea marcas de tiempo flexibles recibidas desde otros microservicios:
      * soporta Instant ISO-8601 con 'Z', LocalDateTime sin zona (p. ej. RabbitMQPublisherAdapter de Catálogo)
-     * y OffsetDateTime.
+     * y OffsetDateTime. Si el valor es nulo, vacío, espacios o malformado, retorna null de forma segura.
      */
-    public static Instant parseFlexibleInstant(Object raw) {
+    public static Instant parseFlexibleInstantOrNull(Object raw) {
         if (raw == null) {
-            return Instant.now();
+            return null;
         }
         if (raw instanceof Instant instant) {
             return instant;
         }
         String text = raw.toString().trim();
         if (text.isEmpty()) {
-            return Instant.now();
+            return null;
         }
         try {
             return Instant.parse(text);
@@ -93,9 +93,22 @@ public record CatalogGarmentUpdatedEvent(
             try {
                 return LocalDateTime.parse(text).toInstant(ZoneOffset.UTC);
             } catch (Exception ignoredLocal) {
-                return OffsetDateTime.parse(text).toInstant();
+                try {
+                    return OffsetDateTime.parse(text).toInstant();
+                } catch (Exception ignoredOffset) {
+                    return null;
+                }
             }
         }
+    }
+
+    /**
+     * Parsea marcas de tiempo flexibles para prendas de catálogo, retornando Instant.now()
+     * únicamente como fallback seguro para catalog_garments si no se especificó marca de tiempo.
+     */
+    public static Instant parseFlexibleInstant(Object raw) {
+        Instant parsed = parseFlexibleInstantOrNull(raw);
+        return parsed != null ? parsed : Instant.now();
     }
 
     public static CatalogGarmentUpdatedEvent fromJson(

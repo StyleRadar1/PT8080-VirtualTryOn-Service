@@ -20,10 +20,10 @@ El proyecto exige una cobertura de código mínima del **85%** verificada autom�
 
 ### Métricas Actuales de Cobertura en el Repositorio
 
-* **Pruebas Totales en el Repositorio:** **379+ pruebas automatizadas** (unitarias de dominio, servicios de aplicación, adaptadores REST con propagación de `X-Correlation-Id`, JPA/Redis/RabbitMQ/Azure Blob Storage/FASHN AI y pruebas de contrato MockMvc con seguridad JWT real y manejo unificado RFC 7807).
+* **Pruebas Totales en el Repositorio:** **382+ pruebas automatizadas** (380 aprobadas y 2 omitidas por requerir credenciales reales de inferencia FASHN VTON; pruebas unitarias de dominio, servicios de aplicación, adaptadores REST con propagación de `X-Correlation-Id` a Catálogo y Usuarios, JPA/Redis/RabbitMQ/Azure Blob Storage y pruebas de contrato MockMvc con seguridad JWT real y manejo unificado RFC 7807).
 * **Fallos y Errores en Ejecución Local (sin Docker):** 0 fallos, 0 errores (`-Dtest=!UserQuotaConcurrencyIntegrationTest`).
 * **Cobertura JaCoCo Verificada Localmente:** **> 93%** en líneas y **> 94%** en instrucciones, superando ampliamente el umbral institucional ($\ge 85\%$).
-* **Última Ejecución Verificada en GitHub Actions (`develop`):** [CI Pipeline #45519168166](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/runs/45519168166) (`completed / success` — [Historial completo de Actions](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/workflows/ci.yml)).
+* **Última Ejecución Verificada en GitHub Actions (PR #28):** 380 pruebas aprobadas, 2 omitidas, SonarCloud Quality Gate Aprobado.
 * **Documentación de Seguridad y OWASP Top 10:2025:** [`../security/SR_PT8080_Seguridad_y_OWASP_2025.md`](../security/SR_PT8080_Seguridad_y_OWASP_2025.md).
 * **Resultado del Build:** `BUILD SUCCESS`.
 

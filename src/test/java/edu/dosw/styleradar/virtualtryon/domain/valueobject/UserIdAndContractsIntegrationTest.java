@@ -469,6 +469,32 @@ class UserIdAndContractsIntegrationTest {
     }
 
     @Test
+    @DisplayName("RabbitMQ Cuotas: CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull retorna null ante timestamp vacío, espacios o malformado")
+    void shouldReturnNullWhenTimestampIsEmptyOrMalformed() throws Exception {
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull(null));
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull(""));
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull("   "));
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull("invalido"));
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull("2026-99-99T99:99:99Z"));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull("2026-11-25T19:00:00Z"));
+
+        UserSubscriptionPlanEvent emptyTimestamp = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","timestamp":""}
+                """, UserSubscriptionPlanEvent.class);
+        assertNull(emptyTimestamp.occurredAt(), "Timestamp vacío debe ser null para proteger cuota vigente");
+
+        UserSubscriptionPlanEvent blankTimestamp = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","timestamp":"   "}
+                """, UserSubscriptionPlanEvent.class);
+        assertNull(blankTimestamp.occurredAt(), "Timestamp con espacios debe ser null para proteger cuota vigente");
+
+        UserSubscriptionPlanEvent malformedTimestamp = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","timestamp":"fecha-invalida"}
+                """, UserSubscriptionPlanEvent.class);
+        assertNull(malformedTimestamp.occurredAt(), "Timestamp malformado debe ser null para proteger cuota vigente");
+    }
+
+    @Test
     @DisplayName("BUG-019: CatalogGarment.sanitizeImageUrl normaliza espacios a %20 y recorta extremos")
     void shouldSanitizeCatalogGarmentImageUrls() {
         assertEquals(

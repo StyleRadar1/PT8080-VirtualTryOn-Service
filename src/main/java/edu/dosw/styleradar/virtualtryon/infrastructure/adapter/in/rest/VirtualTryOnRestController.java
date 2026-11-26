@@ -119,7 +119,7 @@ public class VirtualTryOnRestController implements VirtualTryOnOpenApiDoc {
         UUID targetUserId = resolveAndVerifyCallerUserId(request.userId());
         UUID garmentUuid = GarmentId.parseToUuid(request.garmentId());
         if (garmentUuid == null) {
-            throw new IllegalArgumentException("El identificador de la prenda (garmentId) no es válido");
+            throw new InvalidGarmentException("El identificador de la prenda (garmentId) no es válido: " + request.garmentId());
         }
         TryOnJob createdJob = createTryOnJobService.createTryOnJob(
                 UserId.of(targetUserId),

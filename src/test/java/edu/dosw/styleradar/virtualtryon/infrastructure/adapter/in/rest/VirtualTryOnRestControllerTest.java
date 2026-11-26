@@ -467,6 +467,28 @@ class VirtualTryOnRestControllerTest {
     }
 
     @Test
+    @DisplayName("BUG-009 / Contrato: POST /api/v1/try-on/jobs con garmentId malformado responde 400 con código INVALID_GARMENT")
+    void testStartTryOnWithMalformedGarmentIdReturns400InvalidGarment() throws Exception {
+        UUID userId = UUID.randomUUID();
+        String payload = """
+                {
+                    "userId": "%s",
+                    "garmentId": "prenda-no-valida-xyz",
+                    "photoUrl": "https://styleradarblob.blob.core.windows.net/photos/user-test.jpg",
+                    "biometricConsent": true
+                }
+                """.formatted(userId);
+
+        mockMvc.perform(post("/api/v1/try-on/jobs")
+                        .header(HttpHeaders.AUTHORIZATION, bearerTokenFor(userId, "COMPRADOR"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("INVALID_GARMENT")))
+                .andExpect(jsonPath("$.code", is("INVALID_GARMENT")));
+    }
+
+    @Test
     @DisplayName("HU SR-RF-24: Dado selectedSize, evalúa compatibilidad antropométrica orientativa retornando sizeEligible y fitMessage")
     void testValidateGarmentWithSelectedSizeAndFitEvaluation() throws Exception {
         UUID userId = UUID.randomUUID();

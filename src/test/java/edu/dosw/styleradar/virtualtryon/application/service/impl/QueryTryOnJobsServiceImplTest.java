@@ -2115,5 +2115,33 @@ class QueryTryOnJobsServiceImplTest {
         assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException.class,
                 () -> serviceWithLookup.validateGarmentEligibility(userId, unavailableRemoteId, "M", List.of()));
     }
+
+    @Test
+    @DisplayName("RabbitMQ Cuotas: Evento con timestamp vacío/inválido (occurredAt == null) no degrada ni modifica cuota activa de Radar+")
+    void shouldNotModifyActiveRadarPlusQuotaWhenTimestampIsNull() {
+        UserId radarUser = UserId.of(UUID.randomUUID());
+        BillingPeriod currentPeriod = BillingPeriod.current();
+
+        UserQuotaJpaEntity activeEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(),
+                radarUser.value(),
+                UserQuota.RADAR_PLUS_MONTHLY_LIMIT,
+                5,
+                currentPeriod.getValue(),
+                true,
+                Instant.now(),
+                Instant.now().minusSeconds(3600)
+        );
+
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(radarUser.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(activeEntity));
+
+        // Intento de actualización con occurredAt == null (proveniente de un timestamp vacío o corrupto)
+        UserQuota preserved = queryTryOnJobsService.updateUserSubscriptionPlan(radarUser, false, null);
+
+        assertTrue(preserved.isRadarPlus(), "La cuota activa de Radar+ no debe ser degradada ante eventos sin timestamp válido");
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, preserved.getMonthlyLimit());
+        verify(quotaJpaRepository, never()).findByUserIdAndBillingPeriodForUpdate(eq(radarUser.value()), any());
+    }
 }
 
