@@ -50,7 +50,7 @@ import java.util.Map;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
-    private static final String BASE_TYPE_URL = "https://styleradar.dosw.edu/errors/";
+    private static final String BASE_TYPE_URL = "https://api.styleradar.com/errors/";
 
     @ExceptionHandler(BiometricPhotoNotFoundException.class)
     public ProblemDetail handleBiometricPhotoNotFoundException(BiometricPhotoNotFoundException ex) {
@@ -59,7 +59,7 @@ public class GlobalExceptionHandler {
                 "Fotografía Biométrica No Encontrada",
                 ex.getMessage(),
                 ex.getErrorCode(),
-                null
+                BASE_TYPE_URL + "photo-not-found"
         );
     }
 

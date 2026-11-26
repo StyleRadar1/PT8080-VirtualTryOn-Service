@@ -101,7 +101,7 @@ curl -X GET "http://localhost:8500/api/v1/try-on/quotas?userId=a1b2c3d4-e5f6-789
 
 ```json
 {
-  "type": "https://styleradar.edu.dosw/errors/quota-exceeded",
+  "type": "https://api.styleradar.com/errors/quota-exceeded",
   "title": "Cuota de Pruebas Excedida",
   "status": 429,
   "detail": "El usuario ha alcanzado el límite de pruebas virtuales permitido en su plan.",
@@ -113,7 +113,7 @@ curl -X GET "http://localhost:8500/api/v1/try-on/quotas?userId=a1b2c3d4-e5f6-789
 
 ```json
 {
-  "type": "https://styleradar.edu.dosw/errors/garment-not-found",
+  "type": "https://api.styleradar.com/errors/garment-not-found",
   "title": "Prenda No Encontrada",
   "status": 404,
   "detail": "La prenda seleccionada con ID 018e3a2b-3333-7000-8000-000000000099 no existe en el catálogo",
