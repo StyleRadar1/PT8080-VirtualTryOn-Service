@@ -64,25 +64,33 @@ class UserIdAndContractsIntegrationTest {
     }
 
     @Test
-    @DisplayName("GarmentId: Convierte determinísticamente IDs numéricos y UUIDs de Catálogo")
+    @DisplayName("GarmentId: Distingue identificadores malformados (BUG-009) de IDs numéricos y UUIDs válidos de Catálogo")
     void shouldConvertGarmentIdsDeterministically() {
         UUID originalUuid = UUID.randomUUID();
         assertEquals(originalUuid, GarmentId.parseToUuid(originalUuid));
         assertEquals(originalUuid, GarmentId.parseToUuid(originalUuid.toString()));
         assertEquals(originalUuid, GarmentId.fromString(originalUuid.toString()).value());
 
+        // Identificadores numéricos soportados históricamente
         UUID fromLong = GarmentId.parseToUuid(1001L);
         UUID fromString = GarmentId.parseToUuid("1001");
         UUID fromPrefixed = GarmentId.parseToUuid("styleradar-garment-1001");
-        UUID fromArbitrary = GarmentId.parseToUuid("polo-casual-slim");
 
         assertNotNull(fromLong);
         assertEquals(fromLong, fromString);
         assertEquals(fromLong, fromPrefixed);
-        assertNotNull(fromArbitrary);
 
+        // BUG-009: Identificadores malformados o arbitrarios retornan null en parseToUuid y fallan en fromString
+        assertNull(GarmentId.parseToUuid("polo-casual-slim"));
+        assertNull(GarmentId.parseToUuid("invalid-id-format"));
+        assertNull(GarmentId.parseToUuid("123-abc"));
+        assertNull(GarmentId.parseToUuid("styleradar-garment-xyz"));
         assertNull(GarmentId.parseToUuid(null));
         assertNull(GarmentId.parseToUuid("   "));
+
+        assertThrows(IllegalArgumentException.class, () -> GarmentId.fromString("polo-casual-slim"));
+        assertThrows(IllegalArgumentException.class, () -> GarmentId.fromString("invalid-id-format"));
+        assertThrows(NullPointerException.class, () -> GarmentId.fromString(null));
 
         // fromFlexible y branches de GarmentId
         GarmentId gObj = GarmentId.of(originalUuid);
@@ -91,6 +99,7 @@ class UserIdAndContractsIntegrationTest {
         assertEquals(gObj, GarmentId.fromFlexible(originalUuid));
         assertEquals(gObj, GarmentId.fromFlexible(gObj));
         assertEquals(fromLong, GarmentId.fromFlexible("1001").value());
+        assertNull(GarmentId.fromFlexible("polo-casual-slim"));
         assertNull(GarmentId.fromFlexible(null));
         assertNull(GarmentId.fromFlexible("   "));
     }
@@ -441,5 +450,73 @@ class UserIdAndContractsIntegrationTest {
                 """, UserSubscriptionPlanEvent.class);
         assertTrue(flatStoreByName.isStoreSubscription());
         assertFalse(flatStoreByName.isRadarPlusSubscription());
+        assertNull(flatStoreByName.occurredAt(), "Cuando falta timestamp en JSON debe preservar null para evitar sobreescribir planes vigentes (Point 4 líder)");
+
+        UserSubscriptionPlanEvent updatedAtEvent = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","updatedAt":"2026-11-22T10:00:00Z"}
+                """, UserSubscriptionPlanEvent.class);
+        assertEquals(Instant.parse("2026-11-22T10:00:00Z"), updatedAtEvent.occurredAt());
+
+        UserSubscriptionPlanEvent fechaEvent = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","data":{"fecha":"2026-11-22T11:00:00Z"}}
+                """, UserSubscriptionPlanEvent.class);
+        assertEquals(Instant.parse("2026-11-22T11:00:00Z"), fechaEvent.occurredAt());
+
+        UserSubscriptionPlanEvent eventDateEvent = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","eventDate":"2026-11-22T12:00:00Z"}
+                """, UserSubscriptionPlanEvent.class);
+        assertEquals(Instant.parse("2026-11-22T12:00:00Z"), eventDateEvent.occurredAt());
+    }
+
+    @Test
+    @DisplayName("RabbitMQ Cuotas: CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull retorna null ante timestamp vacío, espacios o malformado")
+    void shouldReturnNullWhenTimestampIsEmptyOrMalformed() throws Exception {
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull(null));
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull(""));
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull("   "));
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull("invalido"));
+        assertNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull("2026-99-99T99:99:99Z"));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstantOrNull("2026-11-25T19:00:00Z"));
+
+        UserSubscriptionPlanEvent emptyTimestamp = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","timestamp":""}
+                """, UserSubscriptionPlanEvent.class);
+        assertNull(emptyTimestamp.occurredAt(), "Timestamp vacío debe ser null para proteger cuota vigente");
+
+        UserSubscriptionPlanEvent blankTimestamp = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","timestamp":"   "}
+                """, UserSubscriptionPlanEvent.class);
+        assertNull(blankTimestamp.occurredAt(), "Timestamp con espacios debe ser null para proteger cuota vigente");
+
+        UserSubscriptionPlanEvent malformedTimestamp = objectMapper.readValue("""
+                {"usuarioId":"12","planId":2,"estado":"APPROVED","timestamp":"fecha-invalida"}
+                """, UserSubscriptionPlanEvent.class);
+        assertNull(malformedTimestamp.occurredAt(), "Timestamp malformado debe ser null para proteger cuota vigente");
+    }
+
+    @Test
+    @DisplayName("Catálogo: parseFlexibleInstant lanza DateTimeParseException ante fechas malformadas para evitar sobreescritura errónea")
+    void shouldThrowExceptionWhenCatalogTimestampIsMalformed() {
+        assertThrows(java.time.format.DateTimeParseException.class, () ->
+                CatalogGarmentUpdatedEvent.parseFlexibleInstant("fecha-invalida-xyz"));
+        assertThrows(java.time.format.DateTimeParseException.class, () ->
+                CatalogGarmentUpdatedEvent.parseFlexibleInstant("2026-99-99T99:99:99Z"));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant(null));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant(""));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant("   "));
+        assertNotNull(CatalogGarmentUpdatedEvent.parseFlexibleInstant("2026-11-25T19:00:00Z"));
+    }
+
+    @Test
+    @DisplayName("BUG-019: CatalogGarment.sanitizeImageUrl normaliza espacios a %20 y recorta extremos")
+    void shouldSanitizeCatalogGarmentImageUrls() {
+        assertEquals(
+                "https://styleradar.blob.core.windows.net/catalog/camisa%20azul%20claro.png",
+                edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment.sanitizeImageUrl(
+                        "  https://styleradar.blob.core.windows.net/catalog/camisa azul claro.png  "
+                )
+        );
+        assertNull(edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment.sanitizeImageUrl("   "));
+        assertNull(edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment.sanitizeImageUrl(null));
     }
 }

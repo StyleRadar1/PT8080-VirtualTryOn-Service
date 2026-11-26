@@ -238,4 +238,36 @@ class CatalogGarmentMeasurementRestAdapterTest {
         assertNull(chartAbsent.availableSizes());
         assertFalse(chartAbsent.offersSize("M"));
     }
+
+    @Test
+    @DisplayName("BUG-031: Propaga X-Correlation-Id y X-Request-Id desde MDC hacia ms-catalogo en consulta de tabla de medidas")
+    void shouldPropagateCorrelationIdAndRequestIdHeaders() {
+        RestClient.Builder builder = RestClient.builder()
+                .baseUrl("http://localhost:8220")
+                .requestInterceptor(CatalogGarmentMeasurementRestAdapter.createTracingInterceptor());
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        CatalogGarmentMeasurementRestAdapter adapter =
+                new CatalogGarmentMeasurementRestAdapter(builder.build(), "http://localhost:8220");
+
+        GarmentId garmentId = GarmentId.of(UUID.randomUUID());
+        String jsonResponse = "{\"availableSizes\":[\"M\"],\"sizes\":[{\"size\":\"M\",\"minChestCm\":90.0,\"maxChestCm\":100.0}]}";
+
+        org.slf4j.MDC.put(edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter.CORRELATION_ID_MDC_KEY, "corr-meas-789");
+        org.slf4j.MDC.put(edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter.REQUEST_ID_MDC_KEY, "req-meas-101");
+
+        try {
+            server.expect(requestTo("http://localhost:8220/api/v1/garments/" + garmentId.value() + "/size-guide"))
+                    .andExpect(method(HttpMethod.GET))
+                    .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.header("X-Correlation-Id", "corr-meas-789"))
+                    .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.header("X-Request-Id", "req-meas-101"))
+                    .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
+
+            Optional<GarmentSizeChart> result = adapter.findSizeChartByGarmentId(garmentId);
+
+            server.verify();
+            assertTrue(result.isPresent());
+        } finally {
+            org.slf4j.MDC.clear();
+        }
+    }
 }

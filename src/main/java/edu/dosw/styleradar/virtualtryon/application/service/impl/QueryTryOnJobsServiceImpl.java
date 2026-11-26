@@ -2,8 +2,8 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.QueryTryOnJobsService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentSizeUnavailableException;
-import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobAccessDeniedException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.TryOnSelectionIncompleteException;
@@ -232,9 +232,7 @@ public class QueryTryOnJobsServiceImpl implements QueryTryOnJobsService {
 
         CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
                 .or(() -> hydrateCatalogGarmentFromRemote(garmentId))
-                .orElseThrow(() -> new InvalidGarmentException(
-                        "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"
-                ));
+                .orElseThrow(() -> new GarmentNotFoundException(garmentId.value()));
 
         if (!garment.isVisible() || garment.getCategory() == null || !garment.getCategory().isCompatibleWithTryOn()) {
             throw new GarmentNotEligibleException("La prenda no está disponible o no admite prueba virtual.");

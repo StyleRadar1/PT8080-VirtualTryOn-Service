@@ -23,8 +23,13 @@ La comunicación asíncrona entre microservicios se realiza a través de **Rabbi
 | **CONSUME** | `styleradar.catalogo.prenda.retirada` | `styleradar.probador.prenda-retirada.q` (DLQ: `styleradar.probador.prenda-retirada.dlq`) | `ms-item-catalogo` &rarr; `ms-probador-virtual` | Marca como no visible una prenda retirada o eliminada del catálogo. |
 | **CONSUME** | `styleradar.catalogo.moderacion.cambiada` | `styleradar.probador.moderacion-cambiada.q` (DLQ: `styleradar.probador.moderacion-cambiada.dlq`) | `ms-item-catalogo` &rarr; `ms-probador-virtual` | Actualiza el estado de moderación y elegibilidad de la prenda. |
 | **CONSUME** | `styleradar.usuarios.cuenta.eliminada` | `styleradar.probador.cuenta-eliminada.q` (DLQ: `styleradar.probador.cuenta-eliminada.dlq`) | `ms-usuarios` &rarr; `ms-probador-virtual` | Purga de forma inmediata consentimientos, siluetas y jobs del usuario (Ley 1581). |
-| **CONSUME** | `styleradar.pagos.pago.confirmado` | `styleradar.probador.pago-confirmado.q` (DLQ: `styleradar.probador.pago-confirmado.dlq`) | `ms-pagos-suscripciones` &rarr; `ms-probador-virtual` | Actualiza la cuota/plan del usuario al confirmarse el pago de suscripción. |
-| **CONSUME** | `styleradar.pagos.suscripcion.suspendida` | `styleradar.probador.suscripcion-suspendida.q` (DLQ: `styleradar.probador.suscripcion-suspendida.dlq`) | `ms-pagos-suscripciones` &rarr; `ms-probador-virtual` | Restablece la cuota al plan base cuando la suscripción es suspendida. |
+| **CONSUME** | `styleradar.pagos.pago.confirmado` | `styleradar.probador.pago-confirmado.q` (DLQ: `styleradar.probador.pago-confirmado.dlq`) | `ms-pagos-suscripciones` &rarr; `ms-probador-virtual` | Actualiza la cuota/plan del usuario al confirmarse el pago de suscripción (requiere `timestamp` versionado). |
+| **CONSUME** | `styleradar.pagos.suscripcion.suspendida` | `styleradar.probador.suscripcion-suspendida.q` (DLQ: `styleradar.probador.suscripcion-suspendida.dlq`) | `ms-pagos-suscripciones` &rarr; `ms-probador-virtual` | Restablece la cuota al plan base cuando la suscripción es suspendida (requiere `timestamp` versionado). |
+
+> [!IMPORTANT]
+> **Idempotencia y Versionado Temporal de Suscripciones (Feedback Líder PR #28):**
+> * Para evitar que eventos tardíos, reentregados por RabbitMQ o desordenados degraden un plan activo del usuario, `UserSubscriptionPlanEvent` coteja el campo `timestamp` (`occurredAt`).
+> * Si un evento carece de timestamp (`null`), `QueryTryOnJobsServiceImpl` descarta la mutación de forma preventiva registrando una advertencia en el log y preservando el plan vigente del usuario en la base de datos y en caché Redis.
 
 <details>
 <summary><b>Click para ver Esquema JSON del Evento Publicado (TryOnJobDomainEvent vía Outbox)</b></summary>

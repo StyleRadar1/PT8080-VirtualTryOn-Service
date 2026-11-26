@@ -3,6 +3,7 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.model.AiProvider;
@@ -167,8 +168,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                 .isPresent()
                 ? null
                 : catalogGarmentLookupPort.findGarmentById(garmentId)
-                        .orElseThrow(() -> new InvalidGarmentException(
-                                "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
+                        .orElseThrow(() -> new GarmentNotFoundException(garmentId.value()));
 
         BillingPeriod currentPeriod = BillingPeriod.current();
 
@@ -179,8 +179,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             CatalogGarment garment = (hydratedCandidate != null)
                     ? quotaRepositoryPort.upsertCatalogGarmentIfNewer(hydratedCandidate)
                     : quotaRepositoryPort.findCatalogGarmentById(garmentId)
-                            .orElseThrow(() -> new InvalidGarmentException(
-                                    "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
+                            .orElseThrow(() -> new GarmentNotFoundException(garmentId.value()));
 
             UserQuota quota = quotaRepositoryPort.findOrCreateQuotaForUpdate(userId, currentPeriod);
 

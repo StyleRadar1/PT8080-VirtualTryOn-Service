@@ -9,11 +9,14 @@ import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
 import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.CatalogGarmentLookupPort;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
+import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
@@ -50,7 +53,22 @@ public class CatalogGarmentRestAdapter implements CatalogGarmentLookupPort {
         this.restClient = RestClient.builder()
                 .requestFactory(factory)
                 .baseUrl(baseUrl)
+                .requestInterceptor(createTracingInterceptor())
                 .build();
+    }
+
+    public static ClientHttpRequestInterceptor createTracingInterceptor() {
+        return (req, body, execution) -> {
+            String correlationId = MDC.get(CorrelationIdFilter.CORRELATION_ID_MDC_KEY);
+            if (correlationId != null && !correlationId.isBlank()) {
+                req.getHeaders().set(CorrelationIdFilter.CORRELATION_ID_HEADER, correlationId);
+            }
+            String requestId = MDC.get(CorrelationIdFilter.REQUEST_ID_MDC_KEY);
+            if (requestId != null && !requestId.isBlank()) {
+                req.getHeaders().set(CorrelationIdFilter.REQUEST_ID_HEADER, requestId);
+            }
+            return execution.execute(req, body);
+        };
     }
 
     public CatalogGarmentRestAdapter(RestClient restClient, String baseUrl) {
@@ -74,7 +92,7 @@ public class CatalogGarmentRestAdapter implements CatalogGarmentLookupPort {
                 return Optional.empty();
             }
 
-            String resolvedImageUrl = resolvePrimaryImageUrl(dto);
+            String resolvedImageUrl = CatalogGarment.sanitizeImageUrl(resolvePrimaryImageUrl(dto));
             CatalogGarmentUpdatedEvent normalized = CatalogGarmentUpdatedEvent.fromJson(
                     dto.id() != null ? dto.id() : garmentId.value(),
                     dto.nombre(),
@@ -139,11 +157,11 @@ public class CatalogGarmentRestAdapter implements CatalogGarmentLookupPort {
         if (dto.fotografias() != null) {
             for (String candidate : dto.fotografias()) {
                 if (candidate != null && !candidate.isBlank()) {
-                    return candidate.trim();
+                    return CatalogGarment.sanitizeImageUrl(candidate);
                 }
             }
         }
-        return (dto.imageUrl() == null || dto.imageUrl().isBlank()) ? null : dto.imageUrl().trim();
+        return CatalogGarment.sanitizeImageUrl(dto.imageUrl());
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -298,4 +298,30 @@ class UserMeasurementRestAdapterTest {
         UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter("http://localhost:8120");
         assertTrue(adapter.findMeasurementsByUserId(null).isEmpty());
     }
+
+    @Test
+    @DisplayName("BUG-031: Propaga X-Correlation-Id y X-Request-Id desde MDC hacia ms-usuarios mediante el interceptor de trazabilidad")
+    void shouldPropagateCorrelationIdAndRequestIdHeaders() {
+        org.slf4j.MDC.put(edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter.CORRELATION_ID_MDC_KEY, "corr-tryon-meas-789");
+        org.slf4j.MDC.put(edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter.REQUEST_ID_MDC_KEY, "req-tryon-meas-321");
+        try {
+            RestClient.Builder builder = RestClient.builder()
+                    .baseUrl("http://localhost:8120")
+                    .requestInterceptor(CatalogGarmentRestAdapter.createTracingInterceptor());
+            MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+            UserMeasurementRestAdapter adapter = new UserMeasurementRestAdapter(builder.build(), "http://localhost:8120");
+
+            UserId userId = UserId.of(UUID.randomUUID());
+            server.expect(requestTo("http://localhost:8120/api/v1/internal/users/" + userId.value() + "/measurements"))
+                    .andExpect(method(HttpMethod.GET))
+                    .andExpect(header(edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter.CORRELATION_ID_HEADER, "corr-tryon-meas-789"))
+                    .andExpect(header(edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.filter.CorrelationIdFilter.REQUEST_ID_HEADER, "req-tryon-meas-321"))
+                    .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+            adapter.findMeasurementsByUserId(userId);
+            server.verify();
+        } finally {
+            org.slf4j.MDC.clear();
+        }
+    }
 }

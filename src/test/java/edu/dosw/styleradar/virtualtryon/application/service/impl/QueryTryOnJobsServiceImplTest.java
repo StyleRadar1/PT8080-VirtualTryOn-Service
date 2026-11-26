@@ -5,6 +5,7 @@ import edu.dosw.styleradar.virtualtryon.application.dto.event.UserSubscriptionPl
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotEligibleException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentSizeUnavailableException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
@@ -495,7 +496,7 @@ class QueryTryOnJobsServiceImplTest {
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
 
         when(catalogGarmentJpaRepository.findById(garmentId.value())).thenReturn(Optional.empty());
-        assertThrows(InvalidGarmentException.class,
+        assertThrows(GarmentNotFoundException.class,
                 () -> queryTryOnJobsService.validateGarmentEligibility(userId, garmentId, "M", List.of()));
 
         CatalogGarmentJpaEntity garmentEntity = new CatalogGarmentJpaEntity(
@@ -821,7 +822,13 @@ class QueryTryOnJobsServiceImplTest {
                 {"itemId":"legacy-slug-id","approved":false,"fechaPublicacion":"2026-11-15T10:00:00Z"}
                 """, CatalogGarmentUpdatedEvent.class);
         assertFalse(legacySlugEvent.visible());
-        assertThat(legacySlugEvent.garmentId()).isNotNull();
+        assertThat(legacySlugEvent.garmentId()).isNull();
+
+        CatalogGarmentUpdatedEvent legacyNumericEvent = mapper.readValue("""
+                {"itemId":"1001","approved":false,"fechaPublicacion":"2026-11-15T10:00:00Z"}
+                """, CatalogGarmentUpdatedEvent.class);
+        assertFalse(legacyNumericEvent.visible());
+        assertThat(legacyNumericEvent.garmentId()).isNotNull();
 
         CatalogGarmentUpdatedEvent via6ArgFactory = CatalogGarmentUpdatedEvent.fromJson(
                 null, "Camisa", "TOP", "https://img/camisa.png", false, Instant.parse("2026-11-15T10:00:00Z")
@@ -1672,6 +1679,55 @@ class QueryTryOnJobsServiceImplTest {
     }
 
     @Test
+    @DisplayName("RabbitMQ y cuotas: Un evento sin timestamp no modifica una suscripción activa más reciente")
+    void shouldNotModifyActiveSubscriptionWhenEventLacksTimestamp() {
+        UUID userUuid = UserId.parseToUuid(55L);
+        java.util.concurrent.atomic.AtomicReference<UserQuotaJpaEntity> storedQuota =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
+        lenient().when(quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(eq(userUuid), any()))
+                .thenAnswer(inv -> Optional.ofNullable(storedQuota.get()));
+        lenient().when(quotaJpaRepository.save(any(UserQuotaJpaEntity.class)))
+                .thenAnswer(inv -> {
+                    UserQuotaJpaEntity entity = inv.getArgument(0);
+                    storedQuota.set(entity);
+                    return entity;
+                });
+
+        Instant validPaymentTime = Instant.parse("2026-11-25T10:00:00Z");
+
+        // 1. Usuario adquiere Radar+ con timestamp válido
+        eventListenerAdapter.onPaymentConfirmed(new UserSubscriptionPlanEvent(
+                userUuid, "USER", 2L, "APPROVED", validPaymentTime
+        ));
+        assertNotNull(storedQuota.get());
+        assertTrue(storedQuota.get().isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
+        assertEquals(validPaymentTime, storedQuota.get().getPlanUpdatedAt());
+
+        // 2. Llega un evento antiguo o reentregado SIN timestamp (null) que intenta suspender el plan
+        UserSubscriptionPlanEvent unversionedEvent = new UserSubscriptionPlanEvent(
+                userUuid, "USER", 2L, "SUSPENDED", null
+        );
+        eventListenerAdapter.onSubscriptionSuspended(unversionedEvent);
+
+        // 3. La suscripción activa DEBE conservarse intacta (Radar+, límite 50, planUpdatedAt preservado)
+        assertTrue(storedQuota.get().isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
+        assertEquals(validPaymentTime, storedQuota.get().getPlanUpdatedAt());
+
+        // 4. Mismo comportamiento si llega un evento de pago sin timestamp intentando alterar
+        UserSubscriptionPlanEvent unversionedPayment = new UserSubscriptionPlanEvent(
+                userUuid, "USER", 1L, "APPROVED", null
+        );
+        eventListenerAdapter.onPaymentConfirmed(unversionedPayment);
+        assertTrue(storedQuota.get().isRadarPlus());
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, storedQuota.get().getMonthlyLimit());
+    }
+
+    @Test
     @DisplayName("HU SR-RF-108 (Caso 3): Cambio de mes reinicia el consumo y conserva Radar+ mientras la suscripción siga activa")
     void shouldPreserveRadarPlusPlanAndResetUsageOnNewBillingPeriod() {
         UserId userId = UserId.fromFlexible("45");
@@ -2048,7 +2104,7 @@ class QueryTryOnJobsServiceImplTest {
 
         when(catalogGarmentJpaRepository.findById(missingRemoteId.value())).thenReturn(Optional.empty());
         when(lookupPort.findGarmentById(missingRemoteId)).thenReturn(Optional.empty());
-        assertThrows(InvalidGarmentException.class,
+        assertThrows(GarmentNotFoundException.class,
                 () -> serviceWithLookup.validateGarmentEligibility(userId, missingRemoteId, "M", List.of()));
 
         GarmentId unavailableRemoteId = GarmentId.of(UUID.randomUUID());
@@ -2058,6 +2114,34 @@ class QueryTryOnJobsServiceImplTest {
                         "Catálogo 503"));
         assertThrows(edu.dosw.styleradar.virtualtryon.domain.exception.CatalogServiceUnavailableException.class,
                 () -> serviceWithLookup.validateGarmentEligibility(userId, unavailableRemoteId, "M", List.of()));
+    }
+
+    @Test
+    @DisplayName("RabbitMQ Cuotas: Evento con timestamp vacío/inválido (occurredAt == null) no degrada ni modifica cuota activa de Radar+")
+    void shouldNotModifyActiveRadarPlusQuotaWhenTimestampIsNull() {
+        UserId radarUser = UserId.of(UUID.randomUUID());
+        BillingPeriod currentPeriod = BillingPeriod.current();
+
+        UserQuotaJpaEntity activeEntity = new UserQuotaJpaEntity(
+                UUID.randomUUID(),
+                radarUser.value(),
+                UserQuota.RADAR_PLUS_MONTHLY_LIMIT,
+                5,
+                currentPeriod.getValue(),
+                true,
+                Instant.now(),
+                Instant.now().minusSeconds(3600)
+        );
+
+        when(quotaJpaRepository.findByUserIdAndBillingPeriod(radarUser.value(), currentPeriod.getValue()))
+                .thenReturn(Optional.of(activeEntity));
+
+        // Intento de actualización con occurredAt == null (proveniente de un timestamp vacío o corrupto)
+        UserQuota preserved = queryTryOnJobsService.updateUserSubscriptionPlan(radarUser, false, null);
+
+        assertTrue(preserved.isRadarPlus(), "La cuota activa de Radar+ no debe ser degradada ante eventos sin timestamp válido");
+        assertEquals(UserQuota.RADAR_PLUS_MONTHLY_LIMIT, preserved.getMonthlyLimit());
+        verify(quotaJpaRepository, never()).findByUserIdAndBillingPeriodForUpdate(eq(radarUser.value()), any());
     }
 }
 
