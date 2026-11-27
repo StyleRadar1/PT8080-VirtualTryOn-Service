@@ -94,7 +94,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(MODEL_IMAGE_URL)
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -112,11 +112,11 @@ class FashnAiAndMockStrategyTest {
     @DisplayName("HU SR-RF-25: Cuando FASHN AI falla o no devuelve imagen válida, FashnAiStrategy lanza AiProviderTimeoutException sin recurrir a fallback silencioso")
     void shouldThrowExceptionWhenFashnAiFailsWithoutSilentFallback() {
         FashnAiRestClientAdapter withoutKey = new FashnAiRestClientAdapter(builder, " ", Duration.ZERO, 2);
-        assertThat(withoutKey.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
+        assertThat(withoutKey.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
         assertThat(withoutKey.queryExternalJobStatus("abc")).isEqualTo(JobStatus.FAILED);
 
         FashnAiRestClientAdapter springConstructed = new FashnAiRestClientAdapter(FASHN_URL, "");
-        assertThat(springConstructed.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
+        assertThat(springConstructed.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
 
         // Caso 1: Error 500 en /run -> FashnAiStrategy lanza excepción y no entrega resultado falso
         server.expect(requestTo(FASHN_URL + "/run")).andRespond(withServerError());
@@ -124,7 +124,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(MODEL_IMAGE_URL)
-                .withCategory(GarmentCategory.BOTTOMS)
+                .withCategory(GarmentCategory.BOTTOM)
                 .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -138,7 +138,7 @@ class FashnAiAndMockStrategyTest {
                 .andRespond(withSuccess("{\"id\":\"abc\"}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(FASHN_URL + "/status/abc"))
                 .andRespond(withSuccess("{\"status\":\"failed\",\"error\":\"imagen invalida\"}", MediaType.APPLICATION_JSON));
-        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.ONE_PIECES))
+        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.ONE_PIECE))
                 .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
         server.verify();
         server.reset();
@@ -146,7 +146,7 @@ class FashnAiAndMockStrategyTest {
         // Caso 2b: FASHN AI devuelve 401 Unauthorized -> lanza AiInferencePermanentException
         server.expect(requestTo(FASHN_URL + "/run"))
                 .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withUnauthorizedRequest());
-        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS))
+        assertThatThrownBy(() -> fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP))
                 .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
         server.verify();
         server.reset();
@@ -158,14 +158,14 @@ class FashnAiAndMockStrategyTest {
                 .andRespond(withSuccess("{\"status\":\"processing\"}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(FASHN_URL + "/status/abc"))
                 .andRespond(withSuccess("{\"status\":\"in_queue\"}", MediaType.APPLICATION_JSON));
-        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
+        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
         server.verify();
         server.reset();
 
         // Caso 4: FASHN AI no devuelve id en /run
         server.expect(requestTo(FASHN_URL + "/run"))
                 .andRespond(withSuccess("{\"error\":\"sin creditos\"}", MediaType.APPLICATION_JSON));
-        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOPS)).isEmpty();
+        assertThat(fashnAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
         server.verify();
     }
 
@@ -197,9 +197,9 @@ class FashnAiAndMockStrategyTest {
         assertThat(fashnAiStrategy.checkStatus("job-4")).isEqualTo(JobStatus.FAILED);
         server.verify();
 
-        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.TOPS)).isEqualTo("tops");
-        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.BOTTOMS)).isEqualTo("bottoms");
-        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.ONE_PIECES)).isEqualTo("one-pieces");
+        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.TOP)).isEqualTo("tops");
+        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.BOTTOM)).isEqualTo("bottoms");
+        assertThat(FashnAiRestClientAdapter.resolveCategoryCode(GarmentCategory.ONE_PIECE)).isEqualTo("one-pieces");
         assertThat(FashnAiRestClientAdapter.resolveCategoryCode(null)).isEqualTo("auto");
     }
 
@@ -212,7 +212,7 @@ class FashnAiAndMockStrategyTest {
         BufferedImage hugeUserPhoto = new BufferedImage(1800, 2400, BufferedImage.TYPE_INT_RGB);
         BufferedImage garmentImage = new BufferedImage(400, 500, BufferedImage.TYPE_INT_ARGB);
 
-        byte[] renderedBytes = mockAiStrategy.composeOverlay(hugeUserPhoto, garmentImage, GarmentCategory.ONE_PIECES);
+        byte[] renderedBytes = mockAiStrategy.composeOverlay(hugeUserPhoto, garmentImage, GarmentCategory.ONE_PIECE);
         BufferedImage decoded = mockAiStrategy.decodeImage(renderedBytes);
 
         assertThat(decoded).isNotNull();
@@ -242,7 +242,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl(photoUrl)
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl(garmentUrl)
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
@@ -263,7 +263,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://empty/bottoms-user.png")
-                .withCategory(GarmentCategory.BOTTOMS)
+                .withCategory(GarmentCategory.BOTTOM)
                 .withGarmentImageUrl(null)
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
@@ -278,7 +278,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://empty/user.png")
-                .withCategory(GarmentCategory.ONE_PIECES)
+                .withCategory(GarmentCategory.ONE_PIECE)
                 .withGarmentImageUrl("https://empty/garment.png")
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
@@ -356,7 +356,7 @@ class FashnAiAndMockStrategyTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://direct/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl(GARMENT_IMAGE_URL)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -364,6 +364,105 @@ class FashnAiAndMockStrategyTest {
         assertThatThrownBy(() -> strategyNoStorage.submitTryOn(directPhotoJob))
                 .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
         server.verify();
+    }
+
+    @Test
+    @DisplayName("Fase B (SR-RF-25): Aplica Circuit Breaker (Resilience4j), ignora errores 4xx permanentes y corta polling cuando vence el timeout global")
+    void shouldEnforceTotalTimeoutAndOpenCircuitBreakerAfterTransientFailures() {
+        // 1. Timeout global acotado en polling
+        RestClient.Builder timeoutBuilder = RestClient.builder().baseUrl(FASHN_URL);
+        MockRestServiceServer timeoutServer = MockRestServiceServer.bindTo(timeoutBuilder).build();
+        timeoutServer.expect(requestTo(FASHN_URL + "/run"))
+                .andRespond(withSuccess("{\"id\":\"slow-job\"}", MediaType.APPLICATION_JSON));
+        timeoutServer.expect(org.springframework.test.web.client.ExpectedCount.between(0, 10),
+                        requestTo(FASHN_URL + "/status/slow-job"))
+                .andRespond(withSuccess("{\"status\":\"processing\"}", MediaType.APPLICATION_JSON));
+
+        FashnAiRestClientAdapter timeoutAdapter = new FashnAiRestClientAdapter(
+                timeoutBuilder,
+                "clave-test",
+                Duration.ofMillis(20),
+                10,
+                Duration.ofMillis(35),
+                null
+        );
+        assertThat(timeoutAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        timeoutServer.verify();
+
+        // 2. CircuitBreaker Resilience4j: ignora 4xx permanentes y se abre tras fallos 5xx transitorios
+        io.github.resilience4j.circuitbreaker.CircuitBreakerConfig cbConfig =
+                io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.custom()
+                        .slidingWindowType(io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+                        .slidingWindowSize(2)
+                        .minimumNumberOfCalls(2)
+                        .failureRateThreshold(50.0f)
+                        .waitDurationInOpenState(Duration.ofSeconds(30))
+                        .ignoreExceptions(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class)
+                        .build();
+        io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry registry =
+                io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry.of(cbConfig);
+        io.github.resilience4j.circuitbreaker.CircuitBreaker cb = registry.circuitBreaker("fashnAi");
+
+        RestClient.Builder cbBuilder = RestClient.builder().baseUrl(FASHN_URL);
+        MockRestServiceServer cbServer = MockRestServiceServer.bindTo(cbBuilder).build();
+        cbServer.expect(requestTo(FASHN_URL + "/run"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest());
+        cbServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withServerError());
+        cbServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withServerError());
+
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry> provider =
+                Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(registry);
+        assertThat(new FashnAiRestClientAdapter(FASHN_URL, "clave-test", Duration.ofSeconds(5), provider)).isNotNull();
+
+        FashnAiRestClientAdapter cbAdapter = new FashnAiRestClientAdapter(
+                cbBuilder,
+                "clave-test",
+                Duration.ZERO,
+                2,
+                Duration.ofSeconds(5),
+                cb
+        );
+
+        // 4xx -> AiInferencePermanentException sin contabilizar fallo en CircuitBreaker
+        assertThatThrownBy(() -> cbAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
+        assertThat(cb.getState()).isEqualTo(io.github.resilience4j.circuitbreaker.CircuitBreaker.State.CLOSED);
+
+        // Dos errores 500 -> abren el circuito
+        assertThat(cbAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        assertThat(cbAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        assertThat(cb.getState()).isEqualTo(io.github.resilience4j.circuitbreaker.CircuitBreaker.State.OPEN);
+
+        // Con el circuito OPEN no ejecuta llamadas HTTP adicionales y retorna Optional.empty()
+        assertThat(cbAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        cbServer.verify();
+
+        // 3. Constructor con pollInterval=null y totalTimeout=ZERO + bordes de ejecución (sin id, canceled, output vacío, queryExternalJobStatus)
+        RestClient.Builder edgeBuilder = RestClient.builder().baseUrl(FASHN_URL);
+        MockRestServiceServer edgeServer = MockRestServiceServer.bindTo(edgeBuilder).build();
+        edgeServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withSuccess("{\"error\":null}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withSuccess("{\"id\":\"e-canceled\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/e-canceled")).andRespond(withSuccess("{\"status\":\"canceled\",\"error\":\"cancelled\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/run")).andRespond(withSuccess("{\"id\":\"e-empty-out\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/e-empty-out")).andRespond(withSuccess("{\"status\":\"completed\",\"output\":[]}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/e-empty-out")).andRespond(withSuccess("{\"status\":\"processing\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/ext-canceled")).andRespond(withSuccess("{\"status\":\"canceled\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/ext-proc")).andRespond(withSuccess("{\"status\":\"processing\"}", MediaType.APPLICATION_JSON));
+        edgeServer.expect(requestTo(FASHN_URL + "/status/ext-err")).andRespond(withServerError());
+
+        FashnAiRestClientAdapter edgeAdapter = new FashnAiRestClientAdapter(
+                edgeBuilder, "clave-test", null, 2, Duration.ZERO, null
+        );
+        assertThat(edgeAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        assertThatThrownBy(() -> edgeAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP))
+                .isInstanceOf(edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException.class);
+        assertThat(edgeAdapter.generateTryOnRender(MODEL_IMAGE_URL, GARMENT_IMAGE_URL, GarmentCategory.TOP)).isEmpty();
+        assertThat(edgeAdapter.queryExternalJobStatus("ext-canceled")).isEqualTo(JobStatus.FAILED);
+        assertThat(edgeAdapter.queryExternalJobStatus("ext-proc")).isEqualTo(JobStatus.PROCESSING);
+        assertThat(edgeAdapter.queryExternalJobStatus("ext-err")).isEqualTo(JobStatus.FAILED);
+        edgeServer.verify();
     }
 }
 

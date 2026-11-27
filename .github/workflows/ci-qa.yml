@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      DOCKER_API_VERSION: "1.44"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -105,7 +106,16 @@ jobs:
                 SERVER_PORT=8500 \
                 SPRING_PROFILES_ACTIVE=qa \
                 TRYON_AMQP_LISTENERS_ENABLED=true \
+                TRYON_AI_PROVIDER=fashn \
+                USUARIOS_SERVICE_URL="${{ secrets.USUARIOS_SERVICE_URL_QA || 'https://styleradar-qa-app.azurewebsites.net' }}" \
+                USUARIOS_INTERNAL_AUTH_USERNAME="${{ secrets.USUARIOS_INTERNAL_AUTH_USERNAME_QA || secrets.USUARIOS_INTERNAL_AUTH_USERNAME }}" \
+                USUARIOS_INTERNAL_AUTH_PASSWORD="${{ secrets.USUARIOS_INTERNAL_AUTH_PASSWORD_QA || secrets.USUARIOS_INTERNAL_AUTH_PASSWORD }}" \
+                CATALOGO_SERVICE_URL="${{ secrets.CATALOGO_SERVICE_URL_QA || 'https://rst-itemcatalog-service-qa.redwave-74d6e30f.northcentralus.azurecontainerapps.io' }}" \
+                FASHN_API_KEY="${{ secrets.FASHN_API_KEY }}" \
                 AZURE_STORAGE_ACCOUNT_KEY="${{ secrets.AZURE_STORAGE_ACCOUNT_KEY_QA || secrets.AZURE_STORAGE_ACCOUNT_KEY }}" \
+                AZURE_STORAGE_CONTAINER=biometric-silhouettes-qa \
+                AZURE_READ_SAS_DURATION=PT15M \
+                CORS_ALLOWED_ORIGINS="${{ secrets.CORS_ALLOWED_ORIGINS_QA || 'http://localhost:3000,https://styleradar-qa.azurewebsites.net' }}" \
                 DB_URL="${{ secrets.DB_URL_QA }}" \
                 DB_USER="${{ secrets.DB_USERNAME_QA }}" \
                 DB_PASSWORD="${{ secrets.DB_PASSWORD_QA }}" \
@@ -116,10 +126,12 @@ jobs:
                 REDIS_HOST="${{ secrets.REDIS_HOST }}" \
                 REDIS_PORT="${{ secrets.REDIS_PORT }}" \
                 REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+                REDIS_SSL_ENABLED="${{ secrets.REDIS_SSL_ENABLED_QA || 'false' }}" \
                 RABBITMQ_HOST="${{ secrets.RABBITMQ_HOST_QA || secrets.RABBITMQ_HOST }}" \
-                RABBITMQ_PORT="${{ secrets.RABBITMQ_PORT }}" \
-                RABBITMQ_USER="${{ secrets.RABBITMQ_USER }}" \
-                RABBITMQ_PASSWORD="${{ secrets.RABBITMQ_PASSWORD }}"
+                RABBITMQ_PORT="${{ secrets.RABBITMQ_PORT_QA || secrets.RABBITMQ_PORT }}" \
+                RABBITMQ_USER="${{ secrets.RABBITMQ_USER_QA || secrets.RABBITMQ_USER }}" \
+                RABBITMQ_PASSWORD="${{ secrets.RABBITMQ_PASSWORD_QA || secrets.RABBITMQ_PASSWORD }}" \
+                RABBITMQ_VHOST="${{ secrets.RABBITMQ_VHOST_QA || secrets.RABBITMQ_VHOST || '/' }}"
 
       - uses: azure/webapps-deploy@v3
         id: deploy
@@ -127,22 +139,24 @@ jobs:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:qa-${{ github.sha }}
 
-      - name: Smoke Test en Azure QA (Commit SHA y /v3/api-docs)
+      - name: Smoke Test en Azure QA (Health, Swagger y Commit SHA)
         run: |
+          HEALTH_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/actuator/health"
           SWAGGER_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/v3/api-docs"
           INFO_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/actuator/info"
           EXPECTED_SHA="${{ github.sha }}"
           echo "Iniciando Smoke Test en QA. Validando commit esperado: $EXPECTED_SHA"
           for i in $(seq 1 30); do
+            HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
             SWAGGER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SWAGGER_URL" || true)
             INFO_BODY=$(curl -s "$INFO_URL" || true)
-            echo "Intento $i: Swagger HTTP $SWAGGER_STATUS | Actuator Info: $INFO_BODY"
-            if [ "$SWAGGER_STATUS" = "200" ] && echo "$INFO_BODY" | grep -q "$EXPECTED_SHA"; then
-              echo "Smoke Test exitoso: Servicio respondiendo HTTP 200 y commit SHA verificado ($EXPECTED_SHA)"
+            echo "Intento $i: Health HTTP $HEALTH_STATUS | Swagger HTTP $SWAGGER_STATUS | Actuator Info: $INFO_BODY"
+            if [ "$HEALTH_STATUS" = "200" ] && [ "$SWAGGER_STATUS" = "200" ] && echo "$INFO_BODY" | grep -q "$EXPECTED_SHA"; then
+              echo "Smoke Test exitoso: Health 200 OK, Swagger 200 OK y commit SHA verificado ($EXPECTED_SHA)"
               exit 0
             fi
             sleep 15
           done
-          echo "Error en Smoke Test: El servicio no respondió con el commit esperado ($EXPECTED_SHA) tras 30 intentos"
+          echo "Error en Smoke Test: Health, Swagger o Commit SHA ($EXPECTED_SHA) no respondieron satisfactoriamente tras 30 intentos"
           exit 1
 

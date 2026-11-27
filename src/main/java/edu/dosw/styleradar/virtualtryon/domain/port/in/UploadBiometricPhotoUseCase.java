@@ -15,6 +15,16 @@ public interface UploadBiometricPhotoUseCase {
      */
     BiometricPhoto uploadPhoto(UserId userId, boolean biometricConsentAccepted, String contentType, byte[] photoBytes);
 
+    default BiometricPhoto uploadPhoto(
+            UserId userId,
+            boolean biometricConsentAccepted,
+            String contentType,
+            byte[] photoBytes,
+            String clientIp
+    ) {
+        return uploadPhoto(userId, biometricConsentAccepted, contentType, photoBytes);
+    }
+
     /**
      * Consulta los metadatos y la URL firmada de la fotografía frontal activa del usuario.
      */

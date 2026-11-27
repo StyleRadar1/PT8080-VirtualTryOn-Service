@@ -3,6 +3,7 @@ package edu.dosw.styleradar.virtualtryon.application.service.impl;
 import edu.dosw.styleradar.virtualtryon.application.service.CreateTryOnJobService;
 import edu.dosw.styleradar.virtualtryon.domain.event.TryOnJobDomainEvent;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.GarmentNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidGarmentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.model.AiProvider;
@@ -16,6 +17,7 @@ import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnOutfit;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.CatalogGarmentLookupPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
@@ -43,7 +45,6 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
-import java.util.OptionalInt;
 import java.util.function.Supplier;
 
 /**
@@ -66,6 +67,30 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
     private final TryOnValidatorHandler validationChain;
     private final TransactionTemplate transactionTemplate;
     private final OutboxPublisherPort outboxPublisherPort;
+    private final CatalogGarmentLookupPort catalogGarmentLookupPort;
+
+    public CreateTryOnJobServiceImpl(
+            TryOnJobRepositoryPort jobRepositoryPort,
+            UserQuotaRepositoryPort quotaRepositoryPort,
+            UserQuotaCachePort quotaCachePort,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            List<AiInferenceStrategy> inferenceStrategies,
+            String configuredProviderName,
+            TransactionTemplate transactionTemplate,
+            OutboxPublisherPort outboxPublisherPort
+    ) {
+        this(
+                jobRepositoryPort,
+                quotaRepositoryPort,
+                quotaCachePort,
+                biometricDataRepositoryPort,
+                inferenceStrategies,
+                configuredProviderName,
+                transactionTemplate,
+                outboxPublisherPort,
+                null
+        );
+    }
 
     @Autowired
     public CreateTryOnJobServiceImpl(
@@ -76,7 +101,8 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             List<AiInferenceStrategy> inferenceStrategies,
             @Value("${styleradar.tryon.ai-provider:fashn}") String configuredProviderName,
             TransactionTemplate transactionTemplate,
-            OutboxPublisherPort outboxPublisherPort
+            OutboxPublisherPort outboxPublisherPort,
+            @Autowired(required = false) CatalogGarmentLookupPort catalogGarmentLookupPort
     ) {
         this.jobRepositoryPort = Objects.requireNonNull(jobRepositoryPort, "jobRepositoryPort no puede ser nulo");
         this.quotaRepositoryPort = Objects.requireNonNull(quotaRepositoryPort, "quotaRepositoryPort no puede ser nulo");
@@ -86,6 +112,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         this.configuredProvider = AiProvider.fromConfigValue(configuredProviderName);
         this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate es obligatorio para garantizar atomicidad transaccional");
         this.outboxPublisherPort = Objects.requireNonNull(outboxPublisherPort, "outboxPublisherPort es obligatorio para garantizar consistencia Dual-Write (Transactional Outbox)");
+        this.catalogGarmentLookupPort = catalogGarmentLookupPort != null ? catalogGarmentLookupPort : g -> java.util.Optional.empty();
 
         TryOnValidatorHandler consentValidator = new BiometricConsentValidator();
         TryOnValidatorHandler quotaValidator = new MonthlyUserQuotaValidator();
@@ -135,31 +162,26 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
                 ? photoUrl.trim()
                 : ((userPhoto.getPhotoUrl() != null) ? userPhoto.getPhotoUrl().value() : null);
 
-        // 3. Validación de existencia real de la prenda en el catálogo
-        CatalogGarment garment = quotaRepositoryPort.findCatalogGarmentById(garmentId)
-                .orElseThrow(() -> new InvalidGarmentException(
-                        "La prenda seleccionada con ID " + garmentId.value() + " no existe en el catálogo"));
+        // 3. Resolución REST fuera de transacción si aún no existe en proyección local;
+        // los fallos de disponibilidad (5xx/timeout) se propagan como CatalogServiceUnavailableException (503).
+        CatalogGarment hydratedCandidate = quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                .isPresent()
+                ? null
+                : catalogGarmentLookupPort.findGarmentById(garmentId)
+                        .orElseThrow(() -> new GarmentNotFoundException(garmentId.value()));
 
         BillingPeriod currentPeriod = BillingPeriod.current();
 
-        // 4. Creación atómica del TryOnJob, consumo de cuota y persistencia en Outbox dentro de la misma transacción JDBC
+        // 4. Creación atómica del TryOnJob: conserva la versión más reciente en BD (ante retiradas/moderaciones
+        // concurrentes recibidas por RabbitMQ), valida esa versión autoritativa, consume cuota y guarda Outbox.
         int[] updatedUsedCount = new int[1];
         TryOnJob savedQueuedJob = executeInTransaction(() -> {
-            UserQuota quota = quotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)
-                    .orElseGet(() -> quotaRepositoryPort.saveQuota(UserQuota.createDefault(userId, currentPeriod)));
+            CatalogGarment garment = (hydratedCandidate != null)
+                    ? quotaRepositoryPort.upsertCatalogGarmentIfNewer(hydratedCandidate)
+                    : quotaRepositoryPort.findCatalogGarmentById(garmentId)
+                            .orElseThrow(() -> new GarmentNotFoundException(garmentId.value()));
 
-            OptionalInt cachedUsed = quotaCachePort.getCachedUsedCount(userId, currentPeriod);
-            if (cachedUsed.isPresent() && cachedUsed.getAsInt() > quota.getUsedCount()) {
-                quota = new UserQuota(
-                        quota.getId(),
-                        quota.getUserId(),
-                        quota.getMonthlyLimit(),
-                        cachedUsed.getAsInt(),
-                        quota.getBillingPeriod(),
-                        quota.isRadarPlus(),
-                        quota.getLastResetAt()
-                );
-            }
+            UserQuota quota = quotaRepositoryPort.findOrCreateQuotaForUpdate(userId, currentPeriod);
 
             TryOnValidationContext validationContext = new TryOnValidationContext(
                     userId,
@@ -194,7 +216,7 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
             ));
 
             // Persistencia obligatoria del evento en el Outbox en la misma transacción PostgreSQL
-            outboxPublisherPort.saveOutboxEvent(saved.getId(), "tryon.job.created", TryOnJobDomainEvent.fromJob(saved));
+            outboxPublisherPort.saveOutboxEvent(saved.getId(), TryOnJobDomainEvent.ROUTING_KEY_CREATED, TryOnJobDomainEvent.fromJob(saved));
             return saved;
         });
 
@@ -234,6 +256,12 @@ public class CreateTryOnJobServiceImpl implements CreateTryOnJobService {
         } catch (Exception ex) {
             log.warn("Fallo no bloqueante al actualizar cuota en Redis post-commit para usuario {}: {}",
                     userId.value(), ex.getMessage());
+            try {
+                quotaCachePort.evictQuota(userId, period);
+            } catch (Exception evictEx) {
+                log.warn("Tampoco fue posible invalidar la caché de cuota en Redis para usuario {}: {}",
+                        userId.value(), evictEx.getMessage());
+            }
         }
     }
 

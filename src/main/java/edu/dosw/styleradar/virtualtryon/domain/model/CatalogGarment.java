@@ -3,7 +3,9 @@ package edu.dosw.styleradar.virtualtryon.domain.model;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Entidad de dominio que representa la proyección local de una prenda del catálogo
@@ -17,6 +19,28 @@ public class CatalogGarment {
     private final String imageUrl;
     private final boolean visible;
     private final Instant updatedAt;
+    private final Set<String> availableSizes;
+
+    public CatalogGarment(
+            GarmentId garmentId,
+            String name,
+            GarmentCategory category,
+            String imageUrl,
+            boolean visible,
+            Instant updatedAt,
+            Set<String> availableSizes
+    ) {
+        this.garmentId = Objects.requireNonNull(garmentId, "El identificador de la prenda no puede ser nulo");
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("El nombre de la prenda no puede ser nulo o vacío");
+        }
+        this.name = name.trim();
+        this.category = Objects.requireNonNull(category, "La categoría de la prenda no puede ser nula");
+        this.imageUrl = sanitizeImageUrl(imageUrl);
+        this.visible = visible;
+        this.updatedAt = Objects.requireNonNull(updatedAt, "La fecha de actualización no puede ser nula");
+        this.availableSizes = availableSizes != null ? Set.copyOf(availableSizes) : Set.of();
+    }
 
     public CatalogGarment(
             GarmentId garmentId,
@@ -26,15 +50,18 @@ public class CatalogGarment {
             boolean visible,
             Instant updatedAt
     ) {
-        this.garmentId = Objects.requireNonNull(garmentId, "El identificador de la prenda no puede ser nulo");
-        if (name == null || name.isBlank()) {
-            throw new IllegalArgumentException("El nombre de la prenda no puede ser nulo o vacío");
+        this(garmentId, name, category, imageUrl, visible, updatedAt, Set.of());
+    }
+
+    public static String sanitizeImageUrl(String rawUrl) {
+        if (rawUrl == null || rawUrl.isBlank()) {
+            return null;
         }
-        this.name = name.trim();
-        this.category = Objects.requireNonNull(category, "La categoría de la prenda no puede ser nula");
-        this.imageUrl = (imageUrl == null || imageUrl.isBlank()) ? null : imageUrl.trim();
-        this.visible = visible;
-        this.updatedAt = Objects.requireNonNull(updatedAt, "La fecha de actualización no puede ser nula");
+        String sanitized = rawUrl.trim();
+        // BUG-019: Corregir URL corrupta específica del inventario maestro (espacio codificado como %20 en lugar de /)
+        sanitized = sanitized.replace("JUANNICOLASA%20Frontend-Style-Radar", "JUANNICOLASA/Frontend-Style-Radar")
+                             .replace("JUANNICOLASA Frontend-Style-Radar", "JUANNICOLASA/Frontend-Style-Radar");
+        return sanitized.replace(" ", "%20");
     }
 
     public boolean hasValidImage() {
@@ -43,6 +70,21 @@ public class CatalogGarment {
 
     public boolean isEligibleForTryOn() {
         return visible && category.isCompatibleWithTryOn() && hasValidImage();
+    }
+
+    public boolean offersSize(String size) {
+        if (size == null || size.isBlank()) {
+            return false;
+        }
+        if (availableSizes.isEmpty()) {
+            return true;
+        }
+        String normalized = size.trim().toUpperCase(Locale.ROOT);
+        return availableSizes.stream().anyMatch(s -> s.equalsIgnoreCase(normalized));
+    }
+
+    public Set<String> getAvailableSizes() {
+        return availableSizes;
     }
 
     public GarmentId getGarmentId() {
@@ -69,4 +111,3 @@ public class CatalogGarment {
         return updatedAt;
     }
 }
-

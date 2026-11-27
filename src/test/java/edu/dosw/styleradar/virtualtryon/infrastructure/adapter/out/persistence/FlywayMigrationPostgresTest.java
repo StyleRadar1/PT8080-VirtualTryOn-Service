@@ -97,7 +97,7 @@ class FlywayMigrationPostgresTest {
                         garmentColumns.add(rs.getString("column_name").toLowerCase());
                     }
                 }
-                assertThat(garmentColumns).contains("garment_id", "name", "category", "image_url", "visible", "updated_at");
+                assertThat(garmentColumns).contains("garment_id", "name", "category", "image_url", "visible", "updated_at", "available_sizes");
 
                 Set<String> tryOnJobColumns = new HashSet<>();
                 try (ResultSet rs = statement.executeQuery(
@@ -121,7 +121,8 @@ class FlywayMigrationPostgresTest {
              InputStream v3 = classLoader.getResourceAsStream("db/migration/V3__create_catalog_garments_and_update_quotas.sql");
              InputStream v4 = classLoader.getResourceAsStream("db/migration/V4__add_try_on_job_rf25_columns.sql");
              InputStream v5 = classLoader.getResourceAsStream("db/migration/V5__create_outbox_events_table.sql");
-             InputStream v6 = classLoader.getResourceAsStream("db/migration/V6__remove_sas_query_strings.sql")) {
+             InputStream v6 = classLoader.getResourceAsStream("db/migration/V6__remove_sas_query_strings.sql");
+             InputStream v9 = classLoader.getResourceAsStream("db/migration/V9__add_available_sizes_to_catalog_garments.sql")) {
 
             assertThat(v1).as("Script V1 debe existir en classpath").isNotNull();
             assertThat(v2).as("Script V2 debe existir en classpath").isNotNull();
@@ -129,12 +130,14 @@ class FlywayMigrationPostgresTest {
             assertThat(v4).as("Script V4 debe existir en classpath").isNotNull();
             assertThat(v5).as("Script V5 debe existir en classpath").isNotNull();
             assertThat(v6).as("Script V6 debe existir en classpath").isNotNull();
+            assertThat(v9).as("Script V9 debe existir en classpath").isNotNull();
 
             String v2Content = new String(v2.readAllBytes(), StandardCharsets.UTF_8);
             String v3Content = new String(v3.readAllBytes(), StandardCharsets.UTF_8);
             String v4Content = new String(v4.readAllBytes(), StandardCharsets.UTF_8);
             String v5Content = new String(v5.readAllBytes(), StandardCharsets.UTF_8);
             String v6Content = new String(v6.readAllBytes(), StandardCharsets.UTF_8);
+            String v9Content = new String(v9.readAllBytes(), StandardCharsets.UTF_8);
 
             assertThat(v2Content)
                     .as("V2 no debe contener modificaciones posteriores a RF-23")
@@ -142,8 +145,9 @@ class FlywayMigrationPostgresTest {
                     .contains("biometric_consents", "biometric_photos");
 
             assertThat(v3Content)
-                    .as("V3 debe contener los cambios exclusivos de RF-24")
-                    .contains("catalog_garments", "is_radar_plus");
+                    .as("V3 debe contener los cambios exclusivos de RF-24 y no alterar available_sizes para preservar checksum de develop")
+                    .contains("catalog_garments", "is_radar_plus")
+                    .doesNotContain("available_sizes");
 
             assertThat(v4Content)
                     .as("V4 debe contener la ampliación de columnas para RF-25")
@@ -156,6 +160,10 @@ class FlywayMigrationPostgresTest {
             assertThat(v6Content)
                     .as("V6 debe eliminar los query strings SAS de las rutas persistidas")
                     .contains("split_part", "try_on_jobs", "biometric_photos");
+
+            assertThat(v9Content)
+                    .as("V9 debe aplicar la adición de columna available_sizes mediante ALTER TABLE")
+                    .contains("ALTER TABLE catalog_garments", "available_sizes");
         }
     }
 }

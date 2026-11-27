@@ -1,5 +1,6 @@
 package edu.dosw.styleradar.virtualtryon.domain.model;
 
+import java.text.Normalizer;
 import java.util.Locale;
 
 /**
@@ -7,23 +8,29 @@ import java.util.Locale;
  */
 public enum GarmentCategory {
 
-    TOPS("tops", true),
-    BOTTOMS("bottoms", true),
-    ONE_PIECES("one-pieces", true),
-    OUTERWEAR("tops", true),
-    FOOTWEAR("auto", false),
-    ACCESSORIES("auto", false);
+    TOP("tops", BodyZone.UPPER_BODY, true),
+    BOTTOM("bottoms", BodyZone.LOWER_BODY, true),
+    ONE_PIECE("one-pieces", BodyZone.FULL_BODY, true),
+    OUTERWEAR("auto", null, false),
+    FOOTWEAR("auto", null, false),
+    ACCESSORIES("auto", null, false);
 
     private final String fashnCategoryCode;
+    private final BodyZone bodyZone;
     private final boolean compatibleWithTryOn;
 
-    GarmentCategory(String fashnCategoryCode, boolean compatibleWithTryOn) {
+    GarmentCategory(String fashnCategoryCode, BodyZone bodyZone, boolean compatibleWithTryOn) {
         this.fashnCategoryCode = fashnCategoryCode;
+        this.bodyZone = bodyZone;
         this.compatibleWithTryOn = compatibleWithTryOn;
     }
 
     public String getFashnCategoryCode() {
         return fashnCategoryCode;
+    }
+
+    public BodyZone getBodyZone() {
+        return bodyZone;
     }
 
     public boolean isCompatibleWithTryOn() {
@@ -38,14 +45,25 @@ public enum GarmentCategory {
         if (rawCategory == null || rawCategory.isBlank()) {
             throw new IllegalArgumentException("La categoría de la prenda no puede ser nula o vacía");
         }
-        String normalized = rawCategory.trim().toUpperCase(Locale.ROOT).replace('-', '_');
+        String normalized = Normalizer.normalize(rawCategory.trim(), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .toUpperCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
         return switch (normalized) {
-            case "TOPS", "SUPERIOR", "CAMISA", "CAMISETA", "BLUSA" -> TOPS;
-            case "BOTTOMS", "INFERIOR", "PANTALON", "FALDA" -> BOTTOMS;
-            case "ONE_PIECES", "ONEPIECES", "VESTIDO", "ENTERIZO" -> ONE_PIECES;
-            case "OUTERWEAR", "ABRIGO", "CHAQUETA" -> OUTERWEAR;
-            case "FOOTWEAR", "CALZADO", "ZAPATOS" -> FOOTWEAR;
-            case "ACCESSORIES", "ACCESORIO", "ACCESORIOS" -> ACCESSORIES;
+            case "TOP", "TOPS", "UPPER", "UPPER_BODY", "SUPERIOR", "PRENDA_SUPERIOR",
+                    "CAMISA", "CAMISAS", "CAMISETA", "CAMISETAS", "BLUSA", "BLUSAS",
+                    "POLO", "SACO", "SACOS", "BLAZER", "BLAZERS",
+                    "SUETER", "SWEATER", "HOODIE", "BUSO", "BUZO", "CHALECO" -> TOP;
+            case "BOTTOM", "BOTTOMS", "LOWER", "LOWER_BODY", "INFERIOR", "PRENDA_INFERIOR",
+                    "PANTALON", "PANTALONES", "FALDA", "FALDAS", "JEAN", "JEANS",
+                    "SHORT", "SHORTS", "BERMUDA", "BERMUDAS", "LEGGINGS", "SUDADERA" -> BOTTOM;
+            case "ONE_PIECE", "ONEPIECE", "ONE_PIECES", "ONEPIECES", "FULL_BODY", "CUERPO_COMPLETO",
+                    "VESTIDO", "VESTIDOS", "ENTERIZO", "ENTERIZOS", "OVEROL", "JUMPSUIT" -> ONE_PIECE;
+            case "OUTERWEAR", "ABRIGO", "ABRIGOS", "CHAQUETA", "CHAQUETAS", "GABARDINA" -> OUTERWEAR;
+            case "FOOTWEAR", "CALZADO", "ZAPATOS", "ZAPATO", "TENIS", "BOTAS", "SANDALIAS" -> FOOTWEAR;
+            case "ACCESSORIES", "ACCESSORY", "ACCESORIO", "ACCESORIOS",
+                    "BOLSO", "GORRA", "SOMBRERO", "GAFAS", "JOYERIA" -> ACCESSORIES;
             default -> throw new IllegalArgumentException("Categoría de prenda desconocida: " + rawCategory);
         };
     }

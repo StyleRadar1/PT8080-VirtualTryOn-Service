@@ -54,7 +54,7 @@ public class SecurityConfig {
                         .referrerPolicy(referrer -> referrer
                                 .policy(org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN)
                         )
-                        .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'"))
+                        .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'; frame-ancestors 'none'"))
                 )
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(securityProblemHandler)
@@ -65,12 +65,15 @@ public class SecurityConfig {
                                 "/actuator/health",
                                 "/actuator/health/**",
                                 "/actuator/info",
-                                "/actuator/metrics",
+                                "/api/v1/health",
+                                "/api/v1/try-on/health",
                                 "/v3/api-docs",
                                 "/v3/api-docs/**",
                                 "/swagger-ui.html",
                                 "/swagger-ui/**"
                         ).permitAll()
+                        .requestMatchers("/actuator/metrics", "/actuator/metrics/**")
+                        .hasAnyRole("ADMIN", "ADMIN_STYLERADAR", "STYLERADAR_ADMIN")
                         .requestMatchers(
                                 "/api/v1/try-on/consents/**",
                                 "/api/v1/try-on/photos/**",
@@ -80,7 +83,19 @@ public class SecurityConfig {
                                 "/api/v1/try-on/garments/**",
                                 "/api/v1/try-on/jobs",
                                 "/api/v1/try-on/jobs/**"
-                        ).hasAnyRole("COMPRADOR", "USER", "ADMIN", "ADMIN_STYLERADAR")
+                        ).hasAnyRole(
+                                "BUYER",
+                                "STYLERADAR_ADMIN",
+                                "STORE_ADMIN",
+                                "FOUNDATION_REPRESENTATIVE",
+                                "COMPRADOR",
+                                "USER",
+                                "ADMIN",
+                                "ADMIN_STYLERADAR",
+                                "ADMIN_TIENDA",
+                                "ADMIN_ALMACEN",
+                                "REPRESENTANTE_FUNDACION"
+                        )
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)

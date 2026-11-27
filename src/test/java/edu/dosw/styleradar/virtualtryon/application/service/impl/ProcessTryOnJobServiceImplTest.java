@@ -8,9 +8,15 @@ import edu.dosw.styleradar.virtualtryon.domain.model.GarmentCategory;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJobBuilder;
+import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.strategy.AiInferenceStrategy;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
@@ -34,6 +40,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -86,7 +94,7 @@ class ProcessTryOnJobServiceImplTest {
                 .withUserId(userId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl("https://catalog/shirt.png")
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -105,9 +113,9 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(job.getResultImageUrl().value()).doesNotContain("sp=r").isEqualTo("https://storage/render.png");
 
         ArgumentCaptor<TryOnJobDomainEvent> eventCaptor = ArgumentCaptor.forClass(TryOnJobDomainEvent.class);
-        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), eventCaptor.capture());
+        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("styleradar.tryon.job.completed"), eventCaptor.capture());
         assertThat(eventCaptor.getValue().status()).isEqualTo(JobStatus.COMPLETED);
-        assertThat(eventCaptor.getValue().routingKey()).isEqualTo("tryon.job.completed");
+        assertThat(eventCaptor.getValue().routingKey()).isEqualTo("styleradar.tryon.job.completed");
         verify(outboxPublisherPort).publishPendingEvents();
     }
 
@@ -121,7 +129,7 @@ class ProcessTryOnJobServiceImplTest {
                 .withUserId(userId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl("https://catalog/shirt.png")
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -137,7 +145,7 @@ class ProcessTryOnJobServiceImplTest {
                 .isInstanceOf(AiProviderTimeoutException.class);
 
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
-        verify(outboxPublisherPort, never()).saveOutboxEvent(any(), eq("tryon.job.failed"), any());
+        verify(outboxPublisherPort, never()).saveOutboxEvent(any(), eq("styleradar.tryon.job.failed"), any());
     }
 
     @Test
@@ -149,7 +157,7 @@ class ProcessTryOnJobServiceImplTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
         job.startAiProcessing();
@@ -163,9 +171,9 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(job.getErrorMessage()).contains("AiProviderTimeoutException");
 
         ArgumentCaptor<TryOnJobDomainEvent> eventCaptor = ArgumentCaptor.forClass(TryOnJobDomainEvent.class);
-        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("tryon.job.failed"), eventCaptor.capture());
+        verify(outboxPublisherPort).saveOutboxEvent(eq(jobId), eq("styleradar.tryon.job.failed"), eventCaptor.capture());
         assertThat(eventCaptor.getValue().status()).isEqualTo(JobStatus.FAILED);
-        assertThat(eventCaptor.getValue().routingKey()).isEqualTo("tryon.job.failed");
+        assertThat(eventCaptor.getValue().routingKey()).isEqualTo("styleradar.tryon.job.failed");
     }
 
     @Test
@@ -176,7 +184,7 @@ class ProcessTryOnJobServiceImplTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
         completedJob.complete(SasSignedUrl.of("https://storage/done.png"), 1500L);
@@ -202,7 +210,7 @@ class ProcessTryOnJobServiceImplTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://storage/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withProvider(AiProvider.MOCK_LOCAL)
                 .build();
 
@@ -232,7 +240,7 @@ class ProcessTryOnJobServiceImplTest {
                 UserId.of(UUID.randomUUID()),
                 GarmentId.of(UUID.randomUUID()),
                 "https://storage/photo.png",
-                GarmentCategory.TOPS,
+                GarmentCategory.TOP,
                 "https://catalog/shirt.png",
                 JobStatus.PROCESSING,
                 null,
@@ -253,7 +261,7 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(recovered).isEqualTo(1);
         assertThat(staleJob.getStatus()).isEqualTo(JobStatus.FAILED);
         assertThat(staleJob.getErrorMessage()).contains("Timeout de procesamiento");
-        verify(outboxPublisherPort).saveOutboxEvent(eq(staleJob.getId()), eq("tryon.job.failed"), any());
+        verify(outboxPublisherPort).saveOutboxEvent(eq(staleJob.getId()), eq("styleradar.tryon.job.failed"), any());
     }
 
     @Test
@@ -268,7 +276,7 @@ class ProcessTryOnJobServiceImplTest {
                 UserId.of(UUID.randomUUID()),
                 GarmentId.of(UUID.randomUUID()),
                 "https://storage/photo.png",
-                GarmentCategory.TOPS,
+                GarmentCategory.TOP,
                 "https://catalog/shirt.png",
                 JobStatus.COMPLETED,
                 SasSignedUrl.of("https://storage/render.png"),
@@ -286,7 +294,7 @@ class ProcessTryOnJobServiceImplTest {
                 UserId.of(UUID.randomUUID()),
                 GarmentId.of(UUID.randomUUID()),
                 "https://storage/photo.png",
-                GarmentCategory.TOPS,
+                GarmentCategory.TOP,
                 "https://catalog/shirt.png",
                 JobStatus.PROCESSING,
                 null,
@@ -310,5 +318,155 @@ class ProcessTryOnJobServiceImplTest {
         assertThat(activeWorkerJob.getStatus()).isEqualTo(JobStatus.PROCESSING);
         verify(jobRepositoryPort, never()).saveJob(completedJob);
         verify(jobRepositoryPort, never()).saveJob(activeWorkerJob);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25 (RN-03 / FA-03): markFailedAfterRetries y sweepStaleProcessingJobs reembolsan cuota en BD con bloqueo pesimista, sincronizan Redis y respetan idempotencia")
+    void shouldRefundQuotaTransactionallyOnceAndSyncRedisOnFinalFailure() {
+        UserQuotaRepositoryPort quotaRepo = org.mockito.Mockito.mock(UserQuotaRepositoryPort.class);
+        UserQuotaCachePort quotaCache = org.mockito.Mockito.mock(UserQuotaCachePort.class);
+        BiometricDataRepositoryPort bioRepo = org.mockito.Mockito.mock(BiometricDataRepositoryPort.class);
+        BlobStoragePort blobPort = org.mockito.Mockito.mock(BlobStoragePort.class);
+
+        ProcessTryOnJobServiceImpl serviceWithQuota = new ProcessTryOnJobServiceImpl(
+                jobRepositoryPort,
+                outboxPublisherPort,
+                List.of(fashnStrategy),
+                transactionTemplate,
+                bioRepo,
+                blobPort,
+                quotaRepo,
+                quotaCache
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId userId = UserId.of(UUID.randomUUID());
+        Instant createdAt = Instant.parse("2026-10-20T15:00:00Z");
+        BillingPeriod period = BillingPeriod.fromInstant(createdAt);
+        TryOnJob job = new TryOnJob(
+                jobId, userId, GarmentId.of(UUID.randomUUID()),
+                "https://storage/photo.png", GarmentCategory.TOP, "https://cat/shirt.png",
+                JobStatus.PROCESSING, null, AiProvider.FASHN_AI, null, null, false,
+                createdAt, createdAt
+        );
+        UserQuota quota = new UserQuota(UUID.randomUUID(), userId, 10, 3, period, false, createdAt);
+
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId)).thenReturn(Optional.of(job));
+        when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(quotaRepo.findQuotaByUserIdAndPeriodForUpdate(userId, period)).thenReturn(Optional.of(quota));
+        when(quotaRepo.saveQuota(any(UserQuota.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        // 1. Primer fallo definitivo reembolsa 1 crédito (3 -> 2) y actualiza Redis
+        serviceWithQuota.markFailedAfterRetries(jobId, "Error definitivo FASHN AI");
+
+        assertThat(job.getStatus()).isEqualTo(JobStatus.FAILED);
+        assertThat(quota.getUsedCount()).isEqualTo(2);
+        verify(quotaRepo).saveQuota(quota);
+        verify(quotaCache).cacheUsedCount(userId, period, 2);
+
+        // 2. Segunda invocación sobre trabajo ya FAILED es idempotente (no reembolsa por segunda vez)
+        serviceWithQuota.markFailedAfterRetries(jobId, "Reentrega duplicada DLQ");
+        assertThat(quota.getUsedCount()).isEqualTo(2);
+        verify(quotaRepo, org.mockito.Mockito.times(1)).saveQuota(any(UserQuota.class));
+
+        // 3. sweepStaleProcessingJobs reembolsa cuota del trabajo recuperado, intenta evictQuota si Redis falla y tolera doble fallo
+        UUID staleJobId = UUID.randomUUID();
+        TryOnJob staleJob = new TryOnJob(
+                staleJobId, userId, GarmentId.of(UUID.randomUUID()),
+                "https://storage/photo.png", GarmentCategory.TOP, "https://cat/shirt.png",
+                JobStatus.PROCESSING, null, AiProvider.FASHN_AI, null, null, false,
+                createdAt, Instant.now().minus(Duration.ofMinutes(20))
+        );
+        when(jobRepositoryPort.findStaleProcessingJobs(any())).thenReturn(List.of(staleJob));
+        when(jobRepositoryPort.findJobByIdForUpdate(staleJobId)).thenReturn(Optional.of(staleJob));
+        doThrow(new RuntimeException("Redis timeout"))
+                .when(quotaCache).cacheUsedCount(userId, period, 1);
+        doThrow(new RuntimeException("Redis eviction timeout"))
+                .when(quotaCache).evictQuota(userId, period);
+
+        int recovered = serviceWithQuota.sweepStaleProcessingJobs(Duration.ofMinutes(10));
+        assertThat(recovered).isEqualTo(1);
+        assertThat(staleJob.getStatus()).isEqualTo(JobStatus.FAILED);
+        assertThat(quota.getUsedCount()).isEqualTo(1);
+        verify(quotaCache).evictQuota(userId, period);
+
+        // 4. Cuota ya en 0 no decrementa a negativo
+        UserId zeroUser = UserId.of(UUID.randomUUID());
+        UUID zeroJobId = UUID.randomUUID();
+        TryOnJob zeroJob = new TryOnJob(
+                zeroJobId, zeroUser, GarmentId.of(UUID.randomUUID()),
+                "https://storage/photo.png", GarmentCategory.TOP, "https://cat/shirt.png",
+                JobStatus.QUEUED, null, AiProvider.FASHN_AI, null, null, false,
+                createdAt, createdAt
+        );
+        UserQuota zeroQuota = UserQuota.createDefault(zeroUser, period);
+        when(jobRepositoryPort.findJobByIdForUpdate(zeroJobId)).thenReturn(Optional.of(zeroJob));
+        when(quotaRepo.findQuotaByUserIdAndPeriodForUpdate(zeroUser, period)).thenReturn(Optional.of(zeroQuota));
+
+        serviceWithQuota.markFailedAfterRetries(zeroJobId, "");
+        assertThat(zeroQuota.getUsedCount()).isZero();
+        verify(quotaRepo, org.mockito.Mockito.never()).saveQuota(zeroQuota);
+    }
+
+    @Test
+    @DisplayName("HU SR-RF-25 / SR-RF-24: Si falla Redis durante un reembolso y conserva un contador desactualizado, QueryTryOnJobsServiceImpl preserva el reembolso de PostgreSQL")
+    void shouldPreserveRefundedQuotaWhenRedisUpdateFailsAndRetainsStaleCounter() {
+        UserQuotaRepositoryPort quotaRepo = org.mockito.Mockito.mock(UserQuotaRepositoryPort.class);
+        UserQuotaCachePort quotaCache = org.mockito.Mockito.mock(UserQuotaCachePort.class);
+        BiometricDataRepositoryPort bioRepo = org.mockito.Mockito.mock(BiometricDataRepositoryPort.class);
+        BlobStoragePort blobPort = org.mockito.Mockito.mock(BlobStoragePort.class);
+
+        ProcessTryOnJobServiceImpl processService = new ProcessTryOnJobServiceImpl(
+                jobRepositoryPort,
+                outboxPublisherPort,
+                List.of(fashnStrategy),
+                transactionTemplate,
+                bioRepo,
+                blobPort,
+                quotaRepo,
+                quotaCache
+        );
+        QueryTryOnJobsServiceImpl queryService = new QueryTryOnJobsServiceImpl(
+                quotaRepo,
+                quotaCache,
+                bioRepo,
+                jobRepositoryPort,
+                blobPort
+        );
+
+        UUID jobId = UUID.randomUUID();
+        UserId userId = UserId.of(UUID.randomUUID());
+        Instant now = Instant.now();
+        BillingPeriod currentPeriod = BillingPeriod.current();
+        TryOnJob failedJob = new TryOnJob(
+                jobId, userId, GarmentId.of(UUID.randomUUID()),
+                "https://storage/photo.png", GarmentCategory.TOP, "https://cat/shirt.png",
+                JobStatus.PROCESSING, null, AiProvider.FASHN_AI, null, null, false,
+                now, now
+        );
+        UserQuota quota = new UserQuota(UUID.randomUUID(), userId, 10, 3, currentPeriod, false, now);
+
+        when(jobRepositoryPort.findJobByIdForUpdate(jobId)).thenReturn(Optional.of(failedJob));
+        when(jobRepositoryPort.saveJob(any(TryOnJob.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(quotaRepo.findQuotaByUserIdAndPeriodForUpdate(userId, currentPeriod)).thenReturn(Optional.of(quota));
+        when(quotaRepo.findQuotaByUserIdAndPeriod(userId, currentPeriod)).thenReturn(Optional.of(quota));
+        when(quotaRepo.saveQuota(any(UserQuota.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        // Redis falla tanto al actualizar como al invalidar, conservando el valor obsoleto (3)
+        doThrow(new RuntimeException("Redis connection reset"))
+                .when(quotaCache).cacheUsedCount(userId, currentPeriod, 2);
+        doThrow(new RuntimeException("Redis eviction failed"))
+                .when(quotaCache).evictQuota(userId, currentPeriod);
+        when(quotaCache.getCachedUsedCount(userId, currentPeriod)).thenReturn(java.util.OptionalInt.of(3));
+
+        processService.markFailedAfterRetries(jobId, "Timeout definitivo");
+        assertThat(quota.getUsedCount()).isEqualTo(2);
+
+        // La consulta posterior NO debe sobrescribir PostgreSQL con el 3 obsoleto de Redis
+        UserQuota queriedQuota = queryService.getUserQuota(userId);
+        assertThat(queriedQuota.getUsedCount()).isEqualTo(2);
+        assertThat(queriedQuota.getRemainingCount()).isEqualTo(8);
+        verify(quotaRepo, org.mockito.Mockito.times(1)).saveQuota(any(UserQuota.class));
+        verify(quotaCache, atLeastOnce()).cacheUsedCount(userId, currentPeriod, 2);
     }
 }

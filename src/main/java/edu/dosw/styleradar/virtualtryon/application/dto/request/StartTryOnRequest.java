@@ -9,17 +9,19 @@ import java.util.UUID;
 
 /**
  * DTO de solicitud para iniciar un trabajo asíncrono de probador virtual.
+ * El userId es opcional: si el cliente no lo envía, se extrae de forma autoritativa
+ * desde el JWT del usuario autenticado (SR-RF-24).
+ * Acepta tanto identificadores canónicos UUID como IDs numéricos emitidos por Auth.
  */
 @Schema(description = "Datos requeridos para despachar una prueba virtual con foto y prenda")
 public record StartTryOnRequest(
 
-        @Schema(description = "Identificador único del usuario comprador", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
-        @NotNull(message = "El identificador de usuario es obligatorio")
-        UUID userId,
+        @Schema(description = "Identificador opcional del usuario comprador (si se omite, se infiere del JWT autenticado; acepta UUID o ID numérico de Auth)", example = "12345")
+        Object userId,
 
-        @Schema(description = "Identificador único de la prenda a probar del catálogo", example = "f8e7d6c5-b4a3-2109-8765-43210fedcba9")
+        @Schema(description = "Identificador único de la prenda a probar del catálogo (acepta UUID o ID numérico/texto de Catálogo)", example = "f8e7d6c5-b4a3-2109-8765-43210fedcba9")
         @NotNull(message = "El identificador de la prenda es obligatorio")
-        UUID garmentId,
+        Object garmentId,
 
         @Schema(description = "URL segura HTTPS de la fotografía frontal subida por el usuario", example = "https://styleradarpt8080blob.blob.core.windows.net/biometric-silhouettes-qa/user-front-123.jpg")
         @NotBlank(message = "La URL de la fotografía frontal es obligatoria")
@@ -30,4 +32,12 @@ public record StartTryOnRequest(
         @NotNull(message = "El consentimiento informado es obligatorio")
         Boolean biometricConsent
 ) {
+
+    public StartTryOnRequest(UUID userId, UUID garmentId, String photoUrl, Boolean biometricConsent) {
+        this((Object) userId, (Object) garmentId, photoUrl, biometricConsent);
+    }
+
+    public StartTryOnRequest(Object garmentId, String photoUrl, Boolean biometricConsent) {
+        this(null, garmentId, photoUrl, biometricConsent);
+    }
 }

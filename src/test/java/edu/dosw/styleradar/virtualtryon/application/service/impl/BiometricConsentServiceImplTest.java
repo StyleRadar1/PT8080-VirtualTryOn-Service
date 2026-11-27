@@ -1,9 +1,10 @@
 package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.mapper.out.TryOnPersistenceMapper;
+import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
-import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
@@ -42,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -70,6 +72,9 @@ class BiometricConsentServiceImplTest {
 
     @Mock
     private BiometricPhotoJpaRepository photoJpaRepository;
+
+    @Mock
+    private DeleteBiometricDataService deleteBiometricDataService;
 
     private Map<UUID, BiometricConsentJpaEntity> persistedConsents;
     private Map<UUID, BiometricPhotoJpaEntity> persistedPhotos;
@@ -116,14 +121,14 @@ class BiometricConsentServiceImplTest {
                 AZURE_BASE_URL + "/",
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
-                Duration.ofMinutes(60),
+                Duration.ofMinutes(15),
                 "2024-11-04"
         );
-        consentService = new BiometricConsentServiceImpl(repositoryAdapter, blobStorageAdapter);
+        consentService = new BiometricConsentServiceImpl(repositoryAdapter, blobStorageAdapter, deleteBiometricDataService);
     }
 
     @Test
-    @DisplayName("HU SR-RF-23 (Positivo): Dado un usuario que otorga consentimiento biométrico, Cuando se consulta y luego se revoca, Entonces persiste en JPA y actualiza su validez")
+    @DisplayName("HU SR-RF-23 / SR-RF-27 (Positivo): Dado un usuario que otorga consentimiento biométrico, Cuando se consulta y luego se revoca, Entonces persiste en JPA, actualiza su validez y purga integralmente fotografías y renders")
     void shouldGrantGetAndRevokeConsent() {
         BiometricConsent granted = consentService.grantConsent(
                 USER_ID,
@@ -142,6 +147,35 @@ class BiometricConsentServiceImplTest {
         BiometricConsent revoked = consentService.revokeConsent(USER_ID);
         assertThat(revoked.isValidForInference()).isFalse();
         assertThat(revoked.getRevokedAt()).isNotNull();
+
+        // SR-RF-27: Verifica que la revocación de consentimiento ejecutó la purga integral de siluetas y renders
+        verify(deleteBiometricDataService).purgeAllBiometricDataForUser(USER_ID);
+    }
+
+    @Test
+    @DisplayName("SR-RF-27: DeleteBiometricDataService es obligatorio en el constructor y garantiza que no se confirme purga si no está disponible")
+    void shouldRequireDeleteBiometricDataServiceToEnsureIntegralPurge() {
+        assertThatThrownBy(() -> new BiometricConsentServiceImpl(repositoryAdapter, blobStorageAdapter, null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("El servicio de eliminación de datos biométricos es obligatorio");
+    }
+
+    @Test
+    @DisplayName("SR-RF-27: Si la purga integral física falla durante la revocación, se aborta y no se confirma la revocación")
+    void shouldAbortRevocationWhenPurgeFails() {
+        consentService.grantConsent(
+                USER_ID,
+                "v1.0-LEY1581-2026",
+                true,
+                List.of("VIRTUAL_TRY_ON_INFERENCE"),
+                "190.24.10.1"
+        );
+        doThrow(new RuntimeException("Fallo en Azure Blob Storage"))
+                .when(deleteBiometricDataService).purgeAllBiometricDataForUser(USER_ID);
+
+        assertThatThrownBy(() -> consentService.revokeConsent(USER_ID))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Fallo en Azure Blob Storage");
     }
 
     @Test
@@ -338,48 +372,48 @@ class BiometricConsentServiceImplTest {
         RestClient.Builder builder = RestClient.builder();
 
         // 1. URL vacía o nula
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, "", CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, "", CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(15), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AZURE_STORAGE_BASE_URL");
 
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, null, CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, null, CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(15), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AZURE_STORAGE_BASE_URL");
 
         // 2. Esquema no HTTPS
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, "ftp://storage.blob.core.windows.net", CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, "ftp://storage.blob.core.windows.net", CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(15), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("protocolo seguro https://");
 
         // 3. Contenedor vacío o nulo
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, "  ", TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, "  ", TEST_ACCOUNT_KEY, Duration.ofMinutes(15), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AZURE_STORAGE_CONTAINER");
 
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, null, TEST_ACCOUNT_KEY, Duration.ofMinutes(60), "2024-11-04"))
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, null, TEST_ACCOUNT_KEY, Duration.ofMinutes(15), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AZURE_STORAGE_CONTAINER");
 
         // 4. Clave vacía o nula o no Base64
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, "  ", Duration.ofMinutes(60), "2024-11-04"))
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, "  ", Duration.ofMinutes(15), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AZURE_STORAGE_ACCOUNT_KEY es obligatoria");
 
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, null, Duration.ofMinutes(60), "2024-11-04"))
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, null, Duration.ofMinutes(15), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AZURE_STORAGE_ACCOUNT_KEY es obligatoria");
 
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, "not-valid-base64!@#", Duration.ofMinutes(60), "2024-11-04"))
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, "not-valid-base64!@#", Duration.ofMinutes(15), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Base64 válido");
 
         // 5. Clave demasiado corta (< 32 bytes)
         String shortBase64Key = "c2hvcnQta2V5"; // "short-key" (9 bytes)
-        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, shortBase64Key, Duration.ofMinutes(60), "2024-11-04"))
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, shortBase64Key, Duration.ofMinutes(15), "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("longitud mínima de 32 bytes");
 
-        // 6. Duración negativa o nula
+        // 6. Duración negativa, nula o mayor a 15 minutos
         assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, TEST_ACCOUNT_KEY, Duration.ZERO, "2024-11-04"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("readSasDuration");
@@ -392,6 +426,10 @@ class BiometricConsentServiceImplTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("readSasDuration");
 
+        assertThatThrownBy(() -> new AzureBlobStorageAdapter(builder, AZURE_BASE_URL, CONTAINER, TEST_ACCOUNT_KEY, Duration.ofMinutes(16), "2024-11-04"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no exceder 15 minutos");
+
         // 7. Host sin nombre de cuenta identificable
         assertThatThrownBy(() -> AzureBlobStorageAdapter.parseAccountNameStrict("https://invalid-host-without-dot"))
                 .isInstanceOf(IllegalStateException.class)
@@ -403,7 +441,7 @@ class BiometricConsentServiceImplTest {
                 AZURE_BASE_URL + "/",
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
-                Duration.ofMinutes(60),
+                Duration.ofMinutes(15),
                 ""
         );
         assertThat(trailingSlashAdapter).isNotNull();
@@ -413,7 +451,7 @@ class BiometricConsentServiceImplTest {
                 AZURE_BASE_URL,
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
-                Duration.ofMinutes(60),
+                Duration.ofMinutes(15),
                 null
         );
         assertThat(nullApiVersionAdapter).isNotNull();
@@ -424,7 +462,7 @@ class BiometricConsentServiceImplTest {
                 "http://styleradarblob.blob.core.windows.net",
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
-                Duration.ofMinutes(60),
+                Duration.ofMinutes(15),
                 null
         )).isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("protocolo seguro https://");
@@ -434,7 +472,7 @@ class BiometricConsentServiceImplTest {
                 AZURE_BASE_URL,
                 CONTAINER,
                 TEST_ACCOUNT_KEY,
-                Duration.ofMinutes(45),
+                Duration.ofMinutes(15),
                 "2024-11-04"
         );
         assertThat(springAdapter).isNotNull();
@@ -732,7 +770,7 @@ class BiometricConsentServiceImplTest {
     @DisplayName("HU SR-RF-23 (Negativo - Foto No Encontrada, Sin Consentimiento, Horizontal y Propósitos Vacíos): Valida casos negativos del servicio y mapeador")
     void shouldFailWhenPhotoNotFoundOrInvalidAndMapEmptyPurposes() throws Exception {
         assertThatThrownBy(() -> consentService.getPhotoByUserId(USER_ID))
-                .isInstanceOf(JobNotFoundException.class);
+                .isInstanceOf(BiometricPhotoNotFoundException.class);
 
         byte[] photoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
         assertThatThrownBy(() -> consentService.uploadPhoto(USER_ID, false, "image/png", photoBytes))
@@ -754,6 +792,59 @@ class BiometricConsentServiceImplTest {
         BiometricConsent foundConsent = consentService.getConsentByUserId(USER_ID);
         assertThat(foundConsent.getPurposes()).isEmpty();
         verify(consentJpaRepository).save(any(BiometricConsentJpaEntity.class));
+    }
+
+    @Test
+    @DisplayName("SR-RF-23 (Ley 1581): Permite carga si biometricConsentAccepted=false pero existe consentimiento previo; rechaza si no existe consentimiento y registra IP real")
+    void shouldRejectUploadWhenFlagIsFalseEvenWithPriorConsentAndRecordRealIp() throws Exception {
+        byte[] photoBytes = PhotoValidationChainTest.createFullBodyFrontalPngBytes(400, 600);
+
+        // 1. Usuario SIN consentimiento previo y flag=false debe ser rechazado de inmediato
+        UserId unconsentedUser = UserId.of(UUID.randomUUID());
+        assertThatThrownBy(() -> consentService.uploadPhoto(unconsentedUser, false, "image/png", photoBytes, "198.51.100.99"))
+                .isInstanceOf(ConsentRequiredException.class);
+
+        // 2. Usuario CON consentimiento activo previo registrado en BD: permite la carga con flag=false
+        consentService.grantConsent(USER_ID, "v1.0-LEY1581-2026", true, List.of("VIRTUAL_TRY_ON_INFERENCE"), "190.24.10.1");
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(photoBytes, MediaType.IMAGE_PNG));
+
+        BiometricPhoto uploadedWithPriorConsent = consentService.uploadPhoto(USER_ID, false, "image/png", photoBytes, "198.51.100.99");
+        assertThat(uploadedWithPriorConsent).isNotNull();
+        assertThat(uploadedWithPriorConsent.isActive()).isTrue();
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        // 3. Nuevo usuario sin consentimiento previo registra clientIp explícita en auto-consentimiento (flag=true)
+        UserId secondUser = UserId.of(UUID.randomUUID());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(photoBytes, MediaType.IMAGE_PNG));
+
+        consentService.uploadPhoto(secondUser, true, "image/png", photoBytes, "198.51.100.42");
+        assertThat(persistedConsents.get(secondUser.value()).getIpAddress()).isEqualTo("198.51.100.42");
+        mockAzureServer.verify();
+        mockAzureServer.reset();
+
+        // 4. Usuario sin clientIp (blank/null) registra loopback 127.0.0.1 en lugar de 0.0.0.0
+        UserId thirdUser = UserId.of(UUID.randomUUID());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=racw")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        mockAzureServer.expect(requestTo(Matchers.containsString("sp=r")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(photoBytes, MediaType.IMAGE_PNG));
+
+        consentService.uploadPhoto(thirdUser, true, "image/png", photoBytes, "   ");
+        assertThat(persistedConsents.get(thirdUser.value()).getIpAddress()).isEqualTo("127.0.0.1");
+        mockAzureServer.verify();
     }
 
     @Test
@@ -849,7 +940,7 @@ class BiometricConsentServiceImplTest {
                 liveBaseUrl,
                 liveContainer,
                 liveKey,
-                Duration.ofMinutes(30),
+                Duration.ofMinutes(15),
                 "2024-11-04"
         );
 

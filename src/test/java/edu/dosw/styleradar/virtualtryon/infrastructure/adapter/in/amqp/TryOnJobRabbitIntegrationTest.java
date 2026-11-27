@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.ExchangeBuilder;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.Queue;
@@ -26,7 +27,6 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.rabbit.listener.adapter.MessageListenerAdapter;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
-import org.springframework.retry.interceptor.RetryInterceptorBuilder;
 import org.springframework.retry.interceptor.RetryOperationsInterceptor;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.RabbitMQContainer;
@@ -91,7 +91,7 @@ class TryOnJobRabbitIntegrationTest {
         rabbitAdmin = new RabbitAdmin(connectionFactory);
 
         // Declarar topología DLX y DLQ
-        TopicExchange dlx = ExchangeBuilder.topicExchange(RabbitConfig.DEFAULT_TRYON_DLX).durable(true).build();
+        DirectExchange dlx = ExchangeBuilder.directExchange(RabbitConfig.DEFAULT_TRYON_DLX).durable(true).build();
         rabbitAdmin.declareExchange(dlx);
 
         Queue dlq = QueueBuilder.durable(RabbitConfig.DEFAULT_TRYON_PROCESS_DLQ).build();
@@ -149,11 +149,9 @@ class TryOnJobRabbitIntegrationTest {
 
         TryOnJobProcessConsumer consumer = new TryOnJobProcessConsumer(mockUseCase);
 
-        RetryOperationsInterceptor retryInterceptor = RetryInterceptorBuilder.stateless()
-                .maxAttempts(3)
-                .backOffOptions(100, 1.5, 500)
-                .recoverer(recoverer)
-                .build();
+        RetryOperationsInterceptor retryInterceptor = RabbitConfig.buildTryOnRetryInterceptor(
+                recoverer, 3, 100, 1.5, 500
+        );
 
         SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
         container.setQueueNames(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE);
@@ -214,11 +212,9 @@ class TryOnJobRabbitIntegrationTest {
 
         TryOnJobProcessConsumer consumer = new TryOnJobProcessConsumer(mockUseCase);
 
-        RetryOperationsInterceptor retryInterceptor = RetryInterceptorBuilder.stateless()
-                .maxAttempts(2)
-                .backOffOptions(50, 1.0, 100)
-                .recoverer(recoverer)
-                .build();
+        RetryOperationsInterceptor retryInterceptor = RabbitConfig.buildTryOnRetryInterceptor(
+                recoverer, 2, 50, 1.0, 100
+        );
 
         SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
         container.setQueueNames(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE);
@@ -276,11 +272,9 @@ class TryOnJobRabbitIntegrationTest {
 
         TryOnJobProcessConsumer consumer = new TryOnJobProcessConsumer(mockUseCase);
 
-        RetryOperationsInterceptor retryInterceptor = RetryInterceptorBuilder.stateless()
-                .maxAttempts(4)
-                .backOffOptions(100, 2.0, 1000)
-                .recoverer(recoverer)
-                .build();
+        RetryOperationsInterceptor retryInterceptor = RabbitConfig.buildTryOnRetryInterceptor(
+                recoverer, 4, 100, 2.0, 1000
+        );
 
         SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
         container.setQueueNames(RabbitConfig.DEFAULT_TRYON_PROCESS_QUEUE);
@@ -310,8 +304,9 @@ class TryOnJobRabbitIntegrationTest {
             TryOnJobDomainEvent deadEvent = (TryOnJobDomainEvent) messageConverter.fromMessage(deadLetterMsg);
             assertThat(deadEvent.jobId()).isEqualTo(nonExistentJobId);
 
-            // Se invocó una sola vez: sin reintentos
+            // Se invocó una sola vez: sin reintentos y sin marcar FAILED en BD vía recoverer
             assertThat(invocationCount.get()).isEqualTo(1);
+            org.mockito.Mockito.verifyNoInteractions(mockService);
         } finally {
             container.stop();
         }

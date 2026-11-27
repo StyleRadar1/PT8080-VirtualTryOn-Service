@@ -99,7 +99,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
                 .withUserId(userId)
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("photos/user1/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl("https://catalog/shirt.png")
                 .withProvider(AiProvider.FASHN_AI);
 
@@ -131,7 +131,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
                 .hasMessageContaining("El consentimiento biométrico ya no está vigente");
 
         assertThat(job.getStatus()).isEqualTo(JobStatus.FAILED);
-        verify(outboxPublisherPort).saveOutboxEvent(eq(job.getId()), eq("tryon.job.failed"), any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort).saveOutboxEvent(eq(job.getId()), eq("styleradar.tryon.job.failed"), any(TryOnJobDomainEvent.class));
     }
 
     @Test
@@ -211,7 +211,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
                 .withUserId(UserId.of(UUID.randomUUID()))
                 .withGarmentId(GarmentId.of(UUID.randomUUID()))
                 .withPhotoUrl("https://account.blob.core.windows.net/biometrics/photos/user1/photo.png")
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl("https://catalog/shirt.png")
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -343,15 +343,15 @@ class ProcessTryOnJobBiometricAndRetryTest {
         UUID idRecentlyUpdated = UUID.randomUUID();
         UUID idRecoverable = UUID.randomUUID();
 
-        TryOnJob candidateNotFound = new TryOnJobBuilder().withId(idNotFound).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOPS).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
-        TryOnJob candidateNotProcessing = new TryOnJobBuilder().withId(idNotProcessing).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOPS).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
+        TryOnJob candidateNotFound = new TryOnJobBuilder().withId(idNotFound).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOP).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
+        TryOnJob candidateNotProcessing = new TryOnJobBuilder().withId(idNotProcessing).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOP).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
         candidateNotProcessing.startAiProcessing();
         candidateNotProcessing.complete(SasSignedUrl.of("https://storage.blob.core.windows.net/res"), 100L);
 
-        TryOnJob candidateRecentlyUpdated = new TryOnJobBuilder().withId(idRecentlyUpdated).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOPS).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
+        TryOnJob candidateRecentlyUpdated = new TryOnJobBuilder().withId(idRecentlyUpdated).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOP).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
         candidateRecentlyUpdated.startAiProcessing();
 
-        TryOnJob candidateRecoverable = new TryOnJobBuilder().withId(idRecoverable).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOPS).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
+        TryOnJob candidateRecoverable = new TryOnJobBuilder().withId(idRecoverable).withUserId(UserId.of(UUID.randomUUID())).withGarmentId(GarmentId.of(UUID.randomUUID())).withPhotoUrl("p").withCategory(GarmentCategory.TOP).withGarmentImageUrl("g").withProvider(AiProvider.FASHN_AI).build();
         candidateRecoverable.startAiProcessing();
         // Simular que fue actualizado hace 1 hora (anterior al threshold)
         java.lang.reflect.Field updatedAtField;
@@ -416,7 +416,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
         verify(blobStoragePort).deleteBlob(renderUrl.value());
         // Verifica que el trabajo purgado NO se transicionó a COMPLETED ni se guardó evento de completed
         assertThat(purgedJob.getStatus()).isNotEqualTo(JobStatus.COMPLETED);
-        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("styleradar.tryon.job.completed"), any(TryOnJobDomainEvent.class));
     }
 
     @Test
@@ -456,7 +456,7 @@ class ProcessTryOnJobBiometricAndRetryTest {
         // Verifica que el trabajo fue purgado y no quedó en COMPLETED
         assertThat(initialJob.isPhotoPurged()).isTrue();
         assertThat(initialJob.getStatus()).isNotEqualTo(JobStatus.COMPLETED);
-        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("tryon.job.completed"), any(TryOnJobDomainEvent.class));
+        verify(outboxPublisherPort, never()).saveOutboxEvent(eq(jobId), eq("styleradar.tryon.job.completed"), any(TryOnJobDomainEvent.class));
     }
 
     @Test

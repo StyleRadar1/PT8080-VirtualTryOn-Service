@@ -41,7 +41,7 @@ class FashnAiLiveIntegrationTest {
         String modelUrl = "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=800&q=80";
         String garmentUrl = "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=800&q=80";
 
-        Optional<byte[]> renderedBytes = adapter.generateTryOnRender(modelUrl, garmentUrl, GarmentCategory.TOPS);
+        Optional<byte[]> renderedBytes = adapter.generateTryOnRender(modelUrl, garmentUrl, GarmentCategory.TOP);
 
         assertThat(renderedBytes).isPresent();
         assertThat(renderedBytes.get().length).isGreaterThan(10000);

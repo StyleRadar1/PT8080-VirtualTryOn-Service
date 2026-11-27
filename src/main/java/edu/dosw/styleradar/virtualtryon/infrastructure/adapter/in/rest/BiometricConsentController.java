@@ -11,6 +11,8 @@ import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.in.rest.doc.BiometricConsentOpenApiDoc;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security.AuthenticatedUser;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -32,9 +34,13 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -42,84 +48,120 @@ import java.util.UUID;
  * Adaptador REST de entrada que expone los endpoints de consentimiento biométrico (Ley 1581)
  * y de carga y validación de la fotografía frontal de silueta del usuario (SR-RF-23),
  * verificando identidad Bearer JWT, permisos de rol y titularidad del recurso biométrico.
+ * Admite tanto identificadores canónicos UUID como IDs numéricos emitidos por ms-auth.
  */
 @RestController
 @RequestMapping("/api/v1/try-on")
 public class BiometricConsentController implements BiometricConsentOpenApiDoc {
 
     private static final Set<String> ALLOWED_BIOMETRIC_ROLES = Set.of(
+            "ROLE_BUYER",
+            "ROLE_STYLERADAR_ADMIN",
+            "ROLE_STORE_ADMIN",
+            "ROLE_FOUNDATION_REPRESENTATIVE",
             "ROLE_COMPRADOR",
             "ROLE_USER",
             "ROLE_ADMIN",
-            "ROLE_ADMIN_STYLERADAR"
+            "ROLE_ADMIN_STYLERADAR",
+            "ROLE_ADMIN_TIENDA",
+            "ROLE_ADMIN_ALMACEN",
+            "ROLE_REPRESENTANTE_FUNDACION",
+            "BUYER",
+            "STYLERADAR_ADMIN",
+            "STORE_ADMIN",
+            "FOUNDATION_REPRESENTATIVE",
+            "COMPRADOR",
+            "USER",
+            "ADMIN",
+            "ADMIN_STYLERADAR",
+            "ADMIN_TIENDA",
+            "ADMIN_ALMACEN",
+            "REPRESENTANTE_FUNDACION"
     );
 
     private static final Set<String> ADMIN_ROLES = Set.of(
             "ROLE_ADMIN",
-            "ROLE_ADMIN_STYLERADAR"
+            "ROLE_ADMIN_STYLERADAR",
+            "ROLE_STYLERADAR_ADMIN",
+            "ADMIN",
+            "ADMIN_STYLERADAR",
+            "STYLERADAR_ADMIN"
     );
 
     private final BiometricConsentService biometricConsentService;
     private final VirtualTryOnDtoMapper dtoMapper;
+    private final List<String> trustedProxies;
 
     public BiometricConsentController(
             BiometricConsentService biometricConsentService,
             VirtualTryOnDtoMapper dtoMapper
     ) {
+        this(biometricConsentService, dtoMapper, List.of("127.0.0.1", "::1"));
+    }
+
+    @Autowired
+    public BiometricConsentController(
+            BiometricConsentService biometricConsentService,
+            VirtualTryOnDtoMapper dtoMapper,
+            @Value("${styleradar.tryon.trusted-proxies:127.0.0.1,::1}") List<String> trustedProxies
+    ) {
         this.biometricConsentService = biometricConsentService;
         this.dtoMapper = dtoMapper;
+        this.trustedProxies = trustedProxies == null ? List.of() : List.copyOf(trustedProxies);
     }
 
     @Override
     @PostMapping("/consents")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
     public ResponseEntity<BiometricConsentResponse> grantConsent(@Valid @RequestBody BiometricConsentRequest request) {
-        verifyCallerIdentityAndPermissions(request.userId());
+        UUID effectiveUserId = resolveAndVerifyCallerUserId(request.userId());
+        String effectiveIp = resolveClientIp();
         BiometricConsent consent = biometricConsentService.grantConsent(
-                UserId.of(request.userId()),
+                UserId.of(effectiveUserId),
                 request.termsVersion(),
                 Boolean.TRUE.equals(request.accepted()),
                 request.purposes(),
-                request.ipAddress()
+                effectiveIp
         );
         return ResponseEntity.status(HttpStatus.CREATED).body(dtoMapper.toConsentResponse(consent));
     }
 
     @Override
     @GetMapping("/consents/{userId}")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
-    public ResponseEntity<BiometricConsentResponse> getConsent(@PathVariable("userId") UUID userId) {
-        verifyCallerIdentityAndPermissions(userId);
-        BiometricConsent consent = biometricConsentService.getConsentByUserId(UserId.of(userId));
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
+    public ResponseEntity<BiometricConsentResponse> getConsent(@PathVariable("userId") Object userId) {
+        UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
+        BiometricConsent consent = biometricConsentService.getConsentByUserId(UserId.of(effectiveUserId));
         return ResponseEntity.ok(dtoMapper.toConsentResponse(consent));
     }
 
     @Override
     @DeleteMapping("/consents/{userId}")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
-    public ResponseEntity<BiometricConsentResponse> revokeConsent(@PathVariable("userId") UUID userId) {
-        verifyCallerIdentityAndPermissions(userId);
-        BiometricConsent revoked = biometricConsentService.revokeConsent(UserId.of(userId));
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
+    public ResponseEntity<BiometricConsentResponse> revokeConsent(@PathVariable("userId") Object userId) {
+        UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
+        BiometricConsent revoked = biometricConsentService.revokeConsent(UserId.of(effectiveUserId));
         return ResponseEntity.ok(dtoMapper.toConsentResponse(revoked));
     }
 
     @Override
     @PostMapping(value = "/photos", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
     public ResponseEntity<BiometricPhotoResponse> uploadPhoto(
-            @RequestParam("userId") UUID userId,
-            @RequestParam(value = "biometricConsent", defaultValue = "true") boolean biometricConsent,
+            @RequestParam(value = "userId", required = false) Object userId,
+            @RequestParam(value = "biometricConsent", required = false, defaultValue = "true") boolean biometricConsent,
             @RequestPart("photo") MultipartFile photo
     ) {
-        verifyCallerIdentityAndPermissions(userId);
+        UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
         try {
             byte[] bytes = photo == null ? null : photo.getBytes();
             String contentType = photo == null ? null : photo.getContentType();
             BiometricPhoto uploaded = biometricConsentService.uploadPhoto(
-                    UserId.of(userId),
+                    UserId.of(effectiveUserId),
                     biometricConsent,
                     contentType,
-                    bytes
+                    bytes,
+                    resolveClientIp()
             );
             return ResponseEntity.status(HttpStatus.CREATED).body(dtoMapper.toPhotoResponse(uploaded));
         } catch (IOException ex) {
@@ -129,14 +171,107 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
 
     @Override
     @GetMapping("/photos/{userId}")
-    @PreAuthorize("hasAnyRole('COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR')")
-    public ResponseEntity<BiometricPhotoResponse> getPhoto(@PathVariable("userId") UUID userId) {
-        verifyCallerIdentityAndPermissions(userId);
-        BiometricPhoto photo = biometricConsentService.getPhotoByUserId(UserId.of(userId));
+    @PreAuthorize("hasAnyRole('BUYER', 'STYLERADAR_ADMIN', 'STORE_ADMIN', 'FOUNDATION_REPRESENTATIVE', 'COMPRADOR', 'USER', 'ADMIN', 'ADMIN_STYLERADAR', 'ADMIN_TIENDA', 'ADMIN_ALMACEN', 'REPRESENTANTE_FUNDACION')")
+    public ResponseEntity<BiometricPhotoResponse> getPhoto(@PathVariable("userId") Object userId) {
+        UUID effectiveUserId = resolveAndVerifyCallerUserId(userId);
+        BiometricPhoto photo = biometricConsentService.getPhotoByUserId(UserId.of(effectiveUserId));
         return ResponseEntity.ok(dtoMapper.toPhotoResponse(photo));
     }
 
-    private void verifyCallerIdentityAndPermissions(UUID targetUserId) {
+    /**
+     * Resuelve la IP a registrar. Las cabeceras X-Forwarded-For / X-Real-IP solo se consideran si la
+     * conexión directa proviene de un proxy confiable; de lo contrario cualquier cliente podría falsificarlas.
+     */
+    private String resolveClientIp() {
+        if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs)) {
+            return null;
+        }
+        HttpServletRequest request = attrs.getRequest();
+        String remoteAddr = request.getRemoteAddr();
+        if (!isTrustedProxy(remoteAddr)) {
+            return remoteAddr;
+        }
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            String[] hops = forwardedFor.split(",");
+            for (int i = hops.length - 1; i >= 0; i--) {
+                String hop = hops[i].trim();
+                if (!isIpLiteral(hop)) {
+                    break;
+                }
+                if (!isTrustedProxy(hop)) {
+                    return hop;
+                }
+            }
+        }
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null && isIpLiteral(realIp.trim()) && !isTrustedProxy(realIp.trim())) {
+            return realIp.trim();
+        }
+        return remoteAddr;
+    }
+
+    private static boolean isIpLiteral(String value) {
+        if (value == null || value.isEmpty() || value.length() > 45) {
+            return false;
+        }
+        if (value.indexOf(':') >= 0) {
+            if (!value.matches("[0-9a-fA-F:.]+")) {
+                return false;
+            }
+        } else if (!value.matches("(\\d{1,3})(\\.\\d{1,3}){3}")) {
+            return false;
+        }
+        try {
+            java.net.InetAddress.getByName(value);
+            return true;
+        } catch (java.net.UnknownHostException ex) {
+            return false;
+        }
+    }
+
+    private boolean isTrustedProxy(String address) {
+        if (!isIpLiteral(address)) {
+            return false;
+        }
+        try {
+            byte[] candidate = java.net.InetAddress.getByName(address).getAddress();
+            for (String entry : trustedProxies) {
+                String[] parts = entry.split("/", 2);
+                if (!isIpLiteral(parts[0].trim())) {
+                    continue;
+                }
+                byte[] network = java.net.InetAddress.getByName(parts[0].trim()).getAddress();
+                if (network.length != candidate.length) {
+                    continue;
+                }
+                int prefix = parts.length == 2 ? Integer.parseInt(parts[1].trim()) : network.length * 8;
+                if (prefix >= 0 && prefix <= network.length * 8 && matchesPrefix(candidate, network, prefix)) {
+                    return true;
+                }
+            }
+        } catch (java.net.UnknownHostException | NumberFormatException ex) {
+            return false;
+        }
+        return false;
+    }
+
+    private static boolean matchesPrefix(byte[] candidate, byte[] network, int prefixBits) {
+        int fullBytes = prefixBits / 8;
+        for (int i = 0; i < fullBytes; i++) {
+            if (candidate[i] != network[i]) {
+                return false;
+            }
+        }
+        int remaining = prefixBits % 8;
+        if (remaining == 0) {
+            return true;
+        }
+        int mask = 0xFF << (8 - remaining);
+        return (candidate[fullBytes] & mask) == (network[fullBytes] & mask);
+    }
+
+    private UUID resolveAndVerifyCallerUserId(Object targetUserIdRaw) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null
                 || !authentication.isAuthenticated()
@@ -155,37 +290,47 @@ public class BiometricConsentController implements BiometricConsentOpenApiDoc {
             );
         }
 
+        UUID authenticatedUuid = extractAuthenticatedUserId(authentication);
+        UUID targetUserId = UserId.parseToUuid(targetUserIdRaw);
+        if (targetUserIdRaw != null && targetUserId == null) {
+            throw new AccessDeniedException(
+                    "Identificador de usuario inválido para validar titularidad biométrica"
+            );
+        }
+
+        if (targetUserId == null) {
+            return authenticatedUuid;
+        }
+        if (authenticatedUuid.equals(targetUserId)) {
+            return targetUserId;
+        }
+
         boolean isAdmin = authentication.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .anyMatch(ADMIN_ROLES::contains);
         if (isAdmin) {
-            return;
+            return targetUserId;
         }
 
+        throw new AccessDeniedException(
+                "No tiene permisos para consultar o modificar los datos biométricos de otro usuario"
+        );
+    }
+
+    private UUID extractAuthenticatedUserId(Authentication authentication) {
         Object principal = authentication.getPrincipal();
         if (principal instanceof AuthenticatedUser authenticatedUser) {
-            if (!authenticatedUser.canAccessUser(targetUserId)) {
-                throw new AccessDeniedException(
-                        "No tiene permisos para consultar o modificar los datos biométricos de otro usuario"
-                );
-            }
-            return;
+            return authenticatedUser.userId();
         }
-
         String principalName = principal instanceof UserDetails userDetails
                 ? userDetails.getUsername()
                 : authentication.getName();
-        try {
-            UUID authenticatedUuid = UUID.fromString(principalName);
-            if (!authenticatedUuid.equals(targetUserId)) {
-                throw new AccessDeniedException(
-                        "No tiene permisos para consultar o modificar los datos biométricos de otro usuario"
-                );
-            }
-        } catch (IllegalArgumentException ignored) {
+        UUID parsed = UserId.parseToUuid(principalName);
+        if (parsed == null) {
             throw new AccessDeniedException(
                     "Identidad de usuario autenticado inválida para validar titularidad biométrica"
             );
         }
+        return parsed;
     }
 }

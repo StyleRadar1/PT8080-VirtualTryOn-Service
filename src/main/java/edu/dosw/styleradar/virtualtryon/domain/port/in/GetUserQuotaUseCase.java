@@ -1,9 +1,14 @@
 package edu.dosw.styleradar.virtualtryon.domain.port.in;
 
 import edu.dosw.styleradar.virtualtryon.domain.model.CatalogGarment;
+import edu.dosw.styleradar.virtualtryon.domain.model.GarmentValidationResult;
 import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Puerto de entrada (Use Case) para la consulta de cuotas mensuales de prueba virtual,
@@ -13,8 +18,41 @@ public interface GetUserQuotaUseCase {
 
     UserQuota getUserQuota(UserId userId);
 
-    CatalogGarment validateGarmentEligibility(UserId userId, GarmentId garmentId);
+    default UserQuota updateUserSubscriptionPlan(UserId userId, boolean radarPlusActive) {
+        return getUserQuota(userId);
+    }
+
+    default UserQuota updateUserSubscriptionPlan(UserId userId, boolean radarPlusActive, Instant occurredAt) {
+        return updateUserSubscriptionPlan(userId, radarPlusActive);
+    }
+
+    GarmentValidationResult validateGarmentEligibility(
+            UserId userId,
+            GarmentId garmentId,
+            List<GarmentId> selectedGarmentIds
+    );
+
+    default GarmentValidationResult validateGarmentEligibility(
+            UserId userId,
+            GarmentId garmentId,
+            String selectedSize,
+            List<GarmentId> selectedGarmentIds
+    ) {
+        return validateGarmentEligibility(userId, garmentId, selectedGarmentIds);
+    }
+
+    default GarmentValidationResult validateGarmentEligibility(UserId userId, GarmentId garmentId) {
+        return validateGarmentEligibility(userId, garmentId, List.of());
+    }
 
     CatalogGarment syncCatalogGarment(CatalogGarment garment);
+
+    default Optional<CatalogGarment> updateCatalogGarmentVisibility(
+            GarmentId garmentId,
+            boolean visible,
+            Instant updatedAt
+    ) {
+        return Optional.empty();
+    }
 }
 

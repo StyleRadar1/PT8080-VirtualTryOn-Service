@@ -1,5 +1,6 @@
 package edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.security;
 
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.JwtException;
@@ -70,11 +71,22 @@ public class JwtTokenProvider {
         if (userId == null) {
             throw new IllegalArgumentException("El identificador de usuario no puede ser nulo");
         }
+        return generateTokenForSubject(userId.toString(), role);
+    }
+
+    /**
+     * Genera un token JWT firmado con HS256 permitiendo un subject arbitrario (UUID o ID numérico de Auth).
+     */
+    public String generateTokenForSubject(String subject, String role) {
+        if (subject == null || subject.isBlank()) {
+            throw new IllegalArgumentException("El identificador de usuario (subject) no puede ser nulo ni vacío");
+        }
         String resolvedRole = (role == null || role.isBlank()) ? "COMPRADOR" : role.trim().toUpperCase();
         var now = clock.instant();
         return Jwts.builder()
-                .subject(userId.toString())
+                .subject(subject)
                 .claim("role", resolvedRole)
+                .claim("roles", java.util.List.of(resolvedRole))
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(duration)))
                 .signWith(key, Jwts.SIG.HS256)
@@ -97,26 +109,95 @@ public class JwtTokenProvider {
             throw new JwtException("Fechas de vigencia del token JWT inválidas");
         }
 
+        UUID userId = resolveUserId(claims);
+        java.util.List<String> roles = extractRoles(claims);
+        if (roles.isEmpty()) {
+            throw new JwtException("El token JWT no contiene roles válidos");
+        }
+        return new AuthenticatedUser(userId, roles.get(0), roles);
+    }
+
+    private static UUID resolveUserId(Claims claims) {
         String subject = claims.getSubject();
+        UUID subjectUuid = parseUuidOrNull(subject);
+        if (subjectUuid != null) {
+            return subjectUuid;
+        }
+        for (String key : new String[]{"userId", "user_id", "id", "usuarioId"}) {
+            Object raw = claims.get(key);
+            if (raw != null) {
+                UUID claimUuid = parseUuidOrNull(raw.toString());
+                if (claimUuid != null) {
+                    return claimUuid;
+                }
+            }
+        }
         if (subject == null || subject.isBlank()) {
             throw new JwtException("Subject del token JWT ausente");
         }
+        UUID parsed = UserId.parseToUuid(subject);
+        if (parsed == null) {
+            throw new JwtException("Identificador de usuario en subject JWT inválido");
+        }
+        return parsed;
+    }
 
-        UUID userId = parseUserId(subject.trim());
-        String roleClaim = claims.get("role", String.class);
-        String resolvedRole = (roleClaim == null || roleClaim.isBlank()) ? "COMPRADOR" : roleClaim;
-        return new AuthenticatedUser(userId, resolvedRole);
+    private static UUID parseUuidOrNull(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw.trim());
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private static java.util.List<String> extractRoles(Claims claims) {
+        java.util.Set<String> collected = new java.util.LinkedHashSet<>();
+        extractRolesFromClaim(collected, claims.get("roles"));
+        extractRolesFromClaim(collected, claims.get("role"));
+        extractRolesFromClaim(collected, claims.get("authorities"));
+        extractRolesFromClaim(collected, claims.get("scope"));
+        return java.util.List.copyOf(collected);
+    }
+
+    private static void extractRolesFromClaim(java.util.Set<String> target, Object claimValue) {
+        if (claimValue == null) {
+            return;
+        }
+        if (claimValue instanceof java.util.Collection<?> collection) {
+            for (Object item : collection) {
+                if (item != null) {
+                    addNormalizedRole(target, item.toString());
+                }
+            }
+        } else if (claimValue instanceof String str) {
+            for (String token : str.split("[,\\s]+")) {
+                addNormalizedRole(target, token);
+            }
+        }
+    }
+
+    private static void addNormalizedRole(java.util.Set<String> target, String rawRole) {
+        if (rawRole == null || rawRole.isBlank()) {
+            return;
+        }
+        String normalized = rawRole.trim().toUpperCase();
+        if (normalized.startsWith("ROLE_")) {
+            normalized = normalized.substring(5);
+        }
+        if (!normalized.isBlank()) {
+            target.add(normalized);
+        }
     }
 
     private static UUID parseUserId(String rawSubject) {
-        try {
-            return UUID.fromString(rawSubject);
-        } catch (IllegalArgumentException ex) {
-            if (rawSubject.matches("[1-9][0-9]*")) {
-                return UUID.nameUUIDFromBytes(("styleradar-user-" + rawSubject).getBytes(StandardCharsets.UTF_8));
-            }
-            throw new JwtException("Identificador de usuario en subject JWT inválido", ex);
+        UUID parsed = UserId.parseToUuid(rawSubject);
+        if (parsed == null) {
+            throw new JwtException("Identificador de usuario en subject JWT inválido");
         }
+        return parsed;
     }
 }
 

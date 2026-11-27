@@ -32,7 +32,7 @@ class TryOnJobModelAndOutboxEntityTest {
                 .withUserId(userId)
                 .withGarmentId(garmentId)
                 .withPhotoUrl(photoUrl)
-                .withCategory(GarmentCategory.TOPS)
+                .withCategory(GarmentCategory.TOP)
                 .withGarmentImageUrl("https://catalog/shirt.png")
                 .withProvider(AiProvider.FASHN_AI)
                 .build();
@@ -41,7 +41,7 @@ class TryOnJobModelAndOutboxEntityTest {
         assertThat(job.getUserId()).isEqualTo(userId);
         assertThat(job.getGarmentId()).isEqualTo(garmentId);
         assertThat(job.getPhotoUrl()).isEqualTo(photoUrl);
-        assertThat(job.getGarmentCategory()).isEqualTo(GarmentCategory.TOPS);
+        assertThat(job.getGarmentCategory()).isEqualTo(GarmentCategory.TOP);
         assertThat(job.getGarmentImageUrl()).isEqualTo("https://catalog/shirt.png");
         assertThat(job.getAiProvider()).isEqualTo(AiProvider.FASHN_AI);
         assertThat(job.getStatus()).isEqualTo(JobStatus.QUEUED);
@@ -58,6 +58,7 @@ class TryOnJobModelAndOutboxEntityTest {
         job.complete(renderUrl, 2500L);
         assertThat(job.getStatus()).isEqualTo(JobStatus.COMPLETED);
         assertThat(job.getExecutionTimeMs()).isEqualTo(2500L);
+        assertThat(job.getCompletedAt()).isNotNull();
         assertThat(job.getResultImageUrl()).isEqualTo(renderUrl);
 
         job.complete(renderUrl, -10L);
@@ -101,18 +102,18 @@ class TryOnJobModelAndOutboxEntityTest {
         GarmentId garmentId = GarmentId.of(UUID.randomUUID());
 
         assertThatThrownBy(() -> new TryOnJob(
-                id, userId, garmentId, null, GarmentCategory.TOPS,
+                id, userId, garmentId, null, GarmentCategory.TOP,
                 JobStatus.QUEUED, null, AiProvider.FASHN_AI, null, null, false, Instant.now(), Instant.now()
         )).isInstanceOf(IllegalArgumentException.class);
 
         assertThatThrownBy(() -> new TryOnJob(
-                id, userId, garmentId, "   ", GarmentCategory.TOPS,
+                id, userId, garmentId, "   ", GarmentCategory.TOP,
                 JobStatus.QUEUED, null, AiProvider.FASHN_AI, null, null, false, Instant.now(), Instant.now()
         )).isInstanceOf(IllegalArgumentException.class);
 
         // Si photoPurged es true, permite photoUrl nula o PURGED
         TryOnJob purgedJob = new TryOnJob(
-                id, userId, garmentId, null, GarmentCategory.TOPS,
+                id, userId, garmentId, null, GarmentCategory.TOP,
                 JobStatus.COMPLETED, null, AiProvider.FASHN_AI, 100L, null, true, Instant.now(), Instant.now()
         );
         assertThat(purgedJob.isPhotoPurged()).isTrue();

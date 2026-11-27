@@ -6,6 +6,8 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -18,10 +20,42 @@ public interface UserQuotaRepositoryPort {
 
     Optional<UserQuota> findQuotaByUserIdAndPeriod(UserId userId, BillingPeriod billingPeriod);
 
+    Optional<UserQuota> findLatestQuotaByUserId(UserId userId);
+
     Optional<UserQuota> findQuotaByUserIdAndPeriodForUpdate(UserId userId, BillingPeriod billingPeriod);
+
+    UserQuota findOrCreateQuotaForUpdate(UserId userId, BillingPeriod billingPeriod);
+
+    UserQuota updateQuotaPlanAtomically(
+            UserId userId,
+            BillingPeriod billingPeriod,
+            boolean radarPlusActive,
+            java.time.Instant occurredAt
+    );
 
     CatalogGarment saveCatalogGarment(CatalogGarment garment);
 
+    /**
+     * Persiste una prenda solo si no existe o si su {@code updatedAt} es estrictamente
+     * más reciente que el registro ya almacenado, devolviendo la versión autoritativa en base de datos.
+     */
+    default CatalogGarment upsertCatalogGarmentIfNewer(CatalogGarment garment) {
+        return saveCatalogGarment(garment);
+    }
+
     Optional<CatalogGarment> findCatalogGarmentById(GarmentId garmentId);
+
+    /**
+     * Recupera múltiples prendas del catálogo local a partir de sus identificadores.
+     */
+    default List<CatalogGarment> findCatalogGarmentsByIds(Collection<GarmentId> garmentIds) {
+        if (garmentIds == null || garmentIds.isEmpty()) {
+            return List.of();
+        }
+        return garmentIds.stream()
+                .map(this::findCatalogGarmentById)
+                .flatMap(Optional::stream)
+                .toList();
+    }
 }
 

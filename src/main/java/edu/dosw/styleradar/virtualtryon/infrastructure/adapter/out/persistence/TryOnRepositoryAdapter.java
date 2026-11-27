@@ -29,8 +29,13 @@ import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.r
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.TryOnOutfitJpaRepository;
 import edu.dosw.styleradar.virtualtryon.infrastructure.adapter.out.persistence.repository.UserQuotaJpaRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -42,6 +47,8 @@ import java.util.UUID;
 @Component
 public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, UserQuotaRepositoryPort, TryOnJobRepositoryPort {
 
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(TryOnRepositoryAdapter.class);
+
     private final BiometricConsentJpaRepository consentJpaRepository;
     private final BiometricPhotoJpaRepository photoJpaRepository;
     private final UserQuotaJpaRepository quotaJpaRepository;
@@ -50,6 +57,7 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     private final JobAuditLogJpaRepository jobAuditLogJpaRepository;
     private final TryOnOutfitJpaRepository tryOnOutfitJpaRepository;
     private final TryOnPersistenceMapper persistenceMapper;
+    private final TransactionTemplate requiresNewTransactionTemplate;
 
     @Autowired
     public TryOnRepositoryAdapter(
@@ -60,7 +68,8 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
             TryOnJobJpaRepository tryOnJobJpaRepository,
             JobAuditLogJpaRepository jobAuditLogJpaRepository,
             TryOnOutfitJpaRepository tryOnOutfitJpaRepository,
-            TryOnPersistenceMapper persistenceMapper
+            TryOnPersistenceMapper persistenceMapper,
+            @Autowired(required = false) PlatformTransactionManager transactionManager
     ) {
         this.consentJpaRepository = consentJpaRepository;
         this.photoJpaRepository = photoJpaRepository;
@@ -70,6 +79,36 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
         this.jobAuditLogJpaRepository = jobAuditLogJpaRepository;
         this.tryOnOutfitJpaRepository = tryOnOutfitJpaRepository;
         this.persistenceMapper = persistenceMapper;
+        if (transactionManager != null) {
+            TransactionTemplate template = new TransactionTemplate(transactionManager);
+            template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            this.requiresNewTransactionTemplate = template;
+        } else {
+            this.requiresNewTransactionTemplate = null;
+        }
+    }
+
+    public TryOnRepositoryAdapter(
+            BiometricConsentJpaRepository consentJpaRepository,
+            BiometricPhotoJpaRepository photoJpaRepository,
+            UserQuotaJpaRepository quotaJpaRepository,
+            CatalogGarmentJpaRepository catalogGarmentJpaRepository,
+            TryOnJobJpaRepository tryOnJobJpaRepository,
+            JobAuditLogJpaRepository jobAuditLogJpaRepository,
+            TryOnOutfitJpaRepository tryOnOutfitJpaRepository,
+            TryOnPersistenceMapper persistenceMapper
+    ) {
+        this(
+                consentJpaRepository,
+                photoJpaRepository,
+                quotaJpaRepository,
+                catalogGarmentJpaRepository,
+                tryOnJobJpaRepository,
+                jobAuditLogJpaRepository,
+                tryOnOutfitJpaRepository,
+                persistenceMapper,
+                null
+        );
     }
 
     public TryOnRepositoryAdapter(
@@ -170,8 +209,88 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     }
 
     @Override
+    public UserQuota findOrCreateQuotaForUpdate(UserId userId, BillingPeriod billingPeriod) {
+        Optional<UserQuotaJpaEntity> existing = quotaJpaRepository
+                .findByUserIdAndBillingPeriodForUpdate(userId.value(), billingPeriod.getValue());
+        if (existing.isPresent()) {
+            return persistenceMapper.toQuotaDomain(existing.get());
+        }
+        UserQuota previous = findLatestQuotaByUserId(userId).orElse(null);
+        UserQuota initial = UserQuota.createForNewPeriod(userId, billingPeriod, previous);
+        UserQuotaJpaEntity locked = insertQuotaIfAbsentAndLock(userId, billingPeriod, initial)
+                .orElseGet(() -> quotaJpaRepository.save(persistenceMapper.toQuotaJpaEntity(initial)));
+        return persistenceMapper.toQuotaDomain(locked);
+    }
+
+    private Optional<UserQuotaJpaEntity> insertQuotaIfAbsentAndLock(
+            UserId userId,
+            BillingPeriod billingPeriod,
+            UserQuota initial
+    ) {
+        quotaJpaRepository.insertIfAbsent(
+                initial.getId(),
+                userId.value(),
+                initial.getMonthlyLimit(),
+                initial.getUsedCount(),
+                billingPeriod.getValue(),
+                initial.isRadarPlus(),
+                initial.getLastResetAt(),
+                initial.getPlanUpdatedAt()
+        );
+        return quotaJpaRepository.findByUserIdAndBillingPeriodForUpdate(
+                userId.value(), billingPeriod.getValue()
+        );
+    }
+
+    @Override
+    public UserQuota updateQuotaPlanAtomically(
+            UserId userId,
+            BillingPeriod billingPeriod,
+            boolean radarPlusActive,
+            java.time.Instant occurredAt
+    ) {
+        if (userId == null || billingPeriod == null || occurredAt == null || quotaJpaRepository == null) {
+            return null;
+        }
+        Optional<UserQuotaJpaEntity> existing = quotaJpaRepository
+                .findByUserIdAndBillingPeriodForUpdate(userId.value(), billingPeriod.getValue());
+        UserQuotaJpaEntity target;
+        if (existing.isPresent()) {
+            target = existing.get();
+        } else {
+            UserQuota previous = findLatestQuotaByUserId(userId).orElse(null);
+            UserQuota initial = UserQuota.createForNewPeriod(userId, billingPeriod, previous);
+            if (initial.getPlanUpdatedAt() != null && occurredAt.isBefore(initial.getPlanUpdatedAt())) {
+                return initial;
+            }
+            target = insertQuotaIfAbsentAndLock(userId, billingPeriod, initial)
+                    .orElseGet(() -> persistenceMapper.toQuotaJpaEntity(initial));
+        }
+
+        if (target.getPlanUpdatedAt() != null && occurredAt.isBefore(target.getPlanUpdatedAt())) {
+            return persistenceMapper.toQuotaDomain(target);
+        }
+        target.setRadarPlus(radarPlusActive);
+        target.setMonthlyLimit(radarPlusActive
+                ? UserQuota.RADAR_PLUS_MONTHLY_LIMIT
+                : UserQuota.DEFAULT_FREE_MONTHLY_LIMIT);
+        target.setPlanUpdatedAt(occurredAt);
+        UserQuotaJpaEntity saved = quotaJpaRepository.save(target);
+        return persistenceMapper.toQuotaDomain(saved);
+    }
+
+    @Override
     public Optional<UserQuota> findQuotaByUserIdAndPeriod(UserId userId, BillingPeriod billingPeriod) {
         return quotaJpaRepository.findByUserIdAndBillingPeriod(userId.value(), billingPeriod.getValue())
+                .map(persistenceMapper::toQuotaDomain);
+    }
+
+    @Override
+    public Optional<UserQuota> findLatestQuotaByUserId(UserId userId) {
+        if (quotaJpaRepository == null || userId == null) {
+            return Optional.empty();
+        }
+        return quotaJpaRepository.findFirstByUserIdOrderByBillingPeriodDescLastResetAtDesc(userId.value())
                 .map(persistenceMapper::toQuotaDomain);
     }
 
@@ -190,9 +309,75 @@ public class TryOnRepositoryAdapter implements BiometricDataRepositoryPort, User
     }
 
     @Override
+    public CatalogGarment upsertCatalogGarmentIfNewer(CatalogGarment garment) {
+        java.util.Objects.requireNonNull(garment, "La prenda de catálogo no puede ser nula");
+        CatalogGarmentJpaEntity incoming = persistenceMapper.toCatalogGarmentJpaEntity(garment);
+        UUID garmentUuid = incoming.getGarmentId();
+
+        Optional<CatalogGarmentJpaEntity> existingOpt = catalogGarmentJpaRepository.findByIdForUpdate(garmentUuid);
+        if (existingOpt.isEmpty() && requiresNewTransactionTemplate != null) {
+            insertRowIgnoringDuplicateKey(incoming);
+            existingOpt = catalogGarmentJpaRepository.findByIdForUpdate(garmentUuid);
+        }
+
+        if (existingOpt.isEmpty()) {
+            existingOpt = catalogGarmentJpaRepository.findById(garmentUuid);
+        }
+
+        if (existingOpt.isEmpty()) {
+            CatalogGarmentJpaEntity saved = catalogGarmentJpaRepository.save(incoming);
+            return persistenceMapper.toCatalogGarmentDomain(saved);
+        }
+
+        CatalogGarmentJpaEntity existing = existingOpt.get();
+        if (existing.getUpdatedAt() != null
+                && incoming.getUpdatedAt() != null
+                && !incoming.getUpdatedAt().isAfter(existing.getUpdatedAt())) {
+            return persistenceMapper.toCatalogGarmentDomain(existing);
+        }
+
+        existing.setName(incoming.getName());
+        existing.setCategory(incoming.getCategory());
+        existing.setImageUrl(incoming.getImageUrl());
+        existing.setVisible(incoming.isVisible());
+        existing.setAvailableSizes(incoming.getAvailableSizes());
+        existing.setUpdatedAt(incoming.getUpdatedAt());
+        CatalogGarmentJpaEntity updated = catalogGarmentJpaRepository.save(existing);
+        return persistenceMapper.toCatalogGarmentDomain(updated);
+    }
+
+    private void insertRowIgnoringDuplicateKey(CatalogGarmentJpaEntity incoming) {
+        try {
+            requiresNewTransactionTemplate.executeWithoutResult(status -> catalogGarmentJpaRepository.insertRow(
+                    incoming.getGarmentId(),
+                    incoming.getName(),
+                    incoming.getCategory(),
+                    incoming.getImageUrl(),
+                    incoming.isVisible(),
+                    incoming.getAvailableSizes(),
+                    incoming.getUpdatedAt()
+            ));
+        } catch (DataIntegrityViolationException ex) {
+            LOGGER.debug("Inserción concurrente detectada al hidratar prenda {}: {}",
+                    incoming.getGarmentId(), ex.getMessage());
+        }
+    }
+
+    @Override
     public Optional<CatalogGarment> findCatalogGarmentById(GarmentId garmentId) {
         return catalogGarmentJpaRepository.findById(garmentId.value())
                 .map(persistenceMapper::toCatalogGarmentDomain);
+    }
+
+    @Override
+    public List<CatalogGarment> findCatalogGarmentsByIds(Collection<GarmentId> garmentIds) {
+        if (garmentIds == null || garmentIds.isEmpty()) {
+            return List.of();
+        }
+        List<UUID> ids = garmentIds.stream().map(GarmentId::value).toList();
+        return catalogGarmentJpaRepository.findAllById(ids).stream()
+                .map(persistenceMapper::toCatalogGarmentDomain)
+                .toList();
     }
 
     @Override

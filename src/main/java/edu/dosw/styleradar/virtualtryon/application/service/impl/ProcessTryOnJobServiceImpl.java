@@ -7,20 +7,27 @@ import edu.dosw.styleradar.virtualtryon.domain.model.AiProvider;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobAuditLog;
 import edu.dosw.styleradar.virtualtryon.domain.model.JobStatus;
 import edu.dosw.styleradar.virtualtryon.domain.model.TryOnJob;
+import edu.dosw.styleradar.virtualtryon.domain.model.UserQuota;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.OutboxPublisherPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.TryOnJobRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BlobStoragePort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaCachePort;
+import edu.dosw.styleradar.virtualtryon.domain.port.out.UserQuotaRepositoryPort;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.exception.AiInferencePermanentException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
 import edu.dosw.styleradar.virtualtryon.domain.exception.InvalidPhotoException;
 import edu.dosw.styleradar.virtualtryon.domain.strategy.AiInferenceStrategy;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.BillingPeriod;
 import edu.dosw.styleradar.virtualtryon.domain.valueobject.SasSignedUrl;
+import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -48,6 +55,8 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
     private final TransactionTemplate transactionTemplate;
     private final BiometricDataRepositoryPort biometricDataRepositoryPort;
     private final BlobStoragePort blobStoragePort;
+    private final UserQuotaRepositoryPort userQuotaRepositoryPort;
+    private final UserQuotaCachePort userQuotaCachePort;
 
     @Autowired
     public ProcessTryOnJobServiceImpl(
@@ -56,7 +65,9 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
             List<AiInferenceStrategy> inferenceStrategies,
             TransactionTemplate transactionTemplate,
             BiometricDataRepositoryPort biometricDataRepositoryPort,
-            BlobStoragePort blobStoragePort
+            BlobStoragePort blobStoragePort,
+            @Autowired(required = false) UserQuotaRepositoryPort userQuotaRepositoryPort,
+            @Autowired(required = false) UserQuotaCachePort userQuotaCachePort
     ) {
         this.jobRepositoryPort = Objects.requireNonNull(jobRepositoryPort, "jobRepositoryPort no puede ser nulo");
         this.outboxPublisherPort = Objects.requireNonNull(outboxPublisherPort, "outboxPublisherPort es obligatorio para consistencia de eventos (Transactional Outbox)");
@@ -64,9 +75,24 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
         this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate es obligatorio para garantizar atomicidad transaccional");
         this.biometricDataRepositoryPort = Objects.requireNonNull(biometricDataRepositoryPort, "biometricDataRepositoryPort es obligatorio antes de inferencia");
         this.blobStoragePort = Objects.requireNonNull(blobStoragePort, "blobStoragePort es obligatorio antes de inferencia");
+        this.userQuotaRepositoryPort = userQuotaRepositoryPort;
+        this.userQuotaCachePort = userQuotaCachePort;
     }
 
-    /** Constructor de compatibilidad para pruebas unitarias sin infraestructura biométrica. */
+    /** Constructor de compatibilidad para pruebas sin repositorios de cuota. */
+    public ProcessTryOnJobServiceImpl(
+            TryOnJobRepositoryPort jobRepositoryPort,
+            OutboxPublisherPort outboxPublisherPort,
+            List<AiInferenceStrategy> inferenceStrategies,
+            TransactionTemplate transactionTemplate,
+            BiometricDataRepositoryPort biometricDataRepositoryPort,
+            BlobStoragePort blobStoragePort
+    ) {
+        this(jobRepositoryPort, outboxPublisherPort, inferenceStrategies, transactionTemplate,
+                biometricDataRepositoryPort, blobStoragePort, null, null);
+    }
+
+    /** Constructor de compatibilidad para pruebas unitarias sin infraestructura biométrica ni de cuota. */
     public ProcessTryOnJobServiceImpl(
             TryOnJobRepositoryPort jobRepositoryPort,
             OutboxPublisherPort outboxPublisherPort,
@@ -79,6 +105,8 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
         this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate no puede ser nulo");
         this.biometricDataRepositoryPort = null;
         this.blobStoragePort = null;
+        this.userQuotaRepositoryPort = null;
+        this.userQuotaCachePort = null;
     }
 
     @Override
@@ -158,7 +186,7 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
                         "Generación de prueba virtual completada exitosamente en " + elapsed + " ms (" + targetJob.getAiProvider() + ")"
                 ));
                 // Persistencia de evento en Transactional Outbox
-                outboxPublisherPort.saveOutboxEvent(targetJob.getId(), "tryon.job.completed", TryOnJobDomainEvent.fromJob(targetJob));
+                outboxPublisherPort.saveOutboxEvent(targetJob.getId(), TryOnJobDomainEvent.ROUTING_KEY_COMPLETED, TryOnJobDomainEvent.fromJob(targetJob));
                 return targetJob;
             });
 
@@ -213,17 +241,19 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
             TryOnJob job = jobRepositoryPort.findJobByIdForUpdate(jobId)
                     .orElseThrow(() -> new JobNotFoundException(jobId));
             if (job.getStatus() == JobStatus.COMPLETED || job.getStatus() == JobStatus.FAILED
-                    || job.getStatus() == JobStatus.CANCELLED) return job;
+                    || job.getStatus() == JobStatus.CANCELLED) {
+                return job;
+            }
             JobStatus previousStatus = job.getStatus();
-            job.markFailed(reason);
-            TryOnJob saved = jobRepositoryPort.saveJob(job);
-            TryOnJob targetJob = saved != null ? saved : job;
-            jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                    targetJob.getId(), previousStatus, JobStatus.FAILED,
-                    "Reintentos AMQP agotados o fallo no recuperable: " + targetJob.getErrorMessage()
-            ));
-            outboxPublisherPort.saveOutboxEvent(targetJob.getId(), "tryon.job.failed", TryOnJobDomainEvent.fromJob(targetJob));
-            return targetJob;
+            String safeReason = (reason == null || reason.isBlank())
+                    ? "Reintentos agotados en inferencia"
+                    : reason;
+            return transitionJobToFailedAndRefundQuota(
+                    job,
+                    previousStatus,
+                    reason,
+                    "Reintentos AMQP agotados o fallo no recuperable: " + safeReason
+            );
         });
     }
 
@@ -256,15 +286,12 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
                         return false;
                     }
 
-                    lockedJob.markFailed("Timeout de procesamiento: trabajo interrumpido por caída de worker");
-                    jobRepositoryPort.saveJob(lockedJob);
-                    jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
-                            lockedJob.getId(),
+                    transitionJobToFailedAndRefundQuota(
+                            lockedJob,
                             JobStatus.PROCESSING,
-                            JobStatus.FAILED,
+                            "Timeout de procesamiento: trabajo interrumpido por caída de worker",
                             "Recuperación automática de trabajo bloqueado por caída de nodo ejecutor"
-                    ));
-                    outboxPublisherPort.saveOutboxEvent(lockedJob.getId(), "tryon.job.failed", TryOnJobDomainEvent.fromJob(lockedJob));
+                    );
                     return true;
                 }));
 
@@ -276,6 +303,79 @@ public class ProcessTryOnJobServiceImpl implements ProcessTryOnJobService {
             }
         }
         return recovered;
+    }
+
+    private TryOnJob transitionJobToFailedAndRefundQuota(
+            TryOnJob lockedJob,
+            JobStatus previousStatus,
+            String failureReason,
+            String auditReason
+    ) {
+        lockedJob.markFailed(failureReason);
+        TryOnJob saved = jobRepositoryPort.saveJob(lockedJob);
+        TryOnJob targetJob = saved != null ? saved : lockedJob;
+        jobRepositoryPort.saveAuditLog(JobAuditLog.ofTransition(
+                targetJob.getId(),
+                previousStatus,
+                JobStatus.FAILED,
+                auditReason
+        ));
+        refundQuotaWithinTransaction(targetJob);
+        outboxPublisherPort.saveOutboxEvent(
+                targetJob.getId(),
+                TryOnJobDomainEvent.ROUTING_KEY_FAILED,
+                TryOnJobDomainEvent.fromJob(targetJob)
+        );
+        return targetJob;
+    }
+
+    private void refundQuotaWithinTransaction(TryOnJob failedJob) {
+        if (userQuotaRepositoryPort == null) {
+            return;
+        }
+        BillingPeriod period = failedJob.getCreatedAt() != null
+                ? BillingPeriod.fromInstant(failedJob.getCreatedAt())
+                : BillingPeriod.current();
+        userQuotaRepositoryPort.findQuotaByUserIdAndPeriodForUpdate(failedJob.getUserId(), period)
+                .ifPresent(quota -> {
+                    if (quota.getUsedCount() > 0) {
+                        quota.refundQuota();
+                        UserQuota savedQuota = userQuotaRepositoryPort.saveQuota(quota);
+                        int updatedUsedCount = savedQuota != null ? savedQuota.getUsedCount() : quota.getUsedCount();
+                        syncQuotaCachePostCommit(failedJob.getUserId(), period, updatedUsedCount);
+                    }
+                });
+    }
+
+    private void syncQuotaCachePostCommit(UserId userId, BillingPeriod period, int usedCount) {
+        if (userQuotaCachePort == null) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    safeCacheUsedCount(userId, period, usedCount);
+                }
+            });
+        } else {
+            safeCacheUsedCount(userId, period, usedCount);
+        }
+    }
+
+    private void safeCacheUsedCount(UserId userId, BillingPeriod period, int usedCount) {
+        try {
+            userQuotaCachePort.cacheUsedCount(userId, period, usedCount);
+        } catch (Exception ex) {
+            log.warn("No se pudo sincronizar en Redis el reembolso de cuota para usuario {} período {} ({}); intentando invalidar entrada",
+                    userId.value(), period.getValue(), ex.getMessage());
+            try {
+                userQuotaCachePort.evictQuota(userId, period);
+            } catch (Exception evictEx) {
+                log.warn("No fue posible invalidar la caché de cuota en Redis para usuario {} período {}: {}",
+                        userId.value(), period.getValue(), evictEx.getMessage());
+            }
+        }
     }
 
     private <T> T executeInTransaction(Supplier<T> action) {

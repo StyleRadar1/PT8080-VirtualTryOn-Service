@@ -31,6 +31,9 @@ public class CatalogGarmentJpaEntity {
     @Column(name = "visible", nullable = false)
     private boolean visible;
 
+    @Column(name = "available_sizes", length = 255)
+    private String availableSizes;
+
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
@@ -45,11 +48,24 @@ public class CatalogGarmentJpaEntity {
             boolean visible,
             Instant updatedAt
     ) {
+        this(garmentId, name, category, imageUrl, visible, null, updatedAt);
+    }
+
+    public CatalogGarmentJpaEntity(
+            UUID garmentId,
+            String name,
+            String category,
+            String imageUrl,
+            boolean visible,
+            String availableSizes,
+            Instant updatedAt
+    ) {
         this.garmentId = garmentId;
         this.name = name;
         this.category = category;
         this.imageUrl = imageUrl;
         this.visible = visible;
+        this.availableSizes = availableSizes;
         this.updatedAt = updatedAt;
     }
 
@@ -93,6 +109,14 @@ public class CatalogGarmentJpaEntity {
         this.visible = visible;
     }
 
+    public String getAvailableSizes() {
+        return availableSizes;
+    }
+
+    public void setAvailableSizes(String availableSizes) {
+        this.availableSizes = availableSizes;
+    }
+
     public Instant getUpdatedAt() {
         return updatedAt;
     }
@@ -101,4 +125,3 @@ public class CatalogGarmentJpaEntity {
         this.updatedAt = updatedAt;
     }
 }
-

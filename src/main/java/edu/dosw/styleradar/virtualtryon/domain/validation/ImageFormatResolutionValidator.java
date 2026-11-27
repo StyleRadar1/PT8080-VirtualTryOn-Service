@@ -26,11 +26,17 @@ public class ImageFormatResolutionValidator extends AbstractTryOnValidatorHandle
             throw new InvalidPhotoException("La fotografía no puede estar vacía");
         }
         String contentType = context.getContentType();
-        if (contentType == null || !ALLOWED_CONTENT_TYPES.contains(contentType.toLowerCase())) {
+        String normalizedContentType = contentType == null ? null : contentType.trim().toLowerCase();
+        if (normalizedContentType == null || !ALLOWED_CONTENT_TYPES.contains(normalizedContentType)) {
             throw new InvalidPhotoException("La fotografía debe ser JPEG o PNG");
         }
         if (bytes.length > MAX_SIZE_BYTES) {
             throw new InvalidPhotoException("La fotografía no puede superar 5 MB");
+        }
+        if (!matchesMagicBytes(normalizedContentType, bytes)) {
+            throw new InvalidPhotoException(
+                    "La firma binaria (magic bytes) no coincide con el formato declarado " + normalizedContentType
+            );
         }
         BufferedImage decoded = decodeImage(bytes);
         if (decoded == null) {
@@ -42,6 +48,22 @@ public class ImageFormatResolutionValidator extends AbstractTryOnValidatorHandle
             );
         }
         context.setDecodedImage(decoded);
+    }
+
+    private static final int[] JPEG_MAGIC = {0xFF, 0xD8, 0xFF};
+    private static final int[] PNG_MAGIC = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+
+    private static boolean matchesMagicBytes(String normalizedContentType, byte[] bytes) {
+        int[] expected = "image/jpeg".equals(normalizedContentType) ? JPEG_MAGIC : PNG_MAGIC;
+        if (bytes.length < expected.length) {
+            return false;
+        }
+        for (int i = 0; i < expected.length; i++) {
+            if ((bytes[i] & 0xFF) != expected[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private BufferedImage decodeImage(byte[] bytes) {

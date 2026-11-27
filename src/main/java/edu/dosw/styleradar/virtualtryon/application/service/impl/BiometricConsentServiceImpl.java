@@ -1,8 +1,9 @@
 package edu.dosw.styleradar.virtualtryon.application.service.impl;
 
 import edu.dosw.styleradar.virtualtryon.application.service.BiometricConsentService;
+import edu.dosw.styleradar.virtualtryon.application.service.DeleteBiometricDataService;
 import edu.dosw.styleradar.virtualtryon.domain.exception.ConsentRequiredException;
-import edu.dosw.styleradar.virtualtryon.domain.exception.JobNotFoundException;
+import edu.dosw.styleradar.virtualtryon.domain.exception.BiometricPhotoNotFoundException;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricConsent;
 import edu.dosw.styleradar.virtualtryon.domain.model.BiometricPhoto;
 import edu.dosw.styleradar.virtualtryon.domain.port.out.BiometricDataRepositoryPort;
@@ -23,6 +24,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -41,14 +43,18 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
 
     private final BiometricDataRepositoryPort biometricDataRepositoryPort;
     private final BlobStoragePort blobStoragePort;
+    private final DeleteBiometricDataService deleteBiometricDataService;
     private final TryOnValidatorHandler photoValidationChain;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public BiometricConsentServiceImpl(
             BiometricDataRepositoryPort biometricDataRepositoryPort,
-            BlobStoragePort blobStoragePort
+            BlobStoragePort blobStoragePort,
+            DeleteBiometricDataService deleteBiometricDataService
     ) {
-        this.biometricDataRepositoryPort = biometricDataRepositoryPort;
-        this.blobStoragePort = blobStoragePort;
+        this.biometricDataRepositoryPort = Objects.requireNonNull(biometricDataRepositoryPort, "El repositorio de datos biométricos es obligatorio");
+        this.blobStoragePort = Objects.requireNonNull(blobStoragePort, "El puerto de almacenamiento blob es obligatorio");
+        this.deleteBiometricDataService = Objects.requireNonNull(deleteBiometricDataService, "El servicio de eliminación de datos biométricos es obligatorio para garantizar la purga integral (SR-RF-27 / Ley 1581)");
         this.photoValidationChain = buildPhotoValidationChain();
     }
 
@@ -95,11 +101,23 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
     }
 
     @Override
+    @Transactional
     public BiometricConsent revokeConsent(UserId userId) {
+        if (deleteBiometricDataService == null) {
+            throw new IllegalStateException(
+                    "El servicio de eliminación biométrica no está disponible para garantizar la purga integral obligatoria por Ley 1581 (SR-RF-27)"
+            );
+        }
         BiometricConsent existing = getConsentByUserId(userId);
+
+        // SR-RF-27 / Ley 1581 de 2012: La revocación de consentimiento exige la purga integral
+        // física e irrevocable de todas las fotografías de silueta y renders generados del titular.
+        // Se ejecuta ANTES de persistir el estado revocado para asegurar que fallos en la purga impidan confirmar la revocación.
+        deleteBiometricDataService.purgeAllBiometricDataForUser(userId);
+
         existing.revoke(Instant.now());
         BiometricConsent updated = biometricDataRepositoryPort.saveConsent(existing);
-        log.info("Consentimiento biométrico revocado para el usuario {}", userId.value());
+        log.info("Consentimiento biométrico revocado y purga integral confirmada para el usuario {}", userId.value());
         return updated;
     }
 
@@ -110,21 +128,36 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
             String contentType,
             byte[] photoBytes
     ) {
+        return uploadPhoto(userId, biometricConsentAccepted, contentType, photoBytes, null);
+    }
+
+    @Override
+    public BiometricPhoto uploadPhoto(
+            UserId userId,
+            boolean biometricConsentAccepted,
+            String contentType,
+            byte[] photoBytes,
+            String clientIp
+    ) {
         boolean hasPersistedValidConsent = biometricDataRepositoryPort.findConsentByUserId(userId)
                 .map(BiometricConsent::isValidForInference)
                 .orElse(false);
 
-        boolean effectiveConsent = biometricConsentAccepted || hasPersistedValidConsent;
+        boolean effectiveConsentAccepted = biometricConsentAccepted || hasPersistedValidConsent;
+        if (!effectiveConsentAccepted) {
+            throw new ConsentRequiredException(userId.value());
+        }
 
         TryOnValidationContext validationContext = new TryOnValidationContext(
                 userId,
-                effectiveConsent,
+                true,
                 contentType,
                 photoBytes
         );
         photoValidationChain.validate(validationContext);
 
         if (!hasPersistedValidConsent) {
+            String effectiveIp = (clientIp != null && !clientIp.isBlank()) ? clientIp.trim() : "127.0.0.1";
             BiometricConsent autoRegisteredConsent = new BiometricConsent(
                     UUID.randomUUID(),
                     userId,
@@ -133,7 +166,7 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
                     List.of("VIRTUAL_TRY_ON_INFERENCE", "TEMPORARY_SILHOUETTE_STORAGE"),
                     Instant.now(),
                     null,
-                    "0.0.0.0"
+                    effectiveIp
             );
             biometricDataRepositoryPort.saveConsent(autoRegisteredConsent);
         }
@@ -226,7 +259,7 @@ public class BiometricConsentServiceImpl implements BiometricConsentService {
     @Transactional(readOnly = true)
     public BiometricPhoto getPhotoByUserId(UserId userId) {
         BiometricPhoto persistedPhoto = biometricDataRepositoryPort.findPhotoByUserId(userId)
-                .orElseThrow(() -> new JobNotFoundException(userId.value()));
+                .orElseThrow(() -> new BiometricPhotoNotFoundException(userId.value()));
         SasSignedUrl freshSignedUrl = blobStoragePort.generateReadOnlySignedUrl(persistedPhoto.getBlobPath());
         return persistedPhoto.withFreshSignedUrl(freshSignedUrl);
     }

@@ -43,11 +43,26 @@ public class OpenApiConfig {
                                 .url("https://www.apache.org/licenses/LICENSE-2.0.html")))
                 .servers(List.of(
                         new Server()
+                                .url("/")
+                                .description("Servidor Actual (QA, Producción o Local)"),
+                        new Server()
+                                .url("https://styleradar-virtualtryon-qa.azurewebsites.net")
+                                .description("Ambiente QA Directo (Azure App Service)"),
+                        new Server()
+                                .url("https://styleradar-gateway-qa.azurewebsites.net")
+                                .description("API Gateway QA (Enrutamiento unificado)"),
+                        new Server()
+                                .url("https://styleradar-virtualtryon-prod.azurewebsites.net")
+                                .description("Ambiente Producción Directo (Azure App Service)"),
+                        new Server()
+                                .url("https://styleradar-gateway-prod.azurewebsites.net")
+                                .description("API Gateway Producción (Enrutamiento unificado)"),
+                        new Server()
                                 .url("http://localhost:8500")
                                 .description("Servidor Local de Desarrollo (Acceso Directo)"),
                         new Server()
-                                .url("http://localhost:8080/api/v1/try-on")
-                                .description("Acceso a través del API Gateway Central")
+                                .url("http://localhost:8080")
+                                .description("API Gateway Local (Puerto 8080)")
                 ))
                 .addSecurityItem(new SecurityRequirement().addList(SECURITY_SCHEME_NAME))
                 .components(new Components()

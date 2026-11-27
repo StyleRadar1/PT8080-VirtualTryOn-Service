@@ -26,6 +26,7 @@ public class TryOnJob {
     private Long executionTimeMs;
     private String errorMessage;
     private boolean photoPurged;
+    private Instant completedAt;
     private final Instant createdAt;
     private Instant updatedAt;
 
@@ -43,7 +44,8 @@ public class TryOnJob {
             String errorMessage,
             boolean photoPurged,
             Instant createdAt,
-            Instant updatedAt
+            Instant updatedAt,
+            Instant completedAt
     ) {
         this.id = Objects.requireNonNull(id, "El id del trabajo (TryOnJob) no puede ser nulo");
         this.userId = Objects.requireNonNull(userId, "El identificador del usuario no puede ser nulo");
@@ -62,6 +64,42 @@ public class TryOnJob {
         this.photoPurged = photoPurged;
         this.createdAt = Objects.requireNonNull(createdAt, "La fecha de creación no puede ser nula");
         this.updatedAt = Objects.requireNonNull(updatedAt, "La fecha de actualización no puede ser nula");
+        this.completedAt = completedAt;
+    }
+
+    public TryOnJob(
+            UUID id,
+            UserId userId,
+            GarmentId garmentId,
+            String photoUrl,
+            GarmentCategory garmentCategory,
+            String garmentImageUrl,
+            JobStatus status,
+            SasSignedUrl resultImageUrl,
+            AiProvider aiProvider,
+            Long executionTimeMs,
+            String errorMessage,
+            boolean photoPurged,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+        this(
+                id,
+                userId,
+                garmentId,
+                photoUrl,
+                garmentCategory,
+                garmentImageUrl,
+                status,
+                resultImageUrl,
+                aiProvider,
+                executionTimeMs,
+                errorMessage,
+                photoPurged,
+                createdAt,
+                updatedAt,
+                null
+        );
     }
 
     public TryOnJob(
@@ -79,7 +117,7 @@ public class TryOnJob {
             Instant createdAt,
             Instant updatedAt
     ) {
-        this(id, userId, garmentId, photoUrl, garmentCategory, null, status, resultImageUrl, aiProvider, executionTimeMs, errorMessage, photoPurged, createdAt, updatedAt);
+        this(id, userId, garmentId, photoUrl, garmentCategory, null, status, resultImageUrl, aiProvider, executionTimeMs, errorMessage, photoPurged, createdAt, updatedAt, null);
     }
 
     public void startAiProcessing() {
@@ -98,7 +136,9 @@ public class TryOnJob {
         this.executionTimeMs = elapsedMs != null && elapsedMs >= 0 ? elapsedMs : 0L;
         this.errorMessage = null;
         this.status = JobStatus.COMPLETED;
-        this.updatedAt = Instant.now();
+        Instant completedTimestamp = Instant.now();
+        this.completedAt = completedTimestamp;
+        this.updatedAt = completedTimestamp;
     }
 
     public void updateResultImageUrl(SasSignedUrl refreshedUrl) {
@@ -171,6 +211,10 @@ public class TryOnJob {
 
     public Long getExecutionTimeMs() {
         return executionTimeMs;
+    }
+
+    public Instant getCompletedAt() {
+        return completedAt;
     }
 
     public String getErrorMessage() {

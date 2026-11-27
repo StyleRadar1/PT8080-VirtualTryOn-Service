@@ -15,7 +15,7 @@ public record PhotoPurgedDomainEvent(
         String routingKey,
         Instant occurredAt
 ) {
-    public static final String ROUTING_KEY = "tryon.photo.purged";
+    public static final String ROUTING_KEY = "styleradar.tryon.photo.purged";
 
     public PhotoPurgedDomainEvent {
         Objects.requireNonNull(eventId, "eventId no puede ser nulo");
