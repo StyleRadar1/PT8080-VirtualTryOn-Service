@@ -27,8 +27,12 @@ class OpenApiConfigTest {
         assertThat(api.getServers().get(0).getUrl()).isEqualTo("/");
         assertThat(api.getServers())
                 .extracting(io.swagger.v3.oas.models.servers.Server::getUrl)
-                .contains("https://styleradar-virtualtryon-qa.azurewebsites.net",
-                        "https://styleradar-gateway-qa.azurewebsites.net")
+                .contains(
+                        "https://styleradar-virtualtryon-qa.azurewebsites.net",
+                        "https://styleradar-gateway-qa.azurewebsites.net",
+                        "https://styleradar-virtualtryon-prod.azurewebsites.net",
+                        "https://styleradar-gateway-prod.azurewebsites.net"
+                )
                 .noneMatch(url -> url.endsWith("/api/v1/try-on"));
     }
 }

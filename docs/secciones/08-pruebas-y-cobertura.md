@@ -20,10 +20,10 @@ El proyecto exige una cobertura de código mínima del **85%** verificada autom�
 
 ### Métricas Actuales de Cobertura en el Repositorio
 
-* **Pruebas Totales en el Repositorio:** **386+ pruebas automatizadas** (384 aprobadas y 2 omitidas por requerir credenciales reales de inferencia FASHN VTON; pruebas unitarias de dominio, servicios de aplicación, adaptadores REST con propagación de `X-Correlation-Id` a Catálogo y Usuarios, JPA/Redis/RabbitMQ/Azure Blob Storage y pruebas de contrato MockMvc con seguridad JWT real y manejo unificado RFC 7807).
+* **Pruebas Totales en el Repositorio:** **393 pruebas automatizadas** (391 aprobadas y 2 omitidas correspondientes a FASHN AI y Azure Blob Storage; pruebas unitarias de dominio, servicios de aplicación, adaptadores REST con propagación de `X-Correlation-Id` a Catálogo y Usuarios, JPA/Redis/RabbitMQ/Azure Blob Storage y pruebas de contrato MockMvc con seguridad JWT real y manejo unificado RFC 7807).
 * **Fallos y Errores en Ejecución Local (sin Docker):** 0 fallos, 0 errores (`-Dtest=!UserQuotaConcurrencyIntegrationTest`).
 * **Cobertura JaCoCo Verificada Localmente:** **> 93%** en líneas y **> 94%** en instrucciones, superando ampliamente el umbral institucional ($\ge 85\%$).
-* **Última Ejecución Verificada en GitHub Actions (PR #28):** 384 pruebas aprobadas, 2 omitidas ([Pipeline CI #129](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/runs/129)), SonarCloud Quality Gate Aprobado.
+* **Última Ejecución Verificada en GitHub Actions (PR #30):** 391 pruebas aprobadas, 2 omitidas ([Pipeline CI #135](https://github.com/StyleRadar1/PT8080-VirtualTryOn-Service/actions/runs/45764169767)), SonarCloud Quality Gate Aprobado con 100% de cobertura en código nuevo.
 * **Documentación de Seguridad y OWASP Top 10:2025:** [`../security/SR_PT8080_Seguridad_y_OWASP_2025.md`](../security/SR_PT8080_Seguridad_y_OWASP_2025.md).
 * **Resultado del Build:** `BUILD SUCCESS`.
 

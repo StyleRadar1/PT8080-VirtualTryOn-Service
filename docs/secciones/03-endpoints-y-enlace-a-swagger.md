@@ -11,8 +11,8 @@ La documentación interactiva OpenAPI 3.0 y los contratos de ejecución se encue
 | Entorno | Estado | Propósito | URL Base del Servicio | Swagger OpenAPI UI | Health Check |
 | :------------------------------- | :----: | :-------------------------------------- | :---------------------------------------------------- | :---------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------- |
 | **Desarrollo Local (DEV)** | Active | Entorno local de desarrollo y Docker Compose (`probador_db`) | `http://localhost:8500` | [Swagger UI Local](http://localhost:8500/swagger-ui/index.html) | [`/actuator/health`](http://localhost:8500/actuator/health) |
-| **Calidad / Pruebas (QA)** | Active (Sprint 2) | Pruebas integradas de Sprint y QA en Azure (`probador_db_qa`) | `https://styleradar-virtualtryon-qa.azurewebsites.net` | [`/swagger-ui/index.html`](https://styleradar-virtualtryon-qa.azurewebsites.net/swagger-ui/index.html) | [`/actuator/health`](https://styleradar-virtualtryon-qa.azurewebsites.net/actuator/health) |
-| **Producción (PROD)** | Active (Sprint 2) | Despliegue productivo de StyleRadar en Azure (`probador_db_prod`) | `https://styleradar-virtualtryon-prod.azurewebsites.net` | [`/swagger-ui/index.html`](https://styleradar-virtualtryon-prod.azurewebsites.net/swagger-ui/index.html) | [`/actuator/health`](https://styleradar-virtualtryon-prod.azurewebsites.net/actuator/health) |
+| **Calidad / Pruebas (QA)** | Active (Sprint 2) | Pruebas integradas de Sprint y QA en Azure (`probador_db_qa`) | `https://styleradar-virtualtryon-qa.azurewebsites.net` | [`/swagger-ui/index.html`](https://styleradar-virtualtryon-qa.azurewebsites.net/swagger-ui/index.html) | [`/actuator/health`](https://styleradar-virtualtryon-qa.azurewebsites.net/actuator/health) · [`/api/v1/health`](https://styleradar-virtualtryon-qa.azurewebsites.net/api/v1/health) |
+| **Producción (PROD)** | Active (Sprint 2) | Despliegue productivo de StyleRadar en Azure (`probador_db_prod`) | `https://styleradar-virtualtryon-prod.azurewebsites.net` | *Restringido por seguridad (OWASP A5)* | [`/actuator/health`](https://styleradar-virtualtryon-prod.azurewebsites.net/actuator/health) · [`/api/v1/health`](https://styleradar-virtualtryon-prod.azurewebsites.net/api/v1/health) |
 
 * **Especificación OpenAPI (JSON Contrato):** `http://localhost:8500/v3/api-docs`
 
@@ -101,7 +101,7 @@ curl -X GET "http://localhost:8500/api/v1/try-on/quotas?userId=a1b2c3d4-e5f6-789
 
 ```json
 {
-  "type": "https://styleradar.edu.dosw/errors/quota-exceeded",
+  "type": "https://api.styleradar.com/errors/quota-exceeded",
   "title": "Cuota de Pruebas Excedida",
   "status": 429,
   "detail": "El usuario ha alcanzado el límite de pruebas virtuales permitido en su plan.",
@@ -113,7 +113,7 @@ curl -X GET "http://localhost:8500/api/v1/try-on/quotas?userId=a1b2c3d4-e5f6-789
 
 ```json
 {
-  "type": "https://styleradar.edu.dosw/errors/garment-not-found",
+  "type": "https://api.styleradar.com/errors/garment-not-found",
   "title": "Prenda No Encontrada",
   "status": 404,
   "detail": "La prenda seleccionada con ID 018e3a2b-3333-7000-8000-000000000099 no existe en el catálogo",

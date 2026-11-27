@@ -26,7 +26,7 @@ import java.time.Instant;
 public class SecurityProblemHandler implements AuthenticationEntryPoint, AccessDeniedHandler {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityProblemHandler.class);
-    private static final String BASE_TYPE_URL = "https://styleradar.dosw.edu/errors/";
+    private static final String BASE_TYPE_URL = "https://api.styleradar.com/errors/";
 
     private final ObjectMapper objectMapper;
 
