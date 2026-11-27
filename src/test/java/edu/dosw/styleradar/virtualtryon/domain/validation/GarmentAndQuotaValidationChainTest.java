@@ -161,7 +161,7 @@ class GarmentAndQuotaValidationChainTest {
 
         assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(footwearContext));
         assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(accessoriesContext));
-        assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(outerwearContext));
+        assertDoesNotThrow(() -> validationChain.validate(outerwearContext));
     }
 
     @Test
@@ -206,7 +206,11 @@ class GarmentAndQuotaValidationChainTest {
         assertEquals(BodyZone.FULL_BODY, GarmentCategory.ONE_PIECE.getBodyZone());
 
         assertEquals(GarmentCategory.OUTERWEAR, GarmentCategory.fromRawValue("CHAQUETA"));
-        assertFalse(GarmentCategory.OUTERWEAR.isCompatibleWithTryOn());
+        assertTrue(GarmentCategory.OUTERWEAR.isCompatibleWithTryOn());
+        assertEquals("tops", GarmentCategory.OUTERWEAR.getFashnCategoryCode());
+        assertEquals(BodyZone.UPPER_BODY, GarmentCategory.OUTERWEAR.getBodyZone());
+        assertEquals(GarmentCategory.ONE_PIECE, GarmentCategory.fromRawValue("CONJUNTO"));
+        assertEquals(GarmentCategory.ACCESSORIES, GarmentCategory.fromRawValue("CINTURON"));
         assertEquals(GarmentCategory.FOOTWEAR, GarmentCategory.fromRawValue("CALZADO"));
         assertFalse(GarmentCategory.FOOTWEAR.isCompatibleWithTryOn());
         assertEquals(GarmentCategory.ACCESSORIES, GarmentCategory.fromRawValue("ACCESORIOS"));
@@ -280,7 +284,7 @@ class GarmentAndQuotaValidationChainTest {
         assertTrue(topConflict.visible());
         assertTrue(topConflict.eligibleForTryOn());
         assertEquals(BodyZone.UPPER_BODY, topConflict.zone());
-        assertEquals(List.of(shirt.getGarmentId()), topConflict.replacedGarmentIds());
+        assertEquals(List.of(shirt.getGarmentId(), jacket.getGarmentId()), topConflict.replacedGarmentIds());
 
         GarmentValidationResult dressReplacesBoth = GarmentSelectionPolicy.evaluate(dress, List.of(shirt, jeans));
         assertTrue(dressReplacesBoth.eligibleForTryOn());
@@ -294,11 +298,20 @@ class GarmentAndQuotaValidationChainTest {
         assertTrue(jeansWithShirt.replacedGarmentIds().isEmpty());
 
         GarmentValidationResult outerwearResult = GarmentSelectionPolicy.evaluate(jacket, List.of(shirt));
-        assertFalse(outerwearResult.compatible());
+        assertTrue(outerwearResult.compatible());
         assertTrue(outerwearResult.visible());
-        assertFalse(outerwearResult.eligibleForTryOn());
-        assertTrue(outerwearResult.replacedGarmentIds().isEmpty());
-        assertThrows(InvalidGarmentException.class, () -> GarmentSelectionPolicy.assertEligible(jacket));
+        assertTrue(outerwearResult.eligibleForTryOn());
+        assertEquals(List.of(shirt.getGarmentId()), outerwearResult.replacedGarmentIds());
+        assertDoesNotThrow(() -> GarmentSelectionPolicy.assertEligible(jacket));
+
+        CatalogGarment sneakers = new CatalogGarment(
+                GarmentId.of(UUID.randomUUID()), "Tenis", GarmentCategory.FOOTWEAR, "https://cat/shoes.png", true, Instant.now());
+        GarmentValidationResult footwearResult = GarmentSelectionPolicy.evaluate(sneakers, List.of(shirt));
+        assertFalse(footwearResult.compatible());
+        assertTrue(footwearResult.visible());
+        assertFalse(footwearResult.eligibleForTryOn());
+        assertTrue(footwearResult.replacedGarmentIds().isEmpty());
+        assertThrows(InvalidGarmentException.class, () -> GarmentSelectionPolicy.assertEligible(sneakers));
 
         GarmentValidationResult hiddenResult = GarmentSelectionPolicy.evaluate(hiddenTop, List.of(shirt));
         assertTrue(hiddenResult.compatible());

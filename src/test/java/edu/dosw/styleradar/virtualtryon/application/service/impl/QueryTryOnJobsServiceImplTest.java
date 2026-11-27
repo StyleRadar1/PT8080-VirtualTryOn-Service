@@ -454,11 +454,11 @@ class QueryTryOnJobsServiceImplTest {
         when(quotaJpaRepository.findByUserIdAndBillingPeriod(eq(userId.value()), any())).thenReturn(Optional.empty());
         when(valueOperations.get(any())).thenReturn("1");
 
-        // 1. OUTERWEAR -> lanza GarmentNotEligibleException (FA-04)
-        CatalogGarmentJpaEntity outerwearEntity = new CatalogGarmentJpaEntity(
-                jacketId.value(), "Chaqueta Cuero", "OUTERWEAR", "https://cat/jacket.png", true, Instant.now()
+        // 1. FOOTWEAR -> lanza GarmentNotEligibleException (FA-04)
+        CatalogGarmentJpaEntity footwearEntity = new CatalogGarmentJpaEntity(
+                jacketId.value(), "Tenis Blancos", "FOOTWEAR", "https://cat/shoes.png", true, Instant.now()
         );
-        when(catalogGarmentJpaRepository.findById(jacketId.value())).thenReturn(Optional.of(outerwearEntity));
+        when(catalogGarmentJpaRepository.findById(jacketId.value())).thenReturn(Optional.of(footwearEntity));
         assertThrows(GarmentNotEligibleException.class, () ->
                 queryTryOnJobsService.validateGarmentEligibility(userId, jacketId, "M", List.of()));
 
