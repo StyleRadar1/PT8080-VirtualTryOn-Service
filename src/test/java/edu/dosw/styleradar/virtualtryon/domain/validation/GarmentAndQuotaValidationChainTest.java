@@ -15,6 +15,8 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.time.Instant;
 import java.util.List;
@@ -161,7 +163,7 @@ class GarmentAndQuotaValidationChainTest {
 
         assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(footwearContext));
         assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(accessoriesContext));
-        assertThrows(GarmentNotEligibleException.class, () -> validationChain.validate(outerwearContext));
+        assertDoesNotThrow(() -> validationChain.validate(outerwearContext));
     }
 
     @Test
@@ -206,7 +208,11 @@ class GarmentAndQuotaValidationChainTest {
         assertEquals(BodyZone.FULL_BODY, GarmentCategory.ONE_PIECE.getBodyZone());
 
         assertEquals(GarmentCategory.OUTERWEAR, GarmentCategory.fromRawValue("CHAQUETA"));
-        assertFalse(GarmentCategory.OUTERWEAR.isCompatibleWithTryOn());
+        assertTrue(GarmentCategory.OUTERWEAR.isCompatibleWithTryOn());
+        assertEquals("tops", GarmentCategory.OUTERWEAR.getFashnCategoryCode());
+        assertEquals(BodyZone.UPPER_BODY, GarmentCategory.OUTERWEAR.getBodyZone());
+        assertEquals(GarmentCategory.ONE_PIECE, GarmentCategory.fromRawValue("CONJUNTO"));
+        assertEquals(GarmentCategory.ACCESSORIES, GarmentCategory.fromRawValue("CINTURON"));
         assertEquals(GarmentCategory.FOOTWEAR, GarmentCategory.fromRawValue("CALZADO"));
         assertFalse(GarmentCategory.FOOTWEAR.isCompatibleWithTryOn());
         assertEquals(GarmentCategory.ACCESSORIES, GarmentCategory.fromRawValue("ACCESORIOS"));
@@ -280,7 +286,7 @@ class GarmentAndQuotaValidationChainTest {
         assertTrue(topConflict.visible());
         assertTrue(topConflict.eligibleForTryOn());
         assertEquals(BodyZone.UPPER_BODY, topConflict.zone());
-        assertEquals(List.of(shirt.getGarmentId()), topConflict.replacedGarmentIds());
+        assertEquals(List.of(shirt.getGarmentId(), jacket.getGarmentId()), topConflict.replacedGarmentIds());
 
         GarmentValidationResult dressReplacesBoth = GarmentSelectionPolicy.evaluate(dress, List.of(shirt, jeans));
         assertTrue(dressReplacesBoth.eligibleForTryOn());
@@ -294,11 +300,21 @@ class GarmentAndQuotaValidationChainTest {
         assertTrue(jeansWithShirt.replacedGarmentIds().isEmpty());
 
         GarmentValidationResult outerwearResult = GarmentSelectionPolicy.evaluate(jacket, List.of(shirt));
-        assertFalse(outerwearResult.compatible());
+        assertTrue(outerwearResult.compatible());
         assertTrue(outerwearResult.visible());
-        assertFalse(outerwearResult.eligibleForTryOn());
-        assertTrue(outerwearResult.replacedGarmentIds().isEmpty());
-        assertThrows(InvalidGarmentException.class, () -> GarmentSelectionPolicy.assertEligible(jacket));
+        assertTrue(outerwearResult.eligibleForTryOn());
+        assertEquals(List.of(shirt.getGarmentId()), outerwearResult.replacedGarmentIds());
+        assertDoesNotThrow(() -> GarmentSelectionPolicy.assertEligible(jacket));
+
+        CatalogGarment sneakers = new CatalogGarment(
+                GarmentId.of(UUID.randomUUID()), "Tenis", GarmentCategory.FOOTWEAR, "https://cat/shoes.png", true, Instant.now());
+        GarmentValidationResult footwearResult = GarmentSelectionPolicy.evaluate(sneakers, List.of(shirt));
+        assertFalse(footwearResult.compatible());
+        assertTrue(footwearResult.visible());
+        assertFalse(footwearResult.eligibleForTryOn());
+        assertTrue(footwearResult.validationMessage().contains("OUTERWEAR"));
+        assertTrue(footwearResult.replacedGarmentIds().isEmpty());
+        assertThrows(InvalidGarmentException.class, () -> GarmentSelectionPolicy.assertEligible(sneakers));
 
         GarmentValidationResult hiddenResult = GarmentSelectionPolicy.evaluate(hiddenTop, List.of(shirt));
         assertTrue(hiddenResult.compatible());
@@ -307,6 +323,36 @@ class GarmentAndQuotaValidationChainTest {
         assertTrue(hiddenResult.replacedGarmentIds().isEmpty());
         assertThrows(InvalidGarmentException.class, () -> GarmentSelectionPolicy.assertEligible(hiddenTop));
         assertDoesNotThrow(() -> GarmentSelectionPolicy.assertEligible(shirt));
+    }
+
+    @ParameterizedTest(name = "Tipo oficial de Catálogo \"{0}\" -> {1} (compatible={2}, zona={3}, fashn={4})")
+    @DisplayName("HU SR-RF-24 (RN-01): Todos los tipos oficiales de ms-item-catalogo tienen correspondencia en GarmentCategory")
+    @CsvSource({
+            "Saco, TOP, true, UPPER_BODY, tops",
+            "Chaqueta, OUTERWEAR, true, UPPER_BODY, tops",
+            "Buzo, TOP, true, UPPER_BODY, tops",
+            "Suéter, TOP, true, UPPER_BODY, tops",
+            "Camisa, TOP, true, UPPER_BODY, tops",
+            "Camiseta, TOP, true, UPPER_BODY, tops",
+            "Pantalón, BOTTOM, true, LOWER_BODY, bottoms",
+            "Falda, BOTTOM, true, LOWER_BODY, bottoms",
+            "Vestido, ONE_PIECE, true, FULL_BODY, one-pieces",
+            "Conjunto, ONE_PIECE, true, FULL_BODY, one-pieces",
+            "Calzado, FOOTWEAR, false, , auto",
+            "Accesorio, ACCESSORIES, false, , auto"
+    })
+    void shouldMapAllOfficialCatalogGarmentTypesConsistently(
+            String rawCatalogType,
+            GarmentCategory expectedCategory,
+            boolean expectedCompatible,
+            BodyZone expectedBodyZone,
+            String expectedFashnCode
+    ) {
+        GarmentCategory mapped = GarmentCategory.fromRawValue(rawCatalogType);
+        assertEquals(expectedCategory, mapped);
+        assertEquals(expectedCompatible, mapped.isCompatibleWithTryOn());
+        assertEquals(expectedBodyZone, mapped.getBodyZone());
+        assertEquals(expectedFashnCode, mapped.getFashnCategoryCode());
     }
 }
 

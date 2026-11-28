@@ -11,7 +11,7 @@ public enum GarmentCategory {
     TOP("tops", BodyZone.UPPER_BODY, true),
     BOTTOM("bottoms", BodyZone.LOWER_BODY, true),
     ONE_PIECE("one-pieces", BodyZone.FULL_BODY, true),
-    OUTERWEAR("auto", null, false),
+    OUTERWEAR("tops", BodyZone.UPPER_BODY, true),
     FOOTWEAR("auto", null, false),
     ACCESSORIES("auto", null, false);
 
@@ -53,17 +53,24 @@ public enum GarmentCategory {
         return switch (normalized) {
             case "TOP", "TOPS", "UPPER", "UPPER_BODY", "SUPERIOR", "PRENDA_SUPERIOR",
                     "CAMISA", "CAMISAS", "CAMISETA", "CAMISETAS", "BLUSA", "BLUSAS",
-                    "POLO", "SACO", "SACOS", "BLAZER", "BLAZERS",
-                    "SUETER", "SWEATER", "HOODIE", "BUSO", "BUZO", "CHALECO" -> TOP;
+                    "POLO", "POLOS", "SACO", "SACOS", "BLAZER", "BLAZERS",
+                    "SUETER", "SUETERES", "SWEATER", "SWEATERS", "HOODIE", "HOODIES",
+                    "BUSO", "BUSOS", "BUZO", "BUZOS", "CHALECO", "CHALECOS" -> TOP;
             case "BOTTOM", "BOTTOMS", "LOWER", "LOWER_BODY", "INFERIOR", "PRENDA_INFERIOR",
                     "PANTALON", "PANTALONES", "FALDA", "FALDAS", "JEAN", "JEANS",
-                    "SHORT", "SHORTS", "BERMUDA", "BERMUDAS", "LEGGINGS", "SUDADERA" -> BOTTOM;
+                    "SHORT", "SHORTS", "BERMUDA", "BERMUDAS", "LEGGING", "LEGGINGS",
+                    "SUDADERA", "SUDADERAS" -> BOTTOM;
             case "ONE_PIECE", "ONEPIECE", "ONE_PIECES", "ONEPIECES", "FULL_BODY", "CUERPO_COMPLETO",
-                    "VESTIDO", "VESTIDOS", "ENTERIZO", "ENTERIZOS", "OVEROL", "JUMPSUIT" -> ONE_PIECE;
-            case "OUTERWEAR", "ABRIGO", "ABRIGOS", "CHAQUETA", "CHAQUETAS", "GABARDINA" -> OUTERWEAR;
-            case "FOOTWEAR", "CALZADO", "ZAPATOS", "ZAPATO", "TENIS", "BOTAS", "SANDALIAS" -> FOOTWEAR;
+                    "VESTIDO", "VESTIDOS", "ENTERIZO", "ENTERIZOS", "OVEROL", "OVEROLES",
+                    "JUMPSUIT", "JUMPSUITS", "CONJUNTO", "CONJUNTOS" -> ONE_PIECE;
+            case "OUTERWEAR", "ABRIGO", "ABRIGOS", "CHAQUETA", "CHAQUETAS",
+                    "GABARDINA", "GABARDINAS", "PONCHO", "PONCHOS", "BOMBER", "BOMBERS" -> OUTERWEAR;
+            case "FOOTWEAR", "CALZADO", "ZAPATOS", "ZAPATO", "TENIS", "SNEAKER", "SNEAKERS",
+                    "BOTA", "BOTAS", "SANDALIA", "SANDALIAS" -> FOOTWEAR;
             case "ACCESSORIES", "ACCESSORY", "ACCESORIO", "ACCESORIOS",
-                    "BOLSO", "GORRA", "SOMBRERO", "GAFAS", "JOYERIA" -> ACCESSORIES;
+                    "BOLSO", "BOLSOS", "GORRA", "GORRAS", "SOMBRERO", "SOMBREROS",
+                    "GAFAS", "JOYERIA", "CINTURON", "CINTURONES", "BUFANDA", "BUFANDAS",
+                    "CORBATA", "CORBATAS", "GUANTES" -> ACCESSORIES;
             default -> throw new IllegalArgumentException("Categoría de prenda desconocida: " + rawCategory);
         };
     }

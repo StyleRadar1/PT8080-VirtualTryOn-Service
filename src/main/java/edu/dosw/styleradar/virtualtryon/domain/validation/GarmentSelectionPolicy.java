@@ -120,7 +120,7 @@ public final class GarmentSelectionPolicy {
         if (!compatible) {
             String catName = category != null ? category.name() : "DESCONOCIDA";
             return "La prenda no es compatible con el probador virtual: la categoría "
-                    + catName + " no admite superposición (solo TOP, BOTTOM y ONE_PIECE).";
+                    + catName + " no admite superposición (solo TOP, BOTTOM, ONE_PIECE y OUTERWEAR).";
         }
         if (!visible) {
             return "La prenda no está disponible en el catálogo en este momento.";

@@ -327,13 +327,13 @@ class CreateTryOnJobServiceImplTest {
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(GarmentNotFoundException.class);
 
-        // 6. Prendas no compatibles (FOOTWEAR y OUTERWEAR según RN-01)
+        // 6. Prendas no compatibles (FOOTWEAR y ACCESSORIES según RN-01)
         mockCatalogGarment(garmentId, GarmentCategory.FOOTWEAR, true);
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(InvalidGarmentException.class);
 
-        mockCatalogGarment(garmentId, GarmentCategory.OUTERWEAR, true);
+        mockCatalogGarment(garmentId, GarmentCategory.ACCESSORIES, true);
         assertThatThrownBy(() -> createTryOnJobService.createTryOnJob(
                 userId, garmentId, validUserPhotoUrl, true
         )).isInstanceOf(InvalidGarmentException.class);

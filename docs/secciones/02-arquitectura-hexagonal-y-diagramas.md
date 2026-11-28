@@ -92,7 +92,7 @@ Este diagrama detalla la anatomía interna de `PT8080-VirtualTryOn-Service`, dis
   Para asegurar máxima cohesión y desacoplamiento, la lógica de validación se divide en eslabones modulares e independientes que evalúan el contexto antes de ejecutar operaciones costosas:
   1. **`BiometricConsentValidator` (Regla V01):** Comprueba que el usuario disponga de autorización explícita de tratamiento biométrico activa y no revocada (Ley 1581 de Habeas Data).
   2. **`MonthlyUserQuotaValidator` (Regla V02):** Verifica que el usuario cuente con saldo de pruebas disponible en su cuota del período mensual vigente (Free vs. Radar+).
-  3. **`GarmentCategoryValidator` (Regla V03):** Valida que la prenda solicitada pertenezca a una categoría compatible para prueba virtual (`TOPS`, `BOTTOMS`, `ONE_PIECES`, `OUTERWEAR`).
+  3. **`GarmentCategoryValidator` (Regla V03 / RN-01):** Valida que la prenda solicitada pertenezca a una categoría superponible admitida para prueba virtual (`TOP`, `BOTTOM`, `ONE_PIECE` y `OUTERWEAR`, mapeadas en FASHN AI a `tops`, `bottoms` y `one-pieces`, con `OUTERWEAR` asignada a la zona `UPPER_BODY` / `tops`). Las categorías `FOOTWEAR` y `ACCESSORIES` permanecen restringidas y se rechazan antes de la inferencia sin consumir cuota del usuario.
   4. **`ImageFormatResolutionValidator` (Regla V04):** Controla estrictamente los formatos admitidos mediante *magic bytes* reales (**únicamente JPEG o PNG**, rechazando WebP), peso máximo de **hasta 5 MB** y resolución mínima de $300\times 400$ píxeles.
   5. **`PoseReferenceValidator` (Regla V05):** Valida la postura corporal frontal y la iluminación adecuada para garantizar una inferencia exitosa en el modelo de visión artificial.
 
@@ -137,7 +137,7 @@ Este diagrama modela el núcleo de dominio puro en Java (sin anotaciones de Spri
 
 * **Enumeraciones de Dominio:**
   * **`JobStatus`:** `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`, `CANCELLED`.
-  * **`GarmentCategory`:** `TOPS`, `BOTTOMS`, `ONE_PIECES`, `OUTERWEAR`.
+  * **`GarmentCategory`:** `TOP`, `BOTTOM`, `ONE_PIECE`, `OUTERWEAR` *(categorías admitidas para prueba virtual bajo RN-01; `OUTERWEAR` se procesa en `BodyZone.UPPER_BODY` con código FASHN AI `tops`)*, `FOOTWEAR`, `ACCESSORIES` *(categorías restringidas en RN-01, rechazadas antes de inferencia sin consumo de cuota)*.
   * **`AiProvider`:** `FASHN_AI`, `MOCK_LOCAL`.
 
 * **Eventos de Dominio (`TryOnJobDomainEvent`):**
