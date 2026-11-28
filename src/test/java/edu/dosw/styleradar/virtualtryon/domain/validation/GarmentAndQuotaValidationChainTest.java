@@ -15,6 +15,8 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.UserId;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.time.Instant;
 import java.util.List;
@@ -310,6 +312,7 @@ class GarmentAndQuotaValidationChainTest {
         assertFalse(footwearResult.compatible());
         assertTrue(footwearResult.visible());
         assertFalse(footwearResult.eligibleForTryOn());
+        assertTrue(footwearResult.validationMessage().contains("OUTERWEAR"));
         assertTrue(footwearResult.replacedGarmentIds().isEmpty());
         assertThrows(InvalidGarmentException.class, () -> GarmentSelectionPolicy.assertEligible(sneakers));
 
@@ -320,6 +323,36 @@ class GarmentAndQuotaValidationChainTest {
         assertTrue(hiddenResult.replacedGarmentIds().isEmpty());
         assertThrows(InvalidGarmentException.class, () -> GarmentSelectionPolicy.assertEligible(hiddenTop));
         assertDoesNotThrow(() -> GarmentSelectionPolicy.assertEligible(shirt));
+    }
+
+    @ParameterizedTest(name = "Tipo oficial de Catálogo \"{0}\" -> {1} (compatible={2}, zona={3}, fashn={4})")
+    @DisplayName("HU SR-RF-24 (RN-01): Todos los tipos oficiales de ms-item-catalogo tienen correspondencia en GarmentCategory")
+    @CsvSource({
+            "Saco, TOP, true, UPPER_BODY, tops",
+            "Chaqueta, OUTERWEAR, true, UPPER_BODY, tops",
+            "Buzo, TOP, true, UPPER_BODY, tops",
+            "Suéter, TOP, true, UPPER_BODY, tops",
+            "Camisa, TOP, true, UPPER_BODY, tops",
+            "Camiseta, TOP, true, UPPER_BODY, tops",
+            "Pantalón, BOTTOM, true, LOWER_BODY, bottoms",
+            "Falda, BOTTOM, true, LOWER_BODY, bottoms",
+            "Vestido, ONE_PIECE, true, FULL_BODY, one-pieces",
+            "Conjunto, ONE_PIECE, true, FULL_BODY, one-pieces",
+            "Calzado, FOOTWEAR, false, , auto",
+            "Accesorio, ACCESSORIES, false, , auto"
+    })
+    void shouldMapAllOfficialCatalogGarmentTypesConsistently(
+            String rawCatalogType,
+            GarmentCategory expectedCategory,
+            boolean expectedCompatible,
+            BodyZone expectedBodyZone,
+            String expectedFashnCode
+    ) {
+        GarmentCategory mapped = GarmentCategory.fromRawValue(rawCatalogType);
+        assertEquals(expectedCategory, mapped);
+        assertEquals(expectedCompatible, mapped.isCompatibleWithTryOn());
+        assertEquals(expectedBodyZone, mapped.getBodyZone());
+        assertEquals(expectedFashnCode, mapped.getFashnCategoryCode());
     }
 }
 

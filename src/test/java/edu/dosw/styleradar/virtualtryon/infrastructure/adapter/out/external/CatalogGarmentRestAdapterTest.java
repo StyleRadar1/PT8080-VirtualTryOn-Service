@@ -197,4 +197,49 @@ class CatalogGarmentRestAdapterTest {
             org.slf4j.MDC.clear();
         }
     }
+
+    @Test
+    @DisplayName("Regresión falso 404: tipos de catálogo Conjunto, Chaqueta, Abrigo, Cinturón y Bufanda se mapean sin retornar Optional.empty()")
+    void shouldNotReturnFalse404ForValidCatalogTypesWithNewAliases() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8220");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        CatalogGarmentRestAdapter adapter = new CatalogGarmentRestAdapter(builder.build(), "http://localhost:8220");
+
+        record Case(GarmentId id, String tipo, GarmentCategory expectedCategory, boolean expectedEligible) {}
+
+        var cases = java.util.List.of(
+                new Case(GarmentId.of(UUID.randomUUID()), "Conjunto", GarmentCategory.ONE_PIECE, true),
+                new Case(GarmentId.of(UUID.randomUUID()), "Chaqueta", GarmentCategory.OUTERWEAR, true),
+                new Case(GarmentId.of(UUID.randomUUID()), "Abrigo", GarmentCategory.OUTERWEAR, true),
+                new Case(GarmentId.of(UUID.randomUUID()), "Cinturón", GarmentCategory.ACCESSORIES, false),
+                new Case(GarmentId.of(UUID.randomUUID()), "Bufanda", GarmentCategory.ACCESSORIES, false)
+        );
+
+        for (Case c : cases) {
+            String jsonResponse = """
+                    {
+                        "id": "%s",
+                        "nombre": "Prenda %s",
+                        "tipo": "%s",
+                        "fotografias": ["https://cdn.styleradar.co/%s.jpg"],
+                        "estado": "APROBADA",
+                        "disponible": true
+                    }
+                    """.formatted(c.id().value(), c.tipo(), c.tipo(), c.tipo().toLowerCase());
+
+            server.expect(requestTo("http://localhost:8220/api/v1/garments/" + c.id().value()))
+                    .andExpect(method(HttpMethod.GET))
+                    .andRespond(withSuccess(jsonResponse, MediaType.APPLICATION_JSON));
+        }
+
+        for (Case c : cases) {
+            Optional<CatalogGarment> result = adapter.findGarmentById(c.id());
+            assertTrue(result.isPresent(), "Tipo '" + c.tipo() + "' no debe degradarse a Optional.empty() (falso 404)");
+            assertEquals(c.expectedCategory(), result.get().getCategory());
+            assertTrue(result.get().isVisible());
+            assertEquals(c.expectedEligible(), result.get().isEligibleForTryOn());
+        }
+
+        server.verify();
+    }
 }

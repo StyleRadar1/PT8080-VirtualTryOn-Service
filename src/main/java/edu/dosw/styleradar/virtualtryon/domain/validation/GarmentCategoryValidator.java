@@ -8,7 +8,7 @@ import edu.dosw.styleradar.virtualtryon.domain.valueobject.GarmentId;
 /**
  * Validador V03 de la cadena de responsabilidad: verifica que la prenda seleccionada exista,
  * sea visible en el catálogo, tenga al menos una fotografía de referencia y pertenezca a una
- * categoría superponible en el Probador Virtual (TOP, BOTTOM, ONE_PIECE) (SR-RF-24 / RN-01 · FA-04).
+ * categoría superponible en el Probador Virtual (TOP, BOTTOM, ONE_PIECE, OUTERWEAR) (SR-RF-24 / RN-01 · FA-04).
  */
 public class GarmentCategoryValidator extends AbstractTryOnValidatorHandler {
 
